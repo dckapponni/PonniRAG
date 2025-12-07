@@ -8,7 +8,7 @@ def count_words(text):
     """Count words in text."""
     if not text:
         return 0
-    # Split by whitespace and filter out empty strings
+
     words = [word for word in text.split() if word.strip()]
     return len(words)
 
@@ -46,7 +46,7 @@ def extract_author_from_brackets(line, authors_normalized, authors_original):
         if bracket_content:
             content = bracket_content.group(1)
             
-            # Check if content starts with author name followed by "
+           
             parts = content.split('"')
             if len(parts) > 0:
                 potential_author = parts[0].strip()
@@ -54,7 +54,7 @@ def extract_author_from_brackets(line, authors_normalized, authors_original):
                 if matched_author:
                     return matched_author
             
-            # Check for ஆசிரியர்: pattern within brackets
+           
             if 'ஆசிரியர்' in content or ':' in content:
                 parts = content.split(':')
                 if len(parts) > 1:
@@ -81,17 +81,17 @@ def find_author_in_range(lines, start_idx, end_idx, authors_normalized, authors_
     for i in range(start_idx, min(end_idx, len(lines))):
         line = lines[i].strip()
         
-        # Check for bracket pattern first
+       
         author = extract_author_from_brackets(line, authors_normalized, authors_original)
         if author:
             return (author, i)
         
-        # Check for ஆசிரியர்: pattern
+       
         author = extract_author_from_pattern(line, authors_normalized, authors_original)
         if author:
             return (author, i)
         
-        # Check for direct fuzzy match
+       
         matched_author, similarity = fuzzy_match_author(line, authors_normalized, authors_original)
         if matched_author:
             return (matched_author, i)
@@ -106,19 +106,19 @@ def extract_doc_info(lines):
     doc_id = "Unknown"
     doc_issue = "Unknown"
     
-    for line in lines[:50]:  # Search in first 50 lines
+    for line in lines[:50]: 
         line_stripped = line.strip()
         
-        # Search for மலர் pattern
+       
         if 'மலர்' in line_stripped:
-            # Extract number after மலர்
+           
             match = re.search(r'மலர்\s*[:—-]?\s*(\d+)', line_stripped)
             if match:
                 doc_id = match.group(1)
         
-        # Search for இதழ் pattern
+        
         if 'இதழ்' in line_stripped:
-            # Extract number after இதழ்
+           
             match = re.search(r'இதழ்\s*[:—-]?\s*(\d+)', line_stripped)
             if match:
                 doc_issue = match.group(1)
@@ -135,13 +135,13 @@ def extract_authors_alternative(lines):
     """
     authors_original = []
     authors_normalized = []
-    authors_set = set()  # To avoid duplicates
+    authors_set = set() 
     
     i = 0
     while i < len(lines):
         line = lines[i].strip()
         
-        # Check for 2+ consecutive empty lines
+       
         if not line:
             blank_count = 0
             blank_start = i
@@ -150,13 +150,13 @@ def extract_authors_alternative(lines):
                 i += 1
             
             if blank_count >= 2 and i < len(lines):
-                # Next line after blanks could be author
+                
                 potential_author_idx = i
                 potential_author = lines[potential_author_idx].strip()
                 
-                # Check if this looks like an author name (3-30 characters)
+               
                 if potential_author and 3 <= len(potential_author) <= 30:
-                    # Now check 1st, 2nd, 3rd line above author for content (30+ chars)
+                   
                     has_content = False
                     for offset in [1, 2, 3]:
                         check_idx = potential_author_idx - offset
@@ -167,7 +167,7 @@ def extract_authors_alternative(lines):
                                 break
                     
                     if has_content:
-                        # Valid author found - add to list
+                        
                         normalized = normalize_text(potential_author)
                         if normalized not in authors_set:
                             authors_original.append(potential_author)
@@ -186,10 +186,8 @@ def parse_tamil_document(file_path):
     with open(file_path, 'r', encoding='utf-8') as f:
         lines = f.readlines()
     
-    # Step 0: Extract document info
+  
     doc_id, doc_issue = extract_doc_info(lines)
-    
-    # Step 1: Extract authors list between keywords
     authors_original = []
     authors_normalized = []
     start_idx = -1
@@ -202,7 +200,7 @@ def parse_tamil_document(file_path):
             end_idx = i
             break
     
-    # If no author list found, use alternative method to extract authors
+    
     if start_idx == -1 or end_idx == -1:
         print(f"  ℹ No author list section found. Using alternative extraction method...")
         authors_original, authors_normalized = extract_authors_alternative(lines)
@@ -215,18 +213,16 @@ def parse_tamil_document(file_path):
     
     parse_start_idx = end_idx + 1 if end_idx != -1 else 0
     
-    # Step 2: Mark all lines as unprocessed
+    
     processed_lines = [False] * len(lines)
-    # Mark author list section as processed
     if start_idx != -1 and end_idx != -1:
         for i in range(start_idx, end_idx + 1):
             processed_lines[i] = True
     
-    # Step 3: Extract articles with authors
+   
     articles = []
     article_no = 1
     
-    # Scan through document looking for authors
     i = parse_start_idx
     while i < len(lines):
         if processed_lines[i]:
@@ -235,23 +231,20 @@ def parse_tamil_document(file_path):
         
         line = lines[i].strip()
         
-        # Try to find author at current position
+
         author_found, author_idx = find_author_in_range(lines, i, i + 1, authors_normalized, authors_original)
         
         if author_found:
-            # Extract heading (2 lines or 1 line above author)
             heading = extract_heading(lines, author_idx, authors_normalized, authors_original, processed_lines)
             
-            # Extract content after author
+           
             content, content_end_idx = extract_content_after_author(lines, author_idx, authors_normalized, authors_original, processed_lines)
             
-            # Mark lines as processed (heading lines + author line + content lines)
             mark_heading_lines_processed(lines, author_idx, authors_normalized, authors_original, processed_lines)
             processed_lines[author_idx] = True
             for j in range(author_idx + 1, content_end_idx):
                 processed_lines[j] = True
             
-            # Validate before adding: heading not empty and content >= 50 words
             if heading.strip() and count_words(content) >= 50:
                 articles.append({
                     "doc_id": doc_id,
@@ -267,7 +260,6 @@ def parse_tamil_document(file_path):
         else:
             i += 1
     
-    # Step 4: Extract intro sections
     intro_keywords = [
         "எங்கள் எண்ணம்",
         "கலையுலகம்",
@@ -293,7 +285,6 @@ def parse_tamil_document(file_path):
         
         line = lines[i].strip()
         
-        # Check if line matches any intro keyword
         matched_keyword = None
         for keyword in intro_keywords:
             if keyword in line:
@@ -301,14 +292,11 @@ def parse_tamil_document(file_path):
                 break
         
         if matched_keyword:
-            # Extract content after this keyword using both logics
             content, content_end_idx = extract_intro_content(lines, i, processed_lines, authors_normalized, authors_original)
             
-            # Mark lines as processed
             for j in range(i, content_end_idx):
                 processed_lines[j] = True
-            
-            # Validate before adding: content >= 50 words AND more than 2 lines
+        
             content_line_count = len([line for line in content.split('\n') if line.strip()])
             if count_words(content) >= 50 and content_line_count > 2:
                 intro.append({
@@ -322,35 +310,33 @@ def parse_tamil_document(file_path):
         else:
             i += 1
     
-    # Step 5: Extract remaining orphan content (author = NA)
-    # Process remaining unprocessed content with heading = "NA"
     i = parse_start_idx
     while i < len(lines):
         if processed_lines[i]:
             i += 1
             continue
         
-        # Check for 4+ consecutive blank lines
+        
         line = lines[i].strip()
         if not line:
             blank_count = count_consecutive_blanks(lines, i, processed_lines)
             if blank_count >= 4:
-                # Mark blanks as processed
+               
                 for j in range(i, i + blank_count):
                     if j < len(lines):
                         processed_lines[j] = True
                 i += blank_count
                 continue
         
-        # Found unprocessed content - extract as orphan article with heading = "NA"
-        if line:  # Non-empty line
+      
+        if line: 
             content, content_end_idx = extract_orphan_content_na(lines, i, processed_lines, authors_normalized, authors_original)
             
-            # Mark as processed
+           
             for j in range(i, content_end_idx):
                 processed_lines[j] = True
             
-            # Validate: heading not empty, content >= 50 words AND more than 2 lines
+           
             content_line_count = len([line for line in content.split('\n') if line.strip()])
             if heading != "NA" and count_words(content) >= 50 and content_line_count > 2:
                 articles.append({
@@ -367,7 +353,7 @@ def parse_tamil_document(file_path):
         else:
             i += 1
     
-    # Create authors list for separate JSON
+    
     authors_list = []
     for author in authors_original:
         authors_list.append({
@@ -393,14 +379,14 @@ def count_consecutive_blanks(lines, start_idx, processed_lines):
 
 def mark_heading_lines_processed(lines, author_idx, authors_normalized, authors_original, processed_lines):
     """Mark heading lines (1 or 2 lines above author) as processed."""
-    # Check 2 lines above
+   
     if author_idx - 2 >= 0:
         line2 = lines[author_idx - 2].strip()
         matched_author, _ = fuzzy_match_author(line2, authors_normalized, authors_original)
         if line2 and not matched_author and len(line2) <= 25 and '[' not in line2:
             processed_lines[author_idx - 2] = True
     
-    # Check 1 line above
+   
     if author_idx - 1 >= 0:
         line1 = lines[author_idx - 1].strip()
         matched_author, _ = fuzzy_match_author(line1, authors_normalized, authors_original)
@@ -411,14 +397,14 @@ def extract_heading(lines, author_idx, authors_normalized, authors_original, pro
     """Extract heading from lines above author (max 25 chars)."""
     heading_lines = []
     
-    # Check 2 lines above
+   
     if author_idx - 2 >= 0:
         line2 = lines[author_idx - 2].strip()
         matched_author, _ = fuzzy_match_author(line2, authors_normalized, authors_original)
         if line2 and not matched_author and len(line2) <= 25 and '[' not in line2:
             heading_lines.append(line2)
     
-    # Check 1 line above
+    
     if author_idx - 1 >= 0:
         line1 = lines[author_idx - 1].strip()
         matched_author, _ = fuzzy_match_author(line1, authors_normalized, authors_original)
@@ -437,7 +423,7 @@ def extract_content_after_author(lines, author_idx, authors_normalized, authors_
     content_lines = []
     i = author_idx + 1
     
-    # Skip one blank line if present
+    
     if i < len(lines) and not lines[i].strip():
         i += 1
     
@@ -447,17 +433,17 @@ def extract_content_after_author(lines, author_idx, authors_normalized, authors_
         line = lines[i]
         stripped = line.strip()
         
-        # Check for another author
+    
         author_check = find_author_in_range(lines, i, i + 1, authors_normalized, authors_original)
         if author_check[0] is not None:
-            # Stop 2 lines before this author
+    
             if len(content_lines) >= 2:
                 content_lines = content_lines[:-2]
             elif len(content_lines) == 1:
                 content_lines = content_lines[:-1]
             break
         
-        # Count consecutive blanks
+
         if not stripped:
             consecutive_blanks += 1
             if consecutive_blanks >= 4:
@@ -493,17 +479,17 @@ def extract_intro_content(lines, start_idx, processed_lines, authors_normalized,
         line = lines[i]
         stripped = line.strip()
         
-        # NEW LOGIC: Check if we found an author name ahead
+      
         author_check = find_author_in_range(lines, i, i + 1, authors_normalized, authors_original)
         if author_check[0] is not None:
-            # Stop 2 lines before this author
+           
             if len(content_lines) >= 2:
                 content_lines = content_lines[:-2]
             elif len(content_lines) == 1:
                 content_lines = content_lines[:-1]
             break
         
-        # OLD LOGIC: Count consecutive blanks
+       
         if not stripped:
             consecutive_blanks += 1
             if consecutive_blanks >= 4:
@@ -525,7 +511,7 @@ def extract_orphan_article(lines, start_idx, processed_lines):
     heading = ""
     content_start = start_idx
     
-    # First non-empty line as potential heading
+    
     first_line = lines[start_idx].strip()
     if len(first_line) <= 25:
         heading = first_line
@@ -533,7 +519,7 @@ def extract_orphan_article(lines, start_idx, processed_lines):
     else:
         content_start = start_idx
     
-    # Extract content
+   
     content_lines = []
     i = content_start
     consecutive_blanks = 0
@@ -580,7 +566,7 @@ def extract_orphan_content_na(lines, start_idx, processed_lines, authors_normali
     i = start_idx
     consecutive_blanks = 0
     
-    # First, collect all content lines
+   
     while i < len(lines):
         if processed_lines[i]:
             break
@@ -588,17 +574,17 @@ def extract_orphan_content_na(lines, start_idx, processed_lines, authors_normali
         line = lines[i]
         stripped = line.strip()
         
-        # NEW LOGIC: Check if we found an author name ahead
+       
         author_check = find_author_in_range(lines, i, i + 1, authors_normalized, authors_original)
         if author_check[0] is not None:
-            # Stop 2 lines before this author
+           
             if len(content_lines) >= 2:
                 content_lines = content_lines[:-2]
             elif len(content_lines) == 1:
                 content_lines = content_lines[:-1]
             break
         
-        # OLD LOGIC: Count consecutive blanks
+       
         if not stripped:
             consecutive_blanks += 1
             if consecutive_blanks >= 4:
@@ -613,31 +599,28 @@ def extract_orphan_content_na(lines, start_idx, processed_lines, authors_normali
         
         i += 1
     
-    # Now search bottom-to-top for heading (≤20 chars with empty line above)
+   
     content_text = '\n'.join(content_lines)
     content_list = content_text.split('\n')
     
-    # Search from bottom to top
     for idx in range(len(content_list) - 1, -1, -1):
         line_text = content_list[idx].strip()
         
-        # Check if this line is ≤20 chars
+       
         if line_text and len(line_text) <= 20:
-            # Check if there's an empty line above it
             if idx > 0:
                 line_above = content_list[idx - 1].strip()
-                if not line_above:  # Empty line found above
+                if not line_above: 
                     heading = line_text
-                    # Remove heading and empty line from content
+                   
                     content_list = content_list[:idx - 1]
                     break
             elif idx == 0:
-                # Heading is first line
+               
                 heading = line_text
                 content_list = content_list[1:]
                 break
     
-    # Reconstruct content without heading
     final_content = '\n'.join(content_list)
     
     return (final_content, i)
@@ -654,10 +637,8 @@ def process_folder(root_folder_path, output_root_folder="output_json"):
         print(f"Error: Folder '{root_folder_path}' does not exist!")
         return
     
-    # Create output root folder if it doesn't exist
     output_root.mkdir(parents=True, exist_ok=True)
     
-    # Find all .txt files recursively
     txt_files = list(root_path.rglob("*.txt"))
     
     if not txt_files:
@@ -670,19 +651,16 @@ def process_folder(root_folder_path, output_root_folder="output_json"):
         try:
             print(f"Processing: {txt_file}")
             
-            # Parse the document
+    
             result = parse_tamil_document(str(txt_file))
-            
-            # Calculate relative path from root folder
+        
             relative_path = txt_file.relative_to(root_path)
-            
-            # Create corresponding output folder structure
+        
             output_folder = output_root / relative_path.parent
             output_folder.mkdir(parents=True, exist_ok=True)
             
-            base_name = txt_file.stem  # filename without extension
+            base_name = txt_file.stem
             
-            # Save main content JSON
             content_json_path = output_folder / f"{base_name}_parsed.json"
             with open(content_json_path, 'w', encoding='utf-8') as f:
                 json.dump({
@@ -692,7 +670,6 @@ def process_folder(root_folder_path, output_root_folder="output_json"):
             
             print(f"  ✓ Created: {content_json_path}")
             
-            # Save authors list JSON
             authors_json_path = output_folder / f"{base_name}_authors.json"
             with open(authors_json_path, 'w', encoding='utf-8') as f:
                 json.dump({
@@ -708,13 +685,12 @@ def process_folder(root_folder_path, output_root_folder="output_json"):
     
     print(f"\nProcessing complete! All JSON files saved in: {output_root.absolute()}")
 
-# Example usage
 if __name__ == "__main__":
-    print("=== Tamil TXT Document Parser ===\n")
+    print(" Tamil TXT Document Parser \n")
 
-    # ★★ Set folder paths manually here ★★
-    root_folder = "extracted_texts"   # your root folder
-    output_folder = "output_json"  # output folder
+   
+    root_folder = "extracted_texts"  
+    output_folder = "output_json" 
 
     print(f"Input folder: {root_folder}")
     print(f"Output folder: {output_folder}\n")
