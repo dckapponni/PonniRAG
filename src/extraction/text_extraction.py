@@ -3,7 +3,7 @@
 import os
 import time
 import docx2txt
-from config import INPUT_FOLDER, OUTPUT_FOLDER, COMBINED_OUTPUT_FILE
+from PonniRAG.src.config.config import INPUT_FOLDER, OUTPUT_FOLDER, COMBINED_OUTPUT_FILE
 
 docx_files = []
 for root, dirs, files in os.walk(INPUT_FOLDER):
