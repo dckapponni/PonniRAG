@@ -1,6 +1,5 @@
 import json
 import re
-import os
 from pathlib import Path
 from difflib import SequenceMatcher
 from collections import defaultdict
