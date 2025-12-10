@@ -7,37 +7,45 @@ from collections import defaultdict
 
 def count_words(text):
     """
-    Count words in text.
+    Count the number of words in the given text.
     
     Args:
-        text (str): Input text
-    
+        text (str): Input text string
+        
     Returns:
-        int: Number of words
+        int: Number of words in the text
     """
     if not text:
         return 0
-    words = [word for word in text.split() if word.strip()]
-    return len(words)
+    return len([word for word in text.split() if word.strip()])
+
+
+def count_content_lines(text):
+    """
+    Count the number of non-empty lines in the text.
+    
+    Args:
+        text (str): Input text string
+        
+    Returns:
+        int: Number of lines with content
+    """
+    if not text:
+        return 0
+    return len([line for line in text.split('\n') if line.strip()])
 
 
 def normalize_text(text):
     """
-    Normalize text for fuzzy matching.
-    
-    Operations:
-    - Replace specific Tamil characters
-    - Remove dots
-    - Remove extra spaces
-    - Convert to lowercase
+    Normalize Tamil text by handling Unicode variations and removing punctuation.
     
     Args:
-        text (str): Input text
-    
+        text (str): Input text to normalize
+        
     Returns:
-        str: Normalized text
+        str: Normalized text in lowercase without spaces or periods
     """
-    text = text.replace('ண', 'ण').replace('ணு', ' णु')
+    text = text.replace('ண', 'ண').replace('णు', ' णु')
     text = re.sub(r'\.', '', text)
     text = re.sub(r'\s+', '', text.strip().lower())
     return text
@@ -45,40 +53,38 @@ def normalize_text(text):
 
 def is_valid_heading(heading):
     """
-    Validate heading - must not be empty or pure number.
-    
-    Rules:
-    - NOT empty
-    - NOT pure number (can be char + number)
+    Validate if a line qualifies as a proper article heading.
     
     Args:
-        heading (str): Heading text
-    
+        heading (str): Potential heading text
+        
     Returns:
-        bool: True if valid, False otherwise
+        bool: True if valid heading, False otherwise
     """
     if not heading or not heading.strip():
         return False
-    
-    # Check if pure number
-    if heading.strip().isdigit():
+    stripped = heading.strip()
+    if stripped.isdigit():
         return False
-    
+    if len(stripped) >= 25:
+        return False
+    if stripped.startswith('—') or stripped.startswith('-') or stripped.startswith('–'):
+        return False
     return True
 
 
 def fuzzy_match_author(line, authors_normalized, authors_original, threshold=0.8):
     """
-    Fuzzy match line against authors with 80-100% similarity.
+    Match a line against known authors using fuzzy string matching.
     
     Args:
         line (str): Line to match
-        authors_normalized (list): Normalized author names
-        authors_original (list): Original author names
-        threshold (float): Minimum similarity threshold (default: 0.8)
-    
+        authors_normalized (list): List of normalized author names
+        authors_original (list): List of original author names
+        threshold (float): Minimum similarity score (0-1)
+        
     Returns:
-        tuple: (matched_author_name, similarity) or (None, 0) if no match
+        tuple: (matched_author_name, similarity_score)
     """
     if not line.strip():
         return (None, 0)
@@ -96,127 +102,86 @@ def fuzzy_match_author(line, authors_normalized, authors_original, threshold=0.8
     return (best_match, best_similarity)
 
 
-def extract_author_from_brackets(line, authors_normalized, authors_original):
+def extract_author_from_line(line, authors_normalized, authors_original):
     """
-    Extract author from content within brackets [...].
+    Extract author name from a line by cleaning and matching against known authors.
     
     Args:
-        line (str): Line containing brackets
-        authors_normalized (list): Normalized author names
-        authors_original (list): Original author names
-    
+        line (str): Line potentially containing author name
+        authors_normalized (list): List of normalized author names
+        authors_original (list): List of original author names
+        
     Returns:
         str or None: Matched author name or None
     """
-    if '[' in line and ']' in line:
-        bracket_content = re.search(r'\[(.*?)\]', line)
-        if bracket_content:
-            content = bracket_content.group(1)
-            
-            parts = content.split('"')
-            if len(parts) > 0:
-                potential_author = parts[0].strip()
-                matched_author, similarity = fuzzy_match_author(
-                    potential_author, authors_normalized, authors_original
-                )
-                if matched_author:
-                    return matched_author
-            
-            if 'ஆசிரியர்' in content or ':' in content:
-                parts = content.split(':')
-                if len(parts) > 1:
-                    potential_author = parts[-1].strip()
-                    potential_author = re.sub(r'[,.\]]+$', '', potential_author)
-                    matched_author, similarity = fuzzy_match_author(
-                        potential_author, authors_normalized, authors_original
-                    )
-                    if matched_author:
-                        return matched_author
-    return None
-
-
-def extract_author_from_pattern(line, authors_normalized, authors_original):
-    """
-    Extract author from patterns like 'ஆசிரியர் : author_name'.
+    clean_line = line.strip()
     
-    Args:
-        line (str): Line to search
-        authors_normalized (list): Normalized author names
-        authors_original (list): Original author names
+    if clean_line.startswith('—') or clean_line.startswith('-') or clean_line.startswith('–'):
+        clean_line = re.sub(r'^[—\-–]\s*', '', clean_line)
     
-    Returns:
-        str or None: Matched author name or None
-    """
-    if 'ஆசிரியர்' in line or ':' in line:
-        parts = line.split(':')
+    if '[' in clean_line and ']' in clean_line:
+        bracket_match = re.search(r'\[(.*?)\]', clean_line)
+        if bracket_match:
+            clean_line = bracket_match.group(1)
+    
+    if 'ஆசிரியர்' in clean_line or ':' in clean_line:
+        parts = clean_line.split(':')
         if len(parts) > 1:
-            potential_author = parts[-1].strip()
-            matched_author, similarity = fuzzy_match_author(
-                potential_author, authors_normalized, authors_original
-            )
-            if matched_author:
-                return matched_author
-    return None
+            clean_line = parts[-1].strip()
+    
+    clean_line = re.sub(r'[,.\]"]+$', '', clean_line)
+    clean_line = re.sub(r'^["]+', '', clean_line)
+    
+    matched_author, similarity = fuzzy_match_author(clean_line, authors_normalized, authors_original)
+    return matched_author
 
 
 def find_author_in_range(lines, start_idx, end_idx, authors_normalized, authors_original):
     """
-    Search for author name within a range of lines.
+    Search for an author name within a specified range of lines.
     
     Args:
-        lines (list): Document lines
-        start_idx (int): Start index
-        end_idx (int): End index
-        authors_normalized (list): Normalized author names
-        authors_original (list): Original author names
-    
+        lines (list): List of text lines
+        start_idx (int): Start index for search
+        end_idx (int): End index for search
+        authors_normalized (list): List of normalized author names
+        authors_original (list): List of original author names
+        
     Returns:
         tuple: (author_name, line_index) or (None, -1)
     """
     for i in range(start_idx, min(end_idx, len(lines))):
         line = lines[i].strip()
-        
-        author = extract_author_from_brackets(line, authors_normalized, authors_original)
+        if not line:
+            continue
+        author = extract_author_from_line(line, authors_normalized, authors_original)
         if author:
             return (author, i)
-        
-        author = extract_author_from_pattern(line, authors_normalized, authors_original)
-        if author:
-            return (author, i)
-        
-        matched_author, similarity = fuzzy_match_author(
-            line, authors_normalized, authors_original
-        )
-        if matched_author:
-            return (matched_author, i)
-    
     return (None, -1)
 
 
 def extract_doc_info(lines):
     """
-    Extract மலர் (doc_id) and இதழ் (doc_issue) from document.
+    Extract document ID and issue number from the document header.
     
     Args:
-        lines (list): Document lines
-    
+        lines (list): List of text lines from document
+        
     Returns:
-        tuple: (doc_id, doc_issue)
+        tuple: (doc_id, doc_issue) as strings
     """
-    doc_id = "Unknown"
-    doc_issue = "Unknown"
+    doc_id = "NA"
+    doc_issue = "NA"
     
     for line in lines[:50]:
         line_stripped = line.strip()
-        
         if 'மலர்' in line_stripped:
             match = re.search(r'மலர்\s*[:—-]?\s*(\d+)', line_stripped)
-            if match:
+            if match and len(match.group(1)) <= 2:
                 doc_id = match.group(1)
-        
         if 'இதழ்' in line_stripped:
             match = re.search(r'இதழ்\s*[:—-]?\s*(\d+)', line_stripped)
-            if match:
+            if match and len(match.group(1)) <= 2:
                 doc_issue = match.group(1)
     
     return (doc_id, doc_issue)
@@ -224,13 +189,11 @@ def extract_doc_info(lines):
 
 def extract_authors_alternative(lines):
     """
-    Alternative method to extract authors when no author list section exists.
-    
-    Pattern: 2+ empty lines → author name → content above (30+ chars)
+    Extract authors by detecting names after multiple blank lines.
     
     Args:
-        lines (list): Document lines
-    
+        lines (list): List of text lines from document
+        
     Returns:
         tuple: (authors_original, authors_normalized)
     """
@@ -241,7 +204,6 @@ def extract_authors_alternative(lines):
     i = 0
     while i < len(lines):
         line = lines[i].strip()
-        
         if not line:
             blank_count = 0
             while i < len(lines) and not lines[i].strip():
@@ -249,18 +211,15 @@ def extract_authors_alternative(lines):
                 i += 1
             
             if blank_count >= 2 and i < len(lines):
-                potential_author_idx = i
-                potential_author = lines[potential_author_idx].strip()
+                potential_author = lines[i].strip()
                 
                 if potential_author and 3 <= len(potential_author) <= 30:
                     has_content = False
                     for offset in [1, 2, 3]:
-                        check_idx = potential_author_idx - offset
-                        if check_idx >= 0:
-                            check_line = lines[check_idx].strip()
-                            if len(check_line) > 30:
-                                has_content = True
-                                break
+                        check_idx = i - offset
+                        if check_idx >= 0 and len(lines[check_idx].strip()) > 30:
+                            has_content = True
+                            break
                     
                     if has_content:
                         normalized = normalize_text(potential_author)
@@ -268,68 +227,51 @@ def extract_authors_alternative(lines):
                             authors_original.append(potential_author)
                             authors_normalized.append(normalized)
                             authors_set.add(normalized)
-        
         i += 1
-    
     return (authors_original, authors_normalized)
 
 
 def get_shared_authors(doc_id, doc_issue, all_files_authors):
     """
-    Get author list from other files with same doc_id and doc_issue.
+    Retrieve shared authors for a specific document from the global dictionary.
     
     Args:
         doc_id (str): Document ID
-        doc_issue (str): Document issue
-        all_files_authors (dict): Dictionary mapping (doc_id, doc_issue) to author lists
-    
+        doc_issue (str): Document issue number
+        all_files_authors (dict): Dictionary mapping (doc_id, doc_issue) to authors
+        
     Returns:
-        tuple: (authors_original, authors_normalized) or ([], [])
+        tuple: (authors_original, authors_normalized)
     """
     key = (doc_id, doc_issue)
-    if key in all_files_authors:
-        return all_files_authors[key]
-    return ([], [])
+    return all_files_authors.get(key, ([], []))
 
 
 def get_intro_keywords():
     """
-    Get list of intro section keywords.
+    Get list of known introductory section keywords.
     
     Returns:
-        list: Intro keywords
+        list: List of Tamil keywords for intro sections
     """
     return [
-        "எங்கள் எண்ணம்",
-        "கலையுலகம்",
-        "வளரும் இலக்கியம்",
-        "காலமும் கருத்தும்",
-        "பாரதிதாசன் பரம்பரை",
-        "வள்ளுவர் விருந்து",
-        "பொது மேடை",
-        "செய்திப் பாட்டு",
-        "கலை உலகம்",
-        "அட்டைப் படம்",
-        "இந்தி வேண்டாம்!",
-        "இந்தி வந்தது, இந்தி!",
-        "உயர்திரு உல்லாசம் அவர்கட்கு",
-        "உயர்த்த உல்லாசம் அவர்கட்கு",
-        "வம்புமடம்",
-        "விமரிசனம்",
-        "கண்ட பயன்"
+        "எங்கள் எண்ணம்", "கலையுலகம்", "வளரும் இலக்கியம்", "காலமும் கருத்தும்",
+        "பாரதிதாசன் பரம்பரை", "வள்ளுவர் விருந்து", "பொது மேடை", "செய்திப் பாட்டு",
+        "கலை உலகம்", "அட்டைப் படம்", "இந்தி வேண்டாம்!", "இந்தி வந்தது, இந்தி!",
+        "உயர்திரு உல்லாசம் அவர்கட்கு"
     ]
 
 
 def count_consecutive_blanks(lines, start_idx):
     """
-    Count consecutive blank lines starting from start_idx.
+    Count consecutive blank lines starting from a given index.
     
     Args:
-        lines (list): Document lines
-        start_idx (int): Start index
-    
+        lines (list): List of text lines
+        start_idx (int): Starting index
+        
     Returns:
-        int: Count of consecutive blank lines
+        int: Number of consecutive blank lines
     """
     count = 0
     i = start_idx
@@ -341,15 +283,15 @@ def count_consecutive_blanks(lines, start_idx):
 
 def check_author_ahead(lines, current_idx, authors_normalized, authors_original, lookback=3):
     """
-    Check if author name appears within next few lines.
+    Check if an author name appears in the next few lines.
     
     Args:
-        lines (list): Document lines
-        current_idx (int): Current index
-        authors_normalized (list): Normalized author names
-        authors_original (list): Original author names
-        lookback (int): Number of lines to check ahead (default: 3)
-    
+        lines (list): List of text lines
+        current_idx (int): Current line index
+        authors_normalized (list): List of normalized author names
+        authors_original (list): List of original author names
+        lookback (int): Number of lines to look ahead
+        
     Returns:
         int or None: Index of author line if found, None otherwise
     """
@@ -362,14 +304,14 @@ def check_author_ahead(lines, current_idx, authors_normalized, authors_original,
 
 def check_keyword_ahead(lines, current_idx, intro_keywords, lookback=2):
     """
-    Check if intro keyword appears within next few lines.
+    Check if an intro keyword appears in the next few lines.
     
     Args:
-        lines (list): Document lines
-        current_idx (int): Current index
+        lines (list): List of text lines
+        current_idx (int): Current line index
         intro_keywords (list): List of intro keywords
-        lookback (int): Number of lines to check ahead (default: 2)
-    
+        lookback (int): Number of lines to look ahead
+        
     Returns:
         int or None: Index of keyword line if found, None otherwise
     """
@@ -382,186 +324,48 @@ def check_keyword_ahead(lines, current_idx, intro_keywords, lookback=2):
 
 
 def extract_intro_content_phase1(lines, keyword_idx, processed_lines, authors_normalized, 
-                                 authors_original, intro_keywords):
+                                authors_original, intro_keywords):
     """
-    PHASE 1: Extract intro content with strict stopping rules.
-    
-    Content stops when:
-    1. Author name found (stop 3 lines before)
-    2. Another keyword found (stop 2 lines before)
-    3. If both fail: 4+ consecutive blank lines
+    Extract content for intro sections identified by keywords in Phase 1.
     
     Args:
-        lines (list): Document lines
-        keyword_idx (int): Keyword line index
-        processed_lines (list): Boolean array of processed lines
-        authors_normalized (list): Normalized author names
-        authors_original (list): Original author names
+        lines (list): List of text lines
+        keyword_idx (int): Index of keyword line
+        processed_lines (list): Boolean list tracking processed lines
+        authors_normalized (list): List of normalized author names
+        authors_original (list): List of original author names
         intro_keywords (list): List of intro keywords
-    
+        
     Returns:
-        tuple: (content_text, end_index)
+        tuple: (content_text, end_index, author_if_found)
     """
     content_lines = []
     i = keyword_idx + 1
     
-    # Skip initial blank line
     if i < len(lines) and not lines[i].strip():
         i += 1
+    
+    keyword_line = lines[keyword_idx].strip()
+    has_author_in_keyword = extract_author_from_line(keyword_line, authors_normalized, authors_original)
     
     while i < len(lines):
         line = lines[i]
         stripped = line.strip()
         
-        # Check 1: Author ahead (3 lines)
         author_idx = check_author_ahead(lines, i, authors_normalized, authors_original, lookback=3)
         if author_idx is not None:
-            # Stop 3 lines before author
-            stop_at = author_idx - 3
-            if stop_at < i:
-                stop_at = i
+            stop_at = max(i, author_idx - 3)
             while len(content_lines) > stop_at - (keyword_idx + 1):
                 content_lines.pop()
             break
         
-        # Check 2: Keyword ahead (2 lines)
         keyword_idx_found = check_keyword_ahead(lines, i, intro_keywords, lookback=2)
         if keyword_idx_found is not None:
-            # Stop 2 lines before keyword
-            stop_at = keyword_idx_found - 2
-            if stop_at < i:
-                stop_at = i
+            stop_at = max(i, keyword_idx_found - 2)
             while len(content_lines) > stop_at - (keyword_idx + 1):
                 content_lines.pop()
             break
         
-        # Check 3: 4+ blank lines
-        if not stripped:
-            blank_count = count_consecutive_blanks(lines, i)
-            if blank_count >= 4:
-                # Remove trailing blanks
-                while content_lines and not content_lines[-1].strip():
-                    content_lines.pop()
-                break
-            else:
-                content_lines.append(line.rstrip())
-        else:
-            content_lines.append(line.rstrip())
-        
-        i += 1
-    
-    return ('\n'.join(content_lines), i)
-
-
-def extract_heading_above_author(lines, author_idx, authors_normalized, authors_original):
-    """
-    Extract heading from lines above author (≤25 chars).
-    
-    Two-step approach:
-    1. Check 1-2 lines directly above
-    2. Search upward with blank separator
-    
-    Args:
-        lines (list): Document lines
-        author_idx (int): Author line index
-        authors_normalized (list): Normalized author names
-        authors_original (list): Original author names
-    
-    Returns:
-        tuple: (heading, heading_start_idx) or (None, -1)
-    """
-    heading_lines = []
-    heading_indices = []
-    
-    # Step 1: Check direct lines above
-    if author_idx - 2 >= 0:
-        line2 = lines[author_idx - 2].strip()
-        matched_author, _ = fuzzy_match_author(line2, authors_normalized, authors_original)
-        if line2 and not matched_author and len(line2) <= 25 and '[' not in line2 and ':' not in line2:
-            heading_lines.insert(0, line2)
-            heading_indices.insert(0, author_idx - 2)
-    
-    if author_idx - 1 >= 0:
-        line1 = lines[author_idx - 1].strip()
-        matched_author, _ = fuzzy_match_author(line1, authors_normalized, authors_original)
-        if line1 and not matched_author and len(line1) <= 25 and '[' not in line1 and ':' not in line1:
-            heading_lines.append(line1)
-            heading_indices.append(author_idx - 1)
-    
-    if heading_lines:
-        return (' '.join(heading_lines), min(heading_indices))
-    
-    # Step 2: Search upward with blank separator
-    for i in range(author_idx - 1, -1, -1):
-        line_text = lines[i].strip()
-        
-        if not line_text:
-            continue
-        
-        if len(line_text) <= 25:
-            matched_author, _ = fuzzy_match_author(line_text, authors_normalized, authors_original)
-            
-            if not matched_author and '[' not in line_text and ':' not in line_text:
-                if i > 0 and not lines[i - 1].strip():
-                    return (line_text, i)
-    
-    return (None, -1)
-
-
-def extract_content_phase2_pattern_a(lines, author_idx, heading_start_idx, processed_lines,
-                                     authors_normalized, authors_original, intro_keywords):
-    """
-    PHASE 2 Pattern A: heading → author → content
-    
-    Extract content after author with stopping rules:
-    1. Author ahead (stop 3 lines before)
-    2. Keyword ahead (stop 2 lines before)
-    3. 4+ blank lines
-    
-    Args:
-        lines (list): Document lines
-        author_idx (int): Author line index
-        heading_start_idx (int): Heading start index
-        processed_lines (list): Boolean array
-        authors_normalized (list): Normalized author names
-        authors_original (list): Original author names
-        intro_keywords (list): List of intro keywords
-    
-    Returns:
-        tuple: (content_text, end_index)
-    """
-    content_lines = []
-    i = author_idx + 1
-    
-    # Skip initial blank
-    if i < len(lines) and not lines[i].strip():
-        i += 1
-    
-    while i < len(lines):
-        line = lines[i]
-        stripped = line.strip()
-        
-        # Check 1: Author ahead
-        author_idx_found = check_author_ahead(lines, i, authors_normalized, authors_original, lookback=3)
-        if author_idx_found is not None:
-            stop_at = author_idx_found - 3
-            if stop_at < i:
-                stop_at = i
-            while len(content_lines) > stop_at - (author_idx + 1):
-                content_lines.pop()
-            break
-        
-        # Check 2: Keyword ahead
-        keyword_idx_found = check_keyword_ahead(lines, i, intro_keywords, lookback=2)
-        if keyword_idx_found is not None:
-            stop_at = keyword_idx_found - 2
-            if stop_at < i:
-                stop_at = i
-            while len(content_lines) > stop_at - (author_idx + 1):
-                content_lines.pop()
-            break
-        
-        # Check 3: 4+ blank lines
         if not stripped:
             blank_count = count_consecutive_blanks(lines, i)
             if blank_count >= 4:
@@ -575,153 +379,554 @@ def extract_content_phase2_pattern_a(lines, author_idx, heading_start_idx, proce
         
         i += 1
     
-    return ('\n'.join(content_lines), i)
+    return ('\n'.join(content_lines), i, has_author_in_keyword)
 
 
-def extract_content_phase2_pattern_b(lines, author_idx, authors_normalized, authors_original, intro_keywords):
+def extract_pattern_a_forward(lines, start_idx, end_idx, authors_normalized, authors_original, processed_lines, intro_keywords):
     """
-    PHASE 2 Pattern B: heading → content → author
-    
-    Extract heading and content before author.
+    Extract articles following Pattern A: HEADING → AUTHOR → CONTENT.
     
     Args:
-        lines (list): Document lines
-        author_idx (int): Author line index
-        authors_normalized (list): Normalized author names
-        authors_original (list): Original author names
+        lines (list): List of text lines
+        start_idx (int): Start index for extraction
+        end_idx (int): End index for extraction
+        authors_normalized (list): List of normalized author names
+        authors_original (list): List of original author names
+        processed_lines (list): Boolean list tracking processed lines
         intro_keywords (list): List of intro keywords
-    
+        
     Returns:
-        tuple: (heading, content, heading_start_idx) or (None, None, -1)
+        list: List of extracted article dictionaries
     """
-    if author_idx < 2:
-        return (None, None, -1)
-    
-    # Check if 2-3 lines above have >25 chars
-    has_long_content = False
-    for offset in [2, 3]:
-        check_idx = author_idx - offset
-        if check_idx >= 0:
-            check_line = lines[check_idx].strip()
-            if len(check_line) > 25:
-                has_long_content = True
-                break
-    
-    if not has_long_content:
-        return (None, None, -1)
-    
-    # Traverse upward to find heading
-    content_lines = []
-    heading = None
-    heading_idx = -1
-    
-    for i in range(author_idx - 1, -1, -1):
-        line_text = lines[i].strip()
-        
-        if not line_text:
-            continue
-        
-        if len(line_text) <= 25:
-            matched_author, _ = fuzzy_match_author(line_text, authors_normalized, authors_original)
-            
-            if not matched_author and '[' not in line_text and ':' not in line_text:
-                if i > 0 and not lines[i - 1].strip():
-                    heading = line_text
-                    heading_idx = i
-                    break
-                elif i == 0:
-                    heading = line_text
-                    heading_idx = i
-                    break
-        
-        content_lines.insert(0, lines[i].rstrip())
-    
-    if heading and content_lines:
-        return (heading, '\n'.join(content_lines), heading_idx)
-    
-    return (None, None, -1)
-
-
-def extract_remaining_content(lines, start_idx, processed_lines, authors_normalized, 
-                              authors_original, intro_keywords):
-    """
-    PHASE 3: Extract remaining unprocessed content.
-    
-    Apply 4+ empty lines logic as stopping point.
-    
-    Args:
-        lines (list): Document lines
-        start_idx (int): Start index
-        processed_lines (list): Boolean array
-        authors_normalized (list): Normalized author names
-        authors_original (list): Original author names
-        intro_keywords (list): List of intro keywords
-    
-    Returns:
-        tuple: (heading, content, end_index)
-    """
-    heading = ""
-    content_lines = []
+    articles = []
     i = start_idx
     
-    # Try to extract heading from first line
-    first_line = lines[i].strip()
-    if first_line and len(first_line) <= 25:
-        matched_author, _ = fuzzy_match_author(first_line, authors_normalized, authors_original)
-        if not matched_author and '[' not in first_line and ':' not in first_line:
-            if is_valid_heading(first_line):
-                heading = first_line
-                i += 1
+   
     
-    while i < len(lines):
+    while i < end_idx:
         if processed_lines[i]:
-            break
+            i += 1
+            continue
         
-        line = lines[i]
-        stripped = line.strip()
+        line = lines[i].strip()
         
-        # Check for 4+ blank lines
-        if not stripped:
-            blank_count = count_consecutive_blanks(lines, i)
-            if blank_count >= 4:
-                while content_lines and not content_lines[-1].strip():
-                    content_lines.pop()
-                break
-            else:
-                content_lines.append(line.rstrip())
-        else:
-            content_lines.append(line.rstrip())
+        if not line:
+            i += 1
+            continue
+        
+        matched_author = extract_author_from_line(line, authors_normalized, authors_original)
+        
+        if matched_author:
+            author_idx = i
+            
+            heading = None
+            heading_idx = -1
+            
+            for check_offset in [3, 2, 1]:
+                check_idx = author_idx - check_offset
+                if check_idx >= start_idx and not processed_lines[check_idx]:
+                    potential_heading = lines[check_idx].strip()
+                    if potential_heading and len(potential_heading) < 25 and is_valid_heading(potential_heading):
+                        if not extract_author_from_line(potential_heading, authors_normalized, authors_original):
+                            heading = potential_heading
+                            heading_idx = check_idx
+                            break
+            
+            if not heading:
+                i += 1
+                continue
+            
+            
+            
+            content_start = author_idx + 1
+            while content_start < end_idx and not lines[content_start].strip() and (content_start - author_idx) <= 3:
+                content_start += 1
+            
+            if content_start >= end_idx:
+                i += 1
+                continue
+            
+            content_lines = []
+            j = content_start
+            
+            while j < end_idx:
+                if processed_lines[j]:
+                    break
+                
+                current_line = lines[j]
+                stripped = current_line.strip()
+                
+                if stripped:
+                    next_author = extract_author_from_line(current_line, authors_normalized, authors_original)
+                    if next_author:
+                        break
+                
+                if stripped:
+                    for keyword in intro_keywords:
+                        if keyword in stripped:
+                            while content_lines and not content_lines[-1].strip():
+                                content_lines.pop()
+                            j -= 1
+                            break
+                    if j < end_idx and any(kw in stripped for kw in intro_keywords):
+                        break
+                
+                if not stripped:
+                    blank_count = count_consecutive_blanks(lines, j)
+                    if blank_count >= 4:
+                        break
+                
+                content_lines.append(current_line.rstrip())
+                j += 1
+            
+            while content_lines and not content_lines[-1].strip():
+                content_lines.pop()
+            
+            content = '\n'.join(content_lines)
+            
+            if content.strip() and count_content_lines(content) >= 4:
+                for k in range(heading_idx, j):
+                    if k < len(lines):
+                        processed_lines[k] = True
+                
+                articles.append({
+                    "heading": heading,
+                    "author": matched_author,
+                    "content": content,
+                    "start_idx": heading_idx,
+                    "end_idx": j
+                })
+               
+                
+                i = j
+                continue
         
         i += 1
     
-    content = '\n'.join(content_lines)
-    return (heading, content, i)
+   
+    return articles
+
+
+def extract_pattern_b_forward(lines, start_idx, end_idx, authors_normalized, authors_original, processed_lines, intro_keywords):
+    """
+    Extract articles following Pattern B: AUTHOR → HEADING → CONTENT.
+    
+    Args:
+        lines (list): List of text lines
+        start_idx (int): Start index for extraction
+        end_idx (int): End index for extraction
+        authors_normalized (list): List of normalized author names
+        authors_original (list): List of original author names
+        processed_lines (list): Boolean list tracking processed lines
+        intro_keywords (list): List of intro keywords
+        
+    Returns:
+        list: List of extracted article dictionaries
+    """
+    articles = []
+    i = start_idx
+    
+   
+    
+    while i < end_idx:
+        if processed_lines[i]:
+            i += 1
+            continue
+        
+        line = lines[i].strip()
+        
+        if not line:
+            i += 1
+            continue
+        
+        matched_author = extract_author_from_line(line, authors_normalized, authors_original)
+        
+        if matched_author:
+            author_idx = i
+            
+            heading = None
+            heading_idx = -1
+            
+            for check_offset in [1, 2]:
+                check_idx = author_idx + check_offset
+                if check_idx < end_idx and not processed_lines[check_idx]:
+                    potential_heading = lines[check_idx].strip()
+                    if potential_heading and len(potential_heading) < 25 and is_valid_heading(potential_heading):
+                        if not extract_author_from_line(potential_heading, authors_normalized, authors_original):
+                            heading = potential_heading
+                            heading_idx = check_idx
+                            break
+            
+            if not heading:
+                i += 1
+                continue
+            
+           
+            
+            content_start = heading_idx + 1
+            while content_start < end_idx and not lines[content_start].strip() and (content_start - heading_idx) <= 3:
+                content_start += 1
+            
+            if content_start >= end_idx:
+                i += 1
+                continue
+            
+            content_lines = []
+            j = content_start
+            
+            while j < end_idx:
+                if processed_lines[j]:
+                    break
+                
+                current_line = lines[j]
+                stripped = current_line.strip()
+                
+                if stripped:
+                    next_author = extract_author_from_line(current_line, authors_normalized, authors_original)
+                    if next_author:
+                        break
+                
+                if stripped:
+                    for keyword in intro_keywords:
+                        if keyword in stripped:
+                            while content_lines and not content_lines[-1].strip():
+                                content_lines.pop()
+                            break
+                    if any(kw in stripped for kw in intro_keywords):
+                        break
+                
+                if not stripped:
+                    blank_count = count_consecutive_blanks(lines, j)
+                    if blank_count >= 4:
+                        break
+                
+                content_lines.append(current_line.rstrip())
+                j += 1
+            
+            while content_lines and not content_lines[-1].strip():
+                content_lines.pop()
+            
+            content = '\n'.join(content_lines)
+            
+            if content.strip() and count_content_lines(content) >= 4:
+                for k in range(author_idx, j):
+                    if k < len(lines):
+                        processed_lines[k] = True
+                
+                articles.append({
+                    "heading": heading,
+                    "author": matched_author,
+                    "content": content,
+                    "start_idx": author_idx,
+                    "end_idx": j
+                })
+              
+                i = j
+                continue
+        
+        i += 1
+    
+  
+    return articles
+
+
+def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized, authors_original, processed_lines, intro_keywords):
+    """
+    Extract articles following Pattern C: HEADING ← CONTENT ← AUTHOR (reverse extraction).
+    
+    Args:
+        lines (list): List of text lines
+        start_idx (int): Start index for extraction
+        end_idx (int): End index for extraction
+        authors_normalized (list): List of normalized author names
+        authors_original (list): List of original author names
+        processed_lines (list): Boolean list tracking processed lines
+        intro_keywords (list): List of intro keywords
+        
+    Returns:
+        list: List of extracted article dictionaries
+    """
+    articles = []
+    i = start_idx
+    
+   
+    
+    while i < end_idx:
+        if processed_lines[i]:
+            i += 1
+            continue
+        
+        line = lines[i].strip()
+        
+        if not line:
+            i += 1
+            continue
+        
+        matched_author = None
+        
+        if line.startswith('—') or line.startswith('-') or line.startswith('–'):
+            matched_author = extract_author_from_line(line, authors_normalized, authors_original)
+        else:
+            temp_author = extract_author_from_line(line, authors_normalized, authors_original)
+            if temp_author and len(line) <= 30:
+                matched_author = temp_author
+        
+        if matched_author:
+            author_idx = i
+          
+            
+            content_end = author_idx - 1
+            
+            while content_end >= start_idx and not lines[content_end].strip():
+                content_end -= 1
+            
+            if content_end < start_idx:
+                i += 1
+                continue
+            
+            content_lines = []
+            j = content_end
+            
+            while j >= start_idx:
+                if processed_lines[j]:
+                    break
+                
+                current_line = lines[j]
+                stripped = current_line.strip()
+                
+                if stripped and (stripped.startswith('—') or stripped.startswith('-') or stripped.startswith('–')):
+                    prev_author = extract_author_from_line(current_line, authors_normalized, authors_original)
+                    if prev_author:
+                        break
+                
+                if stripped:
+                    found_keyword = False
+                    for keyword in intro_keywords:
+                        if keyword in stripped:
+                            found_keyword = True
+                            break
+                    if found_keyword:
+                        break
+                
+                if not stripped:
+                    blank_count = 0
+                    k = j
+                    while k >= start_idx and not lines[k].strip():
+                        blank_count += 1
+                        k -= 1
+                        if blank_count >= 4:
+                            break
+                    if blank_count >= 4:
+                        j = k
+                        break
+                
+                content_lines.insert(0, current_line.rstrip())
+                j -= 1
+            
+            content_start = j + 1
+            
+            while content_lines and not content_lines[0].strip():
+                content_lines.pop(0)
+                content_start += 1
+            
+            while content_lines and not content_lines[-1].strip():
+                content_lines.pop()
+            
+            if not content_lines or count_content_lines('\n'.join(content_lines)) < 4:
+             
+                i += 1
+                continue
+            
+            heading_idx = content_start - 1
+            
+            while heading_idx >= start_idx and not lines[heading_idx].strip():
+                heading_idx -= 1
+            
+            if heading_idx < start_idx:
+              
+                i += 1
+                continue
+            
+            potential_heading = lines[heading_idx].strip()
+            
+            if not potential_heading:
+               
+                i += 1
+                continue
+            
+            if len(potential_heading) >= 25:
+              
+                i += 1
+                continue
+            
+            if potential_heading.startswith('—') or potential_heading.startswith('-') or potential_heading.startswith('–'):
+             
+                i += 1
+                continue
+            
+            if extract_author_from_line(potential_heading, authors_normalized, authors_original):
+              
+                i += 1
+                continue
+            
+            two_blank_above = False
+            if heading_idx >= 2:
+                if not lines[heading_idx - 1].strip() and not lines[heading_idx - 2].strip():
+                    two_blank_above = True
+            
+            two_blank_below = False
+            if heading_idx + 2 < len(lines):
+                if not lines[heading_idx + 1].strip() and not lines[heading_idx + 2].strip():
+                    two_blank_below = True
+            
+            if not (two_blank_above and two_blank_below):
+              
+                i += 1
+                continue
+            
+            heading = potential_heading
+            content = '\n'.join(content_lines)
+            
+          
+            for k in range(heading_idx, author_idx + 1):
+                if k < len(lines):
+                    processed_lines[k] = True
+            
+            articles.append({
+                "heading": heading,
+                "author": matched_author,
+                "content": content,
+                "start_idx": heading_idx,
+                "end_idx": author_idx + 1
+            })
+            
+            i = author_idx + 1
+            continue
+        
+        i += 1
+    
+    
+    return articles
+
+
+def extract_remaining_content(lines, start_idx, processed_lines):
+    """
+    Extract remaining unprocessed content using blank space logic.
+    
+    Args:
+        lines (list): List of text lines
+        start_idx (int): Starting index for extraction
+        processed_lines (list): Boolean list tracking processed lines
+        
+    Returns:
+        list: List of extracted content sections
+    """
+    groups = []
+    i = start_idx
+    
+  
+    total_lines = len(lines)
+    
+    while i < total_lines:
+        if processed_lines[i]:
+            i += 1
+            continue
+        
+        if not lines[i].strip():
+            blank_count = count_consecutive_blanks(lines, i)
+            if blank_count >= 3:
+                for j in range(i, min(i + blank_count, total_lines)):
+                    processed_lines[j] = True
+                i += blank_count
+            else:
+                i += 1
+            continue
+        
+        group_start = i
+        content_lines = []
+        
+        while i < total_lines:
+            if processed_lines[i]:
+                break
+            
+            line = lines[i]
+            stripped = line.strip()
+            
+            if not stripped:
+                blank_count = count_consecutive_blanks(lines, i)
+                if blank_count >= 3:
+                    while content_lines and not content_lines[-1].strip():
+                        content_lines.pop()
+                    break
+                else:
+                    content_lines.append(line.rstrip())
+                    i += 1
+            else:
+                content_lines.append(line.rstrip())
+                i += 1
+        
+        if content_lines:
+            last_line = content_lines[-1].strip() if content_lines else ""
+            
+            if last_line and (last_line.startswith('—') or last_line.startswith('-') or last_line.startswith('–')):
+                
+                for j in range(group_start, i):
+                    if j < total_lines:
+                        processed_lines[j] = True
+                continue
+            
+            first_line = content_lines[0].strip() if content_lines else ""
+            
+            if first_line and len(first_line) < 25 and is_valid_heading(first_line):
+                heading = first_line
+                remaining = content_lines[1:]
+                
+                while remaining and not remaining[0].strip():
+                    remaining.pop(0)
+                
+                content = '\n'.join(remaining)
+                
+                if content.strip() and count_content_lines(content) >= 4:
+                    groups.append({
+                        "heading": heading,
+                        "author": "NA",
+                        "content": content,
+                        "start_idx": group_start,
+                        "end_idx": i
+                    })
+                   
+               
+            for j in range(group_start, i):
+                if j < total_lines:
+                    processed_lines[j] = True
+        
+        if i < total_lines and not lines[i].strip():
+            blank_count = count_consecutive_blanks(lines, i)
+            for j in range(i, min(i + blank_count, total_lines)):
+                if j < total_lines:
+                    processed_lines[j] = True
+            i += blank_count
+    
+   
+    return groups
 
 
 def parse_tamil_document(file_path, shared_authors_dict):
     """
-    Parse Tamil TXT document with final enhanced workflow.
-    
-    Sequential Processing:
-    1. Extract metadata and authors
-    2. PHASE 1: Extract intro sections (keywords)
-    3. PHASE 2: Extract articles with authors (both patterns)
-    4. PHASE 3: Extract remaining content
+    Parse a Tamil document file and extract intro sections, articles, and authors.
     
     Args:
-        file_path (str): Path to TXT file
-        shared_authors_dict (dict): Dictionary of shared authors
-    
+        file_path (str): Path to the text file
+        shared_authors_dict (dict): Dictionary of shared authors across documents
+        
     Returns:
-        dict: Parsed document data
+        dict: Dictionary containing intro, articles, authors_list, doc_id, and doc_issue
     """
     with open(file_path, 'r', encoding='utf-8') as f:
         lines = f.readlines()
     
-    # Step 2.1: Extract Document Metadata
     doc_id, doc_issue = extract_doc_info(lines)
     
-    # Step 2.2: Author List Extraction
     authors_original = []
     authors_normalized = []
     start_idx = -1
@@ -735,13 +940,10 @@ def parse_tamil_document(file_path, shared_authors_dict):
             break
     
     if start_idx == -1 or end_idx == -1:
-        print(f"  ℹ No author list section found. Checking shared authors...")
-        authors_original, authors_normalized = get_shared_authors(
-            doc_id, doc_issue, shared_authors_dict
-        )
-        
+      
+        authors_original, authors_normalized = get_shared_authors(doc_id, doc_issue, shared_authors_dict)
         if not authors_original:
-            print(f"  ℹ No shared authors. Using alternative extraction...")
+           
             authors_original, authors_normalized = extract_authors_alternative(lines)
     else:
         for i in range(start_idx + 1, end_idx):
@@ -750,10 +952,11 @@ def parse_tamil_document(file_path, shared_authors_dict):
                 authors_original.append(author_name)
                 authors_normalized.append(normalize_text(author_name))
     
-    parse_start_idx = end_idx + 1 if end_idx != -1 else 0
+   
     
-    # Initialize processed lines tracker
+    parse_start_idx = end_idx + 1 if end_idx != -1 else 0
     processed_lines = [False] * len(lines)
+    
     if start_idx != -1 and end_idx != -1:
         for i in range(start_idx, end_idx + 1):
             processed_lines[i] = True
@@ -763,18 +966,18 @@ def parse_tamil_document(file_path, shared_authors_dict):
     intro = []
     article_no = 1
     
-    # PHASE 1: Extract Intro Sections (Keywords)
-    print(f"  → PHASE 1: Extracting intro sections...")
+   
     i = parse_start_idx
+    phase1_count = 0
+    
     while i < len(lines):
         if processed_lines[i]:
             i += 1
             continue
         
         line = lines[i].strip()
-        
-        # Check for intro keyword
         matched_keyword = None
+        
         for keyword in intro_keywords:
             if keyword in line:
                 if i == 0 or not lines[i - 1].strip():
@@ -782,154 +985,107 @@ def parse_tamil_document(file_path, shared_authors_dict):
                     break
         
         if matched_keyword:
-            content, content_end_idx = extract_intro_content_phase1(
-                lines, i, processed_lines, authors_normalized, 
-                authors_original, intro_keywords
+            content, content_end_idx, has_author = extract_intro_content_phase1(
+                lines, i, processed_lines, authors_normalized, authors_original, intro_keywords
             )
             
-            # Mark as processed
             for j in range(i, content_end_idx):
                 if j < len(lines):
                     processed_lines[j] = True
             
-            content_line_count = len([ln for ln in content.split('\n') if ln.strip()])
-            if content.strip() and count_words(content) >= 50 and content_line_count > 2:
-                intro.append({
-                    "doc_id": doc_id,
-                    "doc_issue": doc_issue,
-                    "heading": matched_keyword,
-                    "content": content
-                })
-            
-            i = content_end_idx
-        else:
-            i += 1
-    
-    # PHASE 2: Extract Articles with Authors
-    print(f"  → PHASE 2: Extracting articles with authors...")
-    i = parse_start_idx
-    while i < len(lines):
-        if processed_lines[i]:
-            i += 1
-            continue
-        
-        # Look for author
-        author_found, author_idx = find_author_in_range(
-            lines, i, i + 1, authors_normalized, authors_original
-        )
-        
-        if author_found:
-            # Try Pattern A: heading → author → content
-            heading, heading_idx = extract_heading_above_author(
-                lines, author_idx, authors_normalized, authors_original
-            )
-            
-            if heading and is_valid_heading(heading):
-                # Extract content after author
-                content, content_end_idx = extract_content_phase2_pattern_a(
-                    lines, author_idx, heading_idx, processed_lines,
-                    authors_normalized, authors_original, intro_keywords
-                )
-                
-                # Mark as processed
-                if heading_idx >= 0:
-                    for j in range(heading_idx, content_end_idx):
-                        if j < len(lines):
-                            processed_lines[j] = True
-                
-                content_line_count = len([ln for ln in content.split('\n') if ln.strip()])
-                if content.strip() and count_words(content) >= 50 and content_line_count > 2:
+            if content.strip() and count_content_lines(content) >= 4:
+                if has_author:
                     articles.append({
                         "doc_id": doc_id,
                         "doc_issue": doc_issue,
                         "article_no": article_no,
-                        "article_heading": heading,
-                        "article_author_name": author_found,
+                        "article_heading": matched_keyword,
+                        "article_author_name": has_author,
                         "article_content": content
                     })
                     article_no += 1
-                
-                i = content_end_idx
-            else:
-                # Try Pattern B: heading → content → author
-                heading_b, content_b, heading_idx_b = extract_content_phase2_pattern_b(
-                    lines, author_idx, authors_normalized, authors_original, intro_keywords
-                )
-                
-                if heading_b and content_b and is_valid_heading(heading_b):
-                    # Mark as processed
-                    for j in range(heading_idx_b, author_idx + 1):
-                        if j < len(lines):
-                            processed_lines[j] = True
-                    
-                    content_line_count = len([ln for ln in content_b.split('\n') if ln.strip()])
-                    if count_words(content_b) >= 50 and content_line_count > 2:
-                        articles.append({
-                            "doc_id": doc_id,
-                            "doc_issue": doc_issue,
-                            "article_no": article_no,
-                            "article_heading": heading_b,
-                            "article_author_name": author_found,
-                            "article_content": content_b
-                        })
-                        article_no += 1
-                    
-                    i = author_idx + 1
+                   
                 else:
-                    i += 1
-        else:
-            i += 1
-    
-    # PHASE 3: Extract Remaining Content
-    print(f"  → PHASE 3: Extracting remaining content...")
-    i = parse_start_idx
-    while i < len(lines):
-        if processed_lines[i]:
-            i += 1
-            continue
-        
-        line = lines[i].strip()
-        
-        # Skip large blank sections
-        if not line:
-            blank_count = count_consecutive_blanks(lines, i)
-            if blank_count >= 4:
-                for j in range(i, i + blank_count):
-                    if j < len(lines):
-                        processed_lines[j] = True
-                i += blank_count
-                continue
-        
-        if line:
-            heading, content, content_end_idx = extract_remaining_content(
-                lines, i, processed_lines, authors_normalized, 
-                authors_original, intro_keywords
-            )
-            
-            # Mark as processed
-            for j in range(i, content_end_idx):
-                if j < len(lines):
-                    processed_lines[j] = True
-            
-            content_line_count = len([ln for ln in content.split('\n') if ln.strip()])
-            
-            # Only add if heading is valid
-            if heading and is_valid_heading(heading) and content.strip() and count_words(content) >= 50 and content_line_count > 2:
-                articles.append({
-                    "doc_id": doc_id,
-                    "doc_issue": doc_issue,
-                    "article_no": article_no,
-                    "article_heading": heading,
-                    "article_author_name": "NA",
-                    "article_content": content
-                })
-                article_no += 1
+                    intro.append({
+                        "doc_id": doc_id,
+                        "doc_issue": doc_issue,
+                        "heading": matched_keyword,
+                        "content": content
+                    })
+                    phase1_count += 1
+                   
             
             i = content_end_idx
         else:
             i += 1
     
-    # Prepare authors list
+    
+    pattern_a_articles = extract_pattern_a_forward(
+        lines, parse_start_idx, len(lines), 
+        authors_normalized, authors_original, processed_lines, intro_keywords
+    )
+    
+    for article in pattern_a_articles:
+        articles.append({
+            "doc_id": doc_id,
+            "doc_issue": doc_issue,
+            "article_no": article_no,
+            "article_heading": article["heading"],
+            "article_author_name": article["author"],
+            "article_content": article["content"]
+        })
+        article_no += 1
+    
+
+    pattern_b_articles = extract_pattern_b_forward(
+        lines, parse_start_idx, len(lines),
+        authors_normalized, authors_original, processed_lines, intro_keywords
+    )
+    
+    for article in pattern_b_articles:
+        articles.append({
+            "doc_id": doc_id,
+            "doc_issue": doc_issue,
+            "article_no": article_no,
+            "article_heading": article["heading"],
+            "article_author_name": article["author"],
+            "article_content": article["content"]
+        })
+        article_no += 1
+    
+   
+    pattern_c_articles = extract_pattern_c_reverse(
+        lines, parse_start_idx, len(lines),
+        authors_normalized, authors_original, processed_lines, intro_keywords
+    )
+    
+    for article in pattern_c_articles:
+        articles.append({
+            "doc_id": doc_id,
+            "doc_issue": doc_issue,
+            "article_no": article_no,
+            "article_heading": article["heading"],
+            "article_author_name": article["author"],
+            "article_content": article["content"]
+        })
+        article_no += 1
+    
+   
+    remaining_articles = extract_remaining_content(
+        lines, parse_start_idx, processed_lines
+    )
+    
+    for article in remaining_articles:
+        articles.append({
+            "doc_id": doc_id,
+            "doc_issue": doc_issue,
+            "article_no": article_no,
+            "article_heading": article["heading"],
+            "article_author_name": article["author"],
+            "article_content": article["content"]
+        })
+        article_no += 1
+    
     authors_list = []
     for author in authors_original:
         authors_list.append({
@@ -937,6 +1093,8 @@ def parse_tamil_document(file_path, shared_authors_dict):
             "doc_issue": doc_issue,
             "author_name": author
         })
+    
+    
     
     return {
         "intro": intro,
@@ -949,15 +1107,15 @@ def parse_tamil_document(file_path, shared_authors_dict):
 
 def build_shared_authors_dict(root_folder_path):
     """
-    Build dictionary of authors indexed by (doc_id, doc_issue).
+    Build a dictionary mapping document IDs to their authors across all files.
     
     Args:
-        root_folder_path (Path): Root folder path
-    
+        root_folder_path (Path): Root folder containing text files
+        
     Returns:
-        dict: Dictionary mapping (doc_id, doc_issue) to author lists
+        dict: Dictionary mapping (doc_id, doc_issue) to (authors_original, authors_normalized)
     """
-    print("Building shared authors dictionary...")
+    
     shared_authors = {}
     
     txt_files = list(root_folder_path.rglob("*.txt"))
@@ -968,7 +1126,6 @@ def build_shared_authors_dict(root_folder_path):
                 lines = f.readlines()
             
             doc_id, doc_issue = extract_doc_info(lines)
-            
             start_idx = -1
             end_idx = -1
             
@@ -992,55 +1149,45 @@ def build_shared_authors_dict(root_folder_path):
                 key = (doc_id, doc_issue)
                 if key not in shared_authors and authors_original:
                     shared_authors[key] = (authors_original, authors_normalized)
-                    print(f"  ✓ Found authors for {doc_id}/{doc_issue}: {len(authors_original)} authors")
-        
+                   
         except Exception as e:
-            print(f"  ✗ Error: {str(e)}")
+            
             continue
     
-    print(f"Dictionary built: {len(shared_authors)} keys\n")
+    
     return shared_authors
 
 
 def process_folder(root_folder_path, output_root_folder="output_json"):
     """
-    Process all TXT files in root folder.
-    
-    Creates:
-    - {filename}.json for each document
-    - {folder}_authors.json for each folder (consolidated, no duplicates)
+    Process all text files in a folder and extract structured content.
     
     Args:
-        root_folder_path (str): Root folder path
-        output_root_folder (str): Output folder path
+        root_folder_path (str): Path to input folder containing text files
+        output_root_folder (str): Path to output folder for JSON files
     """
     root_path = Path(root_folder_path)
     output_root = Path(output_root_folder)
     
     if not root_path.exists():
-        print(f"Error: Folder '{root_folder_path}' does not exist!")
+        
         return
     
     output_root.mkdir(parents=True, exist_ok=True)
-    
     txt_files = list(root_path.rglob("*.txt"))
     
     if not txt_files:
-        print(f"No TXT files found in '{root_folder_path}'.")
+       
         return
     
-    print(f"Found {len(txt_files)} TXT file(s)\n")
     
-    # Build shared authors dictionary
+    
     shared_authors_dict = build_shared_authors_dict(root_path)
-    
-    # Track authors by folder and (doc_id, doc_issue)
     folder_authors = defaultdict(lambda: defaultdict(set))
     
-    # Process each file
     for txt_file in txt_files:
         try:
-            print(f"Processing: {txt_file.name}")
+           
             
             result = parse_tamil_document(str(txt_file), shared_authors_dict)
             
@@ -1050,7 +1197,6 @@ def process_folder(root_folder_path, output_root_folder="output_json"):
             
             base_name = txt_file.stem
             
-            # Create {filename}.json
             content_json_path = output_folder / f"{base_name}.json"
             with open(content_json_path, 'w', encoding='utf-8') as f:
                 json.dump({
@@ -1058,27 +1204,22 @@ def process_folder(root_folder_path, output_root_folder="output_json"):
                     "articles": result["articles"]
                 }, f, ensure_ascii=False, indent=2)
             
-            print(f"  ✓ Created: {content_json_path.name}")
+          
             
-            # Collect authors for folder (grouped by doc_id/doc_issue)
             folder_key = relative_path.parent
             doc_key = (result["doc_id"], result["doc_issue"])
             for author_info in result["authors_list"]:
                 folder_authors[folder_key][doc_key].add(author_info["author_name"])
             
-            print(f"  ✓ Processed successfully\n")
-            
         except Exception as e:
-            print(f"  ✗ Error: {str(e)}\n")
+          
             continue
-    
-    # Create consolidated authors files per folder
-    print("Creating consolidated authors files...")
+
+   
     for folder_key, doc_authors_dict in folder_authors.items():
         output_folder = output_root / folder_key
         folder_name = folder_key.name if folder_key.name else "root"
         
-        # Build consolidated structure
         consolidated_authors = []
         for (doc_id, doc_issue), authors_set in doc_authors_dict.items():
             consolidated_authors.append({
@@ -1091,28 +1232,12 @@ def process_folder(root_folder_path, output_root_folder="output_json"):
         with open(authors_json_path, 'w', encoding='utf-8') as f:
             json.dump(consolidated_authors, f, ensure_ascii=False, indent=2)
         
-        print(f"  ✓ Created: {authors_json_path.name}")
-    
-    print(f"\n{'='*60}")
-    print(f"Processing complete!")
-    print(f"Output folder: {output_root.absolute()}")
-    print(f"{'='*60}")
-
+       
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("Tamil TXT Document Parser - Enhanced Version")
-    print("=" * 60)
-    print()
-
-    # --- Set your folder paths here ---
+   
+    print("Processing....")
     root_folder = "extracted_texts"
     output_folder = "output"
-
-    print(f"\nInput folder: {root_folder}")
-    print(f"Output folder: {output_folder}\n")
-
-    print("=" * 60)
-    print()
-
     process_folder(root_folder, output_folder)
+    print("completed.")
