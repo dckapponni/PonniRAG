@@ -1,7 +1,7 @@
-from difflib import SequenceMatcher
+
 from pathlib import Path
-from doc_utils  import extract_doc_info
-from text_processing   import find_author_in_range, normalize_text
+from doc_utils import extract_doc_info
+from text_processing import find_author_in_range, normalize_text
 
 def check_author_ahead(lines, current_idx, authors_normalized, authors_original, lookback=3):
     """
