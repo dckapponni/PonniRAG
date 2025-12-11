@@ -1,65 +1,67 @@
-import os
 import time
 import docx2txt
-from config import INPUT_FOLDER, OUTPUT_FOLDER, COMBINED_OUTPUT_FILE
+import boto3
+from io import BytesIO
+from config.config import BUCKET_NAME, REGION_NAME, INPUT_PREFIX, OUTPUT_PREFIX
 
-docx_files = []
-for root, dirs, files in os.walk(INPUT_FOLDER):
-    for f in files:
-        if f.endswith(".docx"):
-            docx_files.append(os.path.join(root, f))
+# Initialize S3 client
+s3 = boto3.client('s3', region_name=REGION_NAME)
 
-print(f"Found {len(docx_files)} .docx files")
-print("=" * 80)
+def list_docx_files(bucket: str, prefix: str):
+    """List all .docx files under a given S3 prefix"""
+    files = []
+    paginator = s3.get_paginator('list_objects_v2')
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get('Contents', []):
+            if obj['Key'].endswith('.docx'):
+                files.append(obj['Key'])
+    return files
 
-total_start_time = time.time()
+def extract_text_from_s3_docx(bucket: str, key: str):
+    """Download a .docx file from S3 and extract its text"""
+    s3_object = s3.get_object(Bucket=bucket, Key=key)
+    docx_content = BytesIO(s3_object['Body'].read())
+    text = docx2txt.process(docx_content)
+    return text
 
-with open(COMBINED_OUTPUT_FILE, "w", encoding="utf-8") as combined_file:
-    for idx, input_path in enumerate(docx_files, 1):
+def upload_text_to_s3(bucket: str, key: str, text: str):
+    """Upload extracted text to S3"""
+    s3.put_object(Bucket=bucket, Key=key, Body=text.encode('utf-8'))
 
-        docx_file = os.path.basename(input_path)
+def process_all_docx_files():
+    """Process all docx files from input prefix and upload extracted text to S3"""
+    docx_files = list_docx_files(BUCKET_NAME, INPUT_PREFIX)
+    print(f"Found {len(docx_files)} .docx files in S3")
+    print("=" * 80)
+
+    total_start_time = time.time()
+
+    for idx, key in enumerate(docx_files, 1):
+        docx_file = key.split('/')[-1]
         txt_filename = docx_file.replace('.docx', '.txt')
-
-        relative_path = os.path.relpath(os.path.dirname(input_path), INPUT_FOLDER)
-        output_subfolder = os.path.join(OUTPUT_FOLDER, relative_path)
-        os.makedirs(output_subfolder, exist_ok=True)
-
-        output_path = os.path.join(output_subfolder, txt_filename)
+        output_key = f"{OUTPUT_PREFIX}{txt_filename}"
 
         try:
-            input_size_kb = os.path.getsize(input_path) / 1024
             start_time = time.time()
-
-            # Extract text
-            text = docx2txt.process(input_path)
-
-            # Save extracted text
-            with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(text)
-
-            # Append to combined.txt
-            combined_file.write(f"\n\n===== {docx_file} =====\n\n")
-            combined_file.write(text)
-            combined_file.write("\n" + ("-" * 80) + "\n")
+            text = extract_text_from_s3_docx(BUCKET_NAME, key)
+            upload_text_to_s3(BUCKET_NAME, output_key, text)
 
             time_taken = time.time() - start_time
-            output_size_kb = os.path.getsize(output_path) / 1024
-
             print(f"\n[File {idx}/{len(docx_files)}] {docx_file}")
             print("   Extracted successfully")
-            print(f"   Input size:  {input_size_kb:.2f} KB")
-            print(f"   Output size: {output_size_kb:.2f} KB")
             print(f"   Time taken: {time_taken:.3f} sec")
-            print(f"   Saved as: {output_path}")
+            print(f"   Saved to S3 key: {output_key}")
 
         except Exception as e:
             print(f"\n[File {idx}/{len(docx_files)}] {docx_file}")
             print(f"   Error: {str(e)}")
 
-total_time = time.time() - total_start_time
+    total_time = time.time() - total_start_time
+    print("\n" + "=" * 80)
+    print(f"All {len(docx_files)} files processed!")
+    print(f"Total time: {total_time:.3f} sec")
+    print(f"Average per file: {total_time/len(docx_files):.3f} sec")
 
-print("\n" + "=" * 80)
-print(f"All {len(docx_files)} files processed!")
-print(f"Total time: {total_time:.3f} sec")
-print(f"Average per file: {total_time/len(docx_files):.3f} sec")
-print(f"All text combined into: {COMBINED_OUTPUT_FILE}")
+
+if __name__ == "__main__":
+    process_all_docx_files()
