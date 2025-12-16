@@ -1,1 +1,8 @@
-.venv/
+.myenv/
+myenv/
+__pycache__/
+*.pyc
+qdrant_storage/
+*.json
+*.log
+.env
