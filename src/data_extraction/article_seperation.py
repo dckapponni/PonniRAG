@@ -1,15 +1,27 @@
-
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parents[1]))
+
 import json
 import boto3
-from io import BytesIO
 from collections import defaultdict
 
-from content_extraction import count_consecutive_blanks, extract_remaining_content, extract_intro_content_phase1
-from doc_utils import extract_doc_info, get_shared_authors, extract_authors_alternative, count_content_lines
-from article_patterns import extract_pattern_a_forward, extract_pattern_b_forward, extract_pattern_c_reverse
+from content_extraction import (
+    count_consecutive_blanks,
+    extract_remaining_content,
+    extract_intro_content_phase1
+)
+from doc_utils import (
+    extract_doc_info,
+    get_shared_authors,
+    extract_authors_alternative,
+    count_content_lines
+)
+from article_patterns import (
+    extract_pattern_a_forward,
+    extract_pattern_b_forward,
+    extract_pattern_c_reverse
+)
 from shared_author import build_shared_authors_dict
 from text_processing import normalize_text, get_intro_keywords
 
@@ -20,32 +32,32 @@ s3 = boto3.client("s3", region_name=REGION_NAME)
 
 
 # ---------------- S3 Utility Functions ---------------- #
-def list_txt_files(bucket: str, prefix: str):
-    """List all .txt files under a given S3 prefix"""
+def list_files(bucket: str, prefix: str, suffix: str = None):
     files = []
     paginator = s3.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         for obj in page.get("Contents", []):
-            if obj["Key"].endswith(".txt"):
-                files.append(obj["Key"])
+            key = obj["Key"]
+            if suffix is None or key.endswith(suffix):
+                files.append(key)
     return files
 
 
 def read_txt_from_s3(bucket: str, key: str):
-    """Read text file from S3 and return list of lines"""
     obj = s3.get_object(Bucket=bucket, Key=key)
-    text = obj["Body"].read().decode("utf-8")
-    return text.splitlines()
+    return obj["Body"].read().decode("utf-8").splitlines()
 
 
 def upload_json_to_s3(bucket: str, key: str, data: dict):
-    """Upload JSON data to S3"""
-    s3.put_object(Bucket=bucket, Key=key, Body=json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"))
+    s3.put_object(
+        Bucket=bucket,
+        Key=key,
+        Body=json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+    )
 
 
 # ---------------- Parsing Logic ---------------- #
 def parse_tamil_document(lines, shared_authors_dict):
-    """Parse Tamil document lines and extract structured content."""
     doc_id, doc_issue = extract_doc_info(lines)
 
     authors_original = []
@@ -60,25 +72,28 @@ def parse_tamil_document(lines, shared_authors_dict):
             break
 
     if start_idx == -1 or end_idx == -1:
-        authors_original, authors_normalized = get_shared_authors(doc_id, doc_issue, shared_authors_dict)
+        authors_original, authors_normalized = get_shared_authors(
+            doc_id, doc_issue, shared_authors_dict
+        )
         if not authors_original:
             authors_original, authors_normalized = extract_authors_alternative(lines)
     else:
         for i in range(start_idx + 1, end_idx):
-            author_name = lines[i].strip()
-            if author_name:
-                authors_original.append(author_name)
-                authors_normalized.append(normalize_text(author_name))
+            name = lines[i].strip()
+            if name:
+                authors_original.append(name)
+                authors_normalized.append(normalize_text(name))
 
     parse_start_idx = end_idx + 1 if end_idx != -1 else 0
     processed_lines = [False] * len(lines)
+
     if start_idx != -1 and end_idx != -1:
         for i in range(start_idx, end_idx + 1):
             processed_lines[i] = True
 
     intro_keywords = get_intro_keywords()
-    articles = []
     intro = []
+    articles = []
     article_no = 1
 
     i = parse_start_idx
@@ -89,17 +104,19 @@ def parse_tamil_document(lines, shared_authors_dict):
 
         line = lines[i].strip()
         matched_keyword = None
+
         for keyword in intro_keywords:
             if keyword in line and (i == 0 or not lines[i - 1].strip()):
                 matched_keyword = keyword
                 break
 
         if matched_keyword:
-            content, content_end_idx, has_author = extract_intro_content_phase1(
-                lines, i, processed_lines, authors_normalized, authors_original, intro_keywords
+            content, end_idx, has_author = extract_intro_content_phase1(
+                lines, i, processed_lines,
+                authors_normalized, authors_original, intro_keywords
             )
 
-            for j in range(i, content_end_idx):
+            for j in range(i, end_idx):
                 if j < len(lines):
                     processed_lines[j] = True
 
@@ -121,13 +138,20 @@ def parse_tamil_document(lines, shared_authors_dict):
                         "heading": matched_keyword,
                         "content": content
                     })
-            i = content_end_idx
+            i = end_idx
         else:
             i += 1
 
-    # Extract articles using patterns
-    for pattern_func in [extract_pattern_a_forward, extract_pattern_b_forward, extract_pattern_c_reverse]:
-        pattern_articles = pattern_func(lines, parse_start_idx, len(lines), authors_normalized, authors_original, processed_lines, intro_keywords)
+    for pattern_func in (
+        extract_pattern_a_forward,
+        extract_pattern_b_forward,
+        extract_pattern_c_reverse
+    ):
+        pattern_articles = pattern_func(
+            lines, parse_start_idx, len(lines),
+            authors_normalized, authors_original,
+            processed_lines, intro_keywords
+        )
         for article in pattern_articles:
             articles.append({
                 "doc_id": doc_id,
@@ -139,8 +163,8 @@ def parse_tamil_document(lines, shared_authors_dict):
             })
             article_no += 1
 
-    remaining_articles = extract_remaining_content(lines, parse_start_idx, processed_lines)
-    for article in remaining_articles:
+    remaining = extract_remaining_content(lines, parse_start_idx, processed_lines)
+    for article in remaining:
         articles.append({
             "doc_id": doc_id,
             "doc_issue": doc_issue,
@@ -151,7 +175,10 @@ def parse_tamil_document(lines, shared_authors_dict):
         })
         article_no += 1
 
-    authors_list = [{"doc_id": doc_id, "doc_issue": doc_issue, "author_name": a} for a in authors_original]
+    authors_list = [
+        {"doc_id": doc_id, "doc_issue": doc_issue, "author_name": a}
+        for a in authors_original
+    ]
 
     return {
         "intro": intro,
@@ -162,59 +189,83 @@ def parse_tamil_document(lines, shared_authors_dict):
     }
 
 
-# ---------------- Main Processing ---------------- #
+# ---------------- Main Processing (DELTA ENABLED) ---------------- #
 def process_s3_folder(input_prefix, output_prefix):
-    txt_files = list_txt_files(BUCKET_NAME, input_prefix)
+    txt_files = list_files(BUCKET_NAME, input_prefix, suffix=".txt")
     if not txt_files:
         print("No TXT files found in S3.")
         return
 
-    print(f"Found {len(txt_files)} TXT files in S3.")
-    shared_authors_dict = build_shared_authors_dict(Path(EXTRACTED_OUTPUT))  # Can modify to read from S3 if needed
+    # ✅ DELTA: already processed JSONs
+    existing_json_files = set(
+        list_files(BUCKET_NAME, output_prefix, suffix=".json")
+    )
+
+    print(f"Found {len(txt_files)} TXT files")
+    print(f"Found {len(existing_json_files)} existing JSON files")
+    print("=" * 80)
+
+    shared_authors_dict = build_shared_authors_dict(Path(EXTRACTED_OUTPUT))
     folder_authors = defaultdict(lambda: defaultdict(set))
 
+    processed = 0
+    skipped = 0
+
     for key in txt_files:
+        relative_path = key[len(input_prefix):].lstrip("/")
+        output_json_key = f"{output_prefix}/{relative_path}".replace(".txt", ".json")
+
+        # ✅ DELTA CHECK
+        if output_json_key in existing_json_files:
+            print(f"Skipping (already processed): {key}")
+            skipped += 1
+            continue
+
         try:
             lines = read_txt_from_s3(BUCKET_NAME, key)
             result = parse_tamil_document(lines, shared_authors_dict)
 
-            # Construct output key
-            relative_path = key[len(input_prefix):].lstrip("/")
-            output_json_key = f"{output_prefix}/{relative_path}".replace(".txt", ".json")
-
-            # Upload parsed JSON
             upload_json_to_s3(BUCKET_NAME, output_json_key, {
                 "intro": result["intro"],
                 "articles": result["articles"]
             })
 
-            # Collect authors
             folder_key = "/".join(relative_path.split("/")[:-1])
             doc_key = (result["doc_id"], result["doc_issue"])
-            for author_info in result["authors_list"]:
-                folder_authors[folder_key][doc_key].add(author_info["author_name"])
+            for author in result["authors_list"]:
+                folder_authors[folder_key][doc_key].add(author["author_name"])
 
-            print(f"Processed {key} → {output_json_key}")
+            print(f"Processed NEW: {key}")
+            processed += 1
 
         except Exception as e:
             print(f"Error processing {key}: {e}")
-            continue
 
-    # Upload consolidated authors JSON
-    for folder_key, doc_authors_dict in folder_authors.items():
-        consolidated_authors = []
-        for (doc_id, doc_issue), authors_set in doc_authors_dict.items():
-            consolidated_authors.append({
-                "doc_id": doc_id,
-                "doc_issue": doc_issue,
-                "authors": sorted(list(authors_set))
-            })
-        authors_json_key = f"{output_prefix}/{folder_key}_authors.json" if folder_key else f"{output_prefix}/root_authors.json"
-        upload_json_to_s3(BUCKET_NAME, authors_json_key, consolidated_authors)
-        print(f"Uploaded authors JSON: {authors_json_key}")
+    # Upload authors only if new docs processed
+    if processed > 0:
+        for folder_key, doc_map in folder_authors.items():
+            consolidated = []
+            for (doc_id, doc_issue), authors in doc_map.items():
+                consolidated.append({
+                    "doc_id": doc_id,
+                    "doc_issue": doc_issue,
+                    "authors": sorted(list(authors))
+                })
+
+            authors_key = (
+                f"{output_prefix}/{folder_key}_authors.json"
+                if folder_key else f"{output_prefix}/root_authors.json"
+            )
+
+            upload_json_to_s3(BUCKET_NAME, authors_key, consolidated)
+            print(f"Uploaded authors JSON: {authors_key}")
+
+    print("=" * 80)
+    print(f"Processed (new): {processed}")
+    print(f"Skipped (old)  : {skipped}")
 
 
 if __name__ == "__main__":
-    print("Processing S3 TXT files...")
+    print("Processing S3 TXT files (DELTA mode)...")
     process_s3_folder(EXTRACTED_OUTPUT, OUTPUT_PREFIX)
     print("Completed.")

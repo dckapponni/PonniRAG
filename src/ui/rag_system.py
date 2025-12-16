@@ -9,7 +9,7 @@ from qdrant_client.models import Filter, FieldCondition, MatchValue
 
 # Page Configuration
 st.set_page_config(
-    page_title="Tamil Nexus RAG",
+    page_title="Tamil RAG",
     page_icon="⬡",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -455,7 +455,7 @@ if "initialization_error" not in st.session_state:
 # Load models once on startup
 if not st.session_state.models_loaded:
     print("\n" + "="*60)
-    print("TAMIL NEXUS RAG - RUNTIME INITIALIZATION")
+    print("TAMIL RAG - RUNTIME INITIALIZATION")
     print("="*60)
     
     query_encoder, encoder_error = load_query_encoder()
@@ -528,7 +528,7 @@ def toggle_search():
 # Sidebar
 
 with st.sidebar:
-    st.markdown("<h1 style='font-size: 2rem; margin-top: 0;'>⬡ Tamil Nexus</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='font-size: 2rem; margin-top: 0;'>⬡ Ponni RAG</h1>", unsafe_allow_html=True)
     
     st.markdown("---")
     
@@ -575,7 +575,7 @@ with st.container():
         <div style="background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 0.5rem; padding: 1rem 1.5rem; margin-bottom: 2rem; margin-top: -1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
             <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem;">
                 <span style="font-size: 1.25rem;">ℹ️</span>
-                <h3 style="margin: 0; font-size: 1rem; color: #1e293b !important;">About Tamil Nexus RAG</h3>
+                <h3 style="margin: 0; font-size: 1rem; color: #1e293b !important;">About Ponni RAG</h3>
             </div>
             <p style="color: #64748b; font-size: 0.9rem; margin: 0; line-height: 1.5;">
                 This AI-powered assistant helps you explore Tamil literature, history, and economic data. 
