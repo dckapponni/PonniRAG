@@ -9,4 +9,6 @@ transformers
 accelerate
 bitsandbytes
 numpy
+docx2txt
 scikit-learn
+sentencepiece

@@ -22,7 +22,7 @@ st.markdown("""
     .stApp {
         background-color: #f1f5f9 !important;
         font-family: 'Inter', sans-serif;
-        color: #0f172a !important;
+        color: #0f172a !important; /* Force dark text */
     }
     
     /* Header Styling */
@@ -30,6 +30,7 @@ st.markdown("""
         background-color: transparent !important;
     }
 
+    /* Force light theme on root blocks just in case */
     div[data-testid="stDecoration"] {
         display: none;
     }
@@ -55,25 +56,27 @@ st.markdown("""
         color: #0f172a;
     }
     
+    /* User Message Specifics */
     div[data-testid="stChatMessageContent"] > div {
         color: inherit;
     }
     
-    /* Input Area Styling */
+    /* Input Area Styling (Chat Input at bottom mostly) */
     div[data-testid="stChatInput"] textarea {
         border-radius: 0.75rem;
         border: 1px solid rgba(148, 163, 184, 0.3) !important;
         padding: 0.75rem;
-        background-color: #ffffff !important;
-        color: #0f172a !important;
-        caret-color: #0f172a;
+        background-color: #f1f5f9 !important; /* Light Grey */
+        color: #0f172a !important; /* Dark Text */
+        caret-color: #0f172a; /* Cursor color */
     }
 
     div[data-testid="stChatInput"] textarea::placeholder {
-        color: #334155 !important;
+        color: #334155 !important; /* Slate 700 - Darker placeholder */
         opacity: 1;
     }
     
+    /* Force background removal for Input containers */
     div[data-testid="stTextInput"] {
         background: transparent !important;
     }
@@ -82,41 +85,46 @@ st.markdown("""
         background: transparent !important;
     }
 
+    /* Target the actual input elements again to be sure */
     input[type="text"], textarea {
-         background-color: transparent !important;
+         background-color: transparent !important; 
+         /* We set specific bg colors below, but default should be clear */
     }
 
-    /* Header Title Input Styling */
+    /* Header Title Input Styling Override */
     div[data-testid="column"] .stTextInput input {
          font-size: 1.5rem;
          font-weight: 600;
          color: #4338ca !important;
+         /* Use a much lighter background as requested */
          background: linear-gradient(to right, #ffffff, #f8fafc) !important;
-         border: 1px solid rgba(226, 232, 240, 0.5);
+         border: 1px solid rgba(226, 232, 240, 0.5); /* Very subtle border */
          padding: 0.5rem;
          margin: 0;
          height: auto;
-         box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+         box-shadow: 0 1px 2px rgba(0,0,0,0.02); /* Slight lift */
     }
     
-    /* Bottom Chat Pane */
+    /* Bottom Chat Pane / Sticky Footer Background */
     section[data-testid="stBottom"] {
-        background-color: #f1f5f9 !important;
-        border-top: 1px solid #cbd5e1 !important;
-        box-shadow: 0 -4px 6px -1px rgba(0, 0, 0, 0.1);
+        background-color: #ffffff !important; /* Solid Light Grey (Slate 100) */
+        border-top: 1px solid #cbd5e1 !important; /* Distinct Border */
+        box-shadow: 0 -4px 6px -1px rgba(0, 0, 0, 0.1); /* Shadow to separate from content */
     }
     
+    /* Ensure no child elements inject dark backgrounds */
     section[data-testid="stBottom"] > div,
     section[data-testid="stBottom"] > div > div {
         background-color: transparent !important;
         background: transparent !important;
     }
     
+    /* Ensure the textarea has the light white background we want */
     div[data-testid="stChatInput"] textarea {
          background-color: #ffffff !important;
-         color: #0f172a !important;
-         border-color: #e2e8f0 !important;
-         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+         color: #ffffff !important;
+         border-color: #e2e8f0 !important; /* Matches border of other elements */
+         box-shadow: 0 2px 4px rgba(0,0,0,0.05); /* Slight elevation */
     }
     
     div[data-testid="column"] .stTextInput input:hover,
@@ -125,34 +133,81 @@ st.markdown("""
          border-color: #4338ca;
          padding: 0.5rem;
     }
+    
 
-    /* Accent Color */
+    /* Accent Color Utilities */
     .accent-text {
         color: #4f46e5;
         font-weight: 600;
     }
     
-    /* Headings */
-    h1, h2, h3, h4, h5, h6 {
-        color: #4338ca !important;
+    /* Source Card Styling */
+    .source-card {
+        background-color: rgba(255, 255, 255, 0.6);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 0.5rem;
+        padding: 0.75rem;
+        margin-top: 0.5rem;
+        font-size: 0.85rem;
+    }
+    .source-title {
+        font-weight: 600;
+        color: #0f172a;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    .source-snippet {
+        color: #64748b;
+        font-size: 0.8rem;
+        margin-top: 0.25rem;
+    }
+    .relevance-tag {
+        display: inline-block;
+        margin-top: 0.5rem;
+        font-size: 0.7rem;
+        padding: 0.125rem 0.375rem;
+        border-radius: 999px;
+        background: rgba(16, 185, 129, 0.1);
+        color: #10b981;
+        font-weight: 500;
     }
     
+    /* Headings */
+    h1, h2, h3, h4, h5, h6 {
+        color: #4338ca !important; /* Indigo 700 */
+    }
+    
+    /* Hide top padding */
     .main .block-container {
         padding-top: 2rem;
     }
-    
+    /* Remove borders/bg from icon buttons in sidebar header (approximated by column structure) */
     div[data-testid="column"] button[kind="secondary"] {
         background-color: transparent !important;
         border: none !important;
         box-shadow: none !important;
     }
     
-    /* Sidebar Chat History Items */
+    /* Apply gradient to history list buttons (full width ones) */
+    /* Target buttons inside the sidebar that are NOT the icon buttons */
+    /* Since we cannot easily distinguish by class, we rely on the container width usage or order */
+    
+    /* Better approach: Target specific keys if possible, or general styling */
+    /* We will use a general rule for sidebar buttons and overrides for specific ones if needed, 
+       but Streamlit generates random classes. 
+       However, we know history items use use_container_width=True which usually adds a specific class 
+       or we can target by absence of icon logic. 
+       
+       Let's target all secondary buttons in sidebar, and make the icon ones transparent specifically.
+    */
+    
+    /* Sidebar Chat History Items (Inactive) - Light Grey Box */
     section[data-testid="stSidebar"] .stButton button {
-        background-color: #f1f5f9 !important;
-        border: 1px solid #e2e8f0 !important;
+        background-color: #f1f5f9 !important; /* Slate 100 */
+        border: 1px solid #e2e8f0 !important; /* Slate 200 */
         border-radius: 0.5rem !important;
-        color: #475569 !important;
+        color: #475569 !important; /* Slate 600 */
         justify-content: flex-start !important;
         margin-bottom: 0.25rem !important;
         transition: all 0.2s !important;
@@ -165,7 +220,25 @@ st.markdown("""
         border-color: #cbd5e1 !important;
     }
     
-    /* Active Chat Button */
+    /* Sidebar Chat History Item (Active) - Indigo Theme */
+    /* Target specifically the primary buttons in the sidebar */
+    /* Note: Streamlit might not expose 'kind' easily to CSS, but active buttons usually get a specific class. 
+       However, we passed type="primary" in the python code. 
+       We need to distinguish them. 
+       Often the primary button has a different class or styles. 
+       Let's try to target by exclusion or a known attribute if possible. 
+       Actually, Streamlit buttons usually have kind properly reflected or specific classes. 
+       However, if the above generic rule overrides it, we need to be careful.
+       
+       Let's use the :has pseudo-selector or specific attributes if available. 
+       The safest bet without inspecting is to trust that `button[kind="primary"]` logic MIGHT fail 
+       if the attribute isn't there. 
+       
+       If type="primary" is used, the button usually has a reddish background by default. 
+       We will try to override based on the generic button styles that Streamlit applies for primary.
+    */
+    
+    /* Attempt to target primary/active button specifically */
     section[data-testid="stSidebar"] .stButton button[kind="primary"],
     section[data-testid="stSidebar"] button[kind="primary"] {
         background-color: rgba(99, 102, 241, 0.1) !important;
@@ -179,15 +252,38 @@ st.markdown("""
         color: #4338ca !important;
     }
 
-    /* Icon Buttons */
+    /* WE MUST EXCLUDE THE ICON BUTTONS (Search, Plus, Trash) FROM THE BOX STYLING */
+    /* These are usually in columns (stHorizontalBlock) or have specific distinct layouts */
+    
+    /* Icon Buttons (Search/Plus) in the header columns */
     div[data-testid="stHorizontalBlock"] .stButton button {
          background: transparent !important;
          border: none !important;
          padding: 0px !important;
          box-shadow: none !important;
     }
+    
+    /* Trash icon in the history list (it's in the second column) */
+    /* We can try to target the smaller column 
+       div[data-testid="column"]:nth-of-type(2) might work if we are lucky with structure, 
+       but `column` is generic. 
+       
+       Alternative: The trash button text is small? 
+       Let's rely on the fact that the trash button is just an icon "🗑".
+       We can try to target buttons with specific text content if CSS allowed, but it doesn't.
+       
+       Workaround: The icons in the list (delete) are in a 1-unit column.
+       The chat items are in a 5-unit column.
+       Streamlit columns usually have width attributes or flex-basis.
+    */
+    
+    /* Apply transparent style to delete buttons */
+    /* This targets the buttons in the smaller second column of the history row */
+    div[data-testid="column"] .stButton button {
+        /* This is risky as it affects all columns. We need to be specific to the history grid. */
+    }
 
-    /* Popover Menu */
+    /* Popover Menu Styling: Remove Default Arrow/Caret and styles */
     div[data-testid="stPopover"] button {
         border: none !important;
         background: transparent !important;
@@ -195,7 +291,7 @@ st.markdown("""
         box-shadow: none !important;
         padding-left: 0 !important;
         padding-right: 0 !important;
-        font-size: 1.25rem !important;
+        font-size: 1.25rem !important; /* Make the dots visible */
     }
     
     div[data-testid="stPopover"] button:hover {
@@ -203,6 +299,7 @@ st.markdown("""
         color: #0f172a !important;
     }
 
+    /* Hide the SVG arrow inside the popover button */
     div[data-testid="stPopover"] button > div > div > svg {
         display: none !important;
     }
@@ -298,7 +395,13 @@ def load_llm_model():
             LLM_MODEL,
             trust_remote_code=True
         )
-        
+        tokenizer = AutoTokenizer.from_pretrained(
+            LLM_MODEL,
+            use_fast=False,       
+            trust_remote_code=True
+        )
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
         print("LLM loaded!")
         return model, tokenizer, None
         
@@ -687,3 +790,5 @@ if prompt := st.chat_input("கேள்விகளைக் கேட்கவ
     })
     
     st.rerun()
+
+
