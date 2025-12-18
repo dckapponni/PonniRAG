@@ -1,4 +1,3 @@
-
 import json
 import uuid
 from sentence_transformers import SentenceTransformer
@@ -7,22 +6,22 @@ from qdrant_client.models import Distance, VectorParams, PointStruct
 from tqdm import tqdm
 import sys
 from pathlib import Path
+
 sys.path.append(str(Path(__file__).resolve().parents[1]))
+
 from data_extraction.s3_utils import list_files, read_bytes
-
-
-BASE_DIR = Path(__file__).resolve().parent
-QDRANT_PATH = str(BASE_DIR / "qdrant_storage")
-
-COLLECTION_NAME = "tamil_nexus_documents"
-
-EMBEDDING_MODEL = "intfloat/multilingual-e5-large"
-EMBEDDING_DIM = 1024
-CHUNK_SIZE = 500
-
-S3_BUCKET = "ponni-dev"
-S3_PREFIX = "output_json//vol_1/"
-
+from config.config import (
+    QDRANT_PATH,
+    COLLECTION_NAME,
+    EMBEDDING_MODEL,
+    EMBEDDING_DIM,
+    CHUNK_SIZE,
+    BATCH_SIZE,
+    S3_BUCKET,
+    S3_PREFIX,
+    S3_SUFFIX,
+    DEFAULT_VOLUME,
+)
 
 def load_documents_from_s3():
     documents = []
@@ -33,13 +32,12 @@ def load_documents_from_s3():
     json_keys = list_files(
         bucket=S3_BUCKET,
         prefix=S3_PREFIX,
-        suffix=".json"
+        suffix=S3_SUFFIX
     )
 
     print(f"Found {len(json_keys)} JSON files in S3")
 
     if not json_keys:
-        print("No JSON files found. Check bucket, prefix, or permissions.")
         return []
 
     for key in json_keys:
@@ -47,57 +45,55 @@ def load_documents_from_s3():
             raw_bytes = read_bytes(S3_BUCKET, key)
             data = json.loads(raw_bytes.read().decode("utf-8"))
 
-            if "intro" in data:
-                for item in data["intro"]:
-                    documents.append({
-                        "content": item.get("content", ""),
-                        "type": "intro",
-                        "metadata": {
-                            "doc_id": item.get("doc_id", ""),
-                            "doc_issue": item.get("doc_issue", ""),
-                            "heading": item.get("heading", ""),
-                            "volume": "vol_1"
-                        }
-                    })
+            for item in data.get("intro", []):
+                documents.append({
+                    "content": item.get("content", ""),
+                    "type": "intro",
+                    "metadata": {
+                        "doc_id": item.get("doc_id", ""),
+                        "doc_issue": item.get("doc_issue", ""),
+                        "heading": item.get("heading", ""),
+                        "volume": DEFAULT_VOLUME
+                    }
+                })
 
-            if "articles" in data:
-                for item in data["articles"]:
-                    documents.append({
-                        "content": item.get("article_content", ""),
-                        "type": "article",
-                        "metadata": {
-                            "doc_id": item.get("doc_id", ""),
-                            "doc_issue": item.get("doc_issue", ""),
-                            "article_no": item.get("article_no", ""),
-                            "article_heading": item.get("article_heading", ""),
-                            "article_author_name": item.get("article_author_name", ""),
-                            "volume": "vol_1"
-                        }
-                    })
+            for item in data.get("articles", []):
+                documents.append({
+                    "content": item.get("article_content", ""),
+                    "type": "article",
+                    "metadata": {
+                        "doc_id": item.get("doc_id", ""),
+                        "doc_issue": item.get("doc_issue", ""),
+                        "article_no": item.get("article_no", ""),
+                        "article_heading": item.get("article_heading", ""),
+                        "article_author_name": item.get("article_author_name", ""),
+                        "volume": DEFAULT_VOLUME
+                    }
+                })
 
         except Exception as e:
             print(f"Failed to process file: {key}, error: {e}")
-            continue
 
     print(f"Total documents loaded for embedding: {len(documents)}")
     return documents
 
-
-def chunk_text(text, chunk_size=CHUNK_SIZE):
+def chunk_text(text: str):
     if not text or not text.strip():
         return []
 
     text = text.strip()
     return [
-        text[i:i + chunk_size]
-        for i in range(0, len(text), chunk_size)
-        if text[i:i + chunk_size].strip()
+        text[i:i + CHUNK_SIZE]
+        for i in range(0, len(text), CHUNK_SIZE)
+        if text[i:i + CHUNK_SIZE].strip()
     ]
 
 
+# ---------------------------
+# Main Indexing Logic
+# ---------------------------
 def main():
     embedding_model = SentenceTransformer(EMBEDDING_MODEL)
-
     client = QdrantClient(path=QDRANT_PATH)
 
     try:
@@ -118,13 +114,9 @@ def main():
         return
 
     points = []
-    batch_size = 100
 
     for doc in tqdm(documents, desc="Embedding"):
         chunks = chunk_text(doc["content"])
-        if not chunks:
-            continue
-
         total_chunks = len(chunks)
 
         for idx, chunk in enumerate(chunks):
@@ -146,21 +138,15 @@ def main():
                 )
             )
 
-        if len(points) >= batch_size:
-            client.upsert(
-                collection_name=COLLECTION_NAME,
-                points=points
-            )
+        if len(points) >= BATCH_SIZE:
+            client.upsert(COLLECTION_NAME, points)
             points.clear()
 
     if points:
-        client.upsert(
-            collection_name=COLLECTION_NAME,
-            points=points
-        )
+        client.upsert(COLLECTION_NAME, points)
 
-    collection_info = client.get_collection(COLLECTION_NAME)
-    print(f"Indexed vectors: {collection_info.points_count}")
+    info = client.get_collection(COLLECTION_NAME)
+    print(f"Indexed vectors: {info.points_count}")
 
 
 if __name__ == "__main__":
