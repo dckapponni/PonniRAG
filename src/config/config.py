@@ -9,7 +9,7 @@ EXTRACTED_OUTPUT= "extracted_text/"
 
 
 
-BASE_DIR = Path(__file__).resolve().parents[1]
+BASE_DIR = Path(__file__).resolve().parents[1]/"ui"
 QDRANT_PATH = str(BASE_DIR / "qdrant_storage")
 
 COLLECTION_NAME = "tamil_nexus_documents"
