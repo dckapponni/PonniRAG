@@ -200,10 +200,6 @@ MODEL_CONFIG = {
     "device": GPU_INFO["device"],  # Use detected device
 }
 
-# ============================================================================
-# MODEL LOADING FUNCTIONS - GPU Optimized
-# ============================================================================
-
 @st.cache_resource
 def load_query_encoder():
     """Load encoder for query embedding - GPU optimized"""
@@ -322,11 +318,7 @@ def load_llm_model():
         return None, None, error_msg
 
 
-# ============================================================================
-# RAG FUNCTIONS - GPU Optimized
-# ============================================================================
-
-def retrieve_from_qdrant(query, query_encoder, qdrant_client, top_k=3):
+def retrieve_from_qdrant(query, query_encoder, qdrant_client, top_k=10):
     """Retrieve relevant documents using GPU-accelerated encoding"""
     try:
         prefixed_query = f"query: {query}"
@@ -483,11 +475,6 @@ def format_sources_for_display(relevant_chunks):
 
     return sources
 
-
-# ============================================================================
-# SESSION STATE INITIALIZATION
-# ============================================================================
-
 if "chat_sessions" not in st.session_state:
     st.session_state.chat_sessions = {
         "வரவேற்பு (Welcome)": [
@@ -507,9 +494,6 @@ if "models_loaded" not in st.session_state:
 if "initialization_error" not in st.session_state:
     st.session_state.initialization_error = None
 
-# ============================================================================
-# LOAD MODELS - With GPU Status Display
-# ============================================================================
 
 if not st.session_state.models_loaded:
     print("\n" + "=" * 60)
@@ -550,9 +534,6 @@ if not st.session_state.models_loaded:
         print("✗ INITIALIZATION FAILED")
         print("=" * 60 + "\n")
 
-# ============================================================================
-# HELPER FUNCTIONS
-# ============================================================================
 
 def set_chat(chat_name):
     st.session_state.current_chat = chat_name
@@ -594,10 +575,6 @@ def delete_chat(chat_name):
 
 def toggle_search():
     st.session_state.show_search = not st.session_state.get("show_search", False)
-
-# ============================================================================
-# SIDEBAR
-# ============================================================================
 
 with st.sidebar:
     # GPU Status Badge
@@ -659,9 +636,6 @@ with st.sidebar:
                     use_container_width=True,
                 )
 
-# ============================================================================
-# MAIN CHAT AREA
-# ============================================================================
 
 if st.session_state.initialization_error:
     st.error("⚠️ System Initialization Error")
