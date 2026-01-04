@@ -1,230 +1,360 @@
+
+import json
 import logging
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Union
+from pathlib import Path
+from typing import Dict, List
+import re
+from collections import Counter
 
-try:
-    from qdrant_client import QdrantClient, models
-except ImportError:
-    QdrantClient = None
-    models = None
+import boto3
+from sentence_transformers import SentenceTransformer
+from qdrant_client import QdrantClient, models
 
-# Configure logging
+from src.config.config import (
+    S3_BUCKET,
+    S3_PREFIX,
+    S3_SUFFIX,
+    EMBEDDING_MODEL,
+    EMBEDDING_DIM,
+    CHUNK_SIZE,
+    BATCH_SIZE,
+)
+
+BASE_DIR = Path(__file__).resolve().parent
+
+# Qdrant storage will be created in the same directory as this file
+QDRANT_PATH = str(BASE_DIR / "qdrant_data")
+
+# Collection name derived from python file name
+COLLECTION_NAME = Path(__file__).stem
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+s3 = boto3.client("s3")
 
-class QdrantHybridIndexer:
+dense_model = SentenceTransformer(EMBEDDING_MODEL)
+def dense_embed_doc(text: str) -> List[float]:
     """
-    A module to manage Indexing (Upsert, Update, Delete) in Qdrant for Hybrid Search.
-    Compatible with the HybridQdrantSearch module.
+    Dense embedding for DOCUMENTS (indexing)
     """
+    return dense_model.encode(f"passage: {text}").tolist()
 
-    def __init__(
-        self,
-        client: QdrantClient,
-        collection_name: str,
-        dense_embedding_func: Callable[[str], List[float]],
-        sparse_embedding_func: Callable[[str], Any],
-        sparse_vector_name: str = "sparse",
-        dense_vector_name: str = "dense",
-    ):
-        """
-        Initialize the Indexer.
 
-        Args:
-            client: QdrantClient instance.
-            collection_name: Target collection.
-            dense_embedding_func: Function (text) -> dense_vector (List[float]).
-            sparse_embedding_func: Function (text) -> sparse_vector (models.SparseVector or dict).
-            sparse_vector_name: Name of the sparse vector in config.
-            dense_vector_name: Name of the dense vector in config.
-        """
-        self.client = client
-        self.collection_name = collection_name
-        self.dense_func = dense_embedding_func
-        self.sparse_func = sparse_embedding_func
-        self.sparse_name = sparse_vector_name
-        self.dense_name = dense_vector_name
+def dense_embed_query(text: str) -> List[float]:
+    """
+    Dense embedding for SEARCH QUERIES
+    """
+    return dense_model.encode(f"query: {text}").tolist()
 
-        if not self.client or not models:
-            logger.warning("QdrantClient not available. Indexing will not work.")
+def sparse_embed(text: str) -> models.SparseVector:
+    """
+    Converts text into a sparse vector compatible with Qdrant.
+    This is a lightweight BM25-style tokenizer with hashing.
+    """
+    tokens = re.findall(r"\b\w+\b", text.lower())
+    counts = Counter(tokens)
 
-    def create_collection(self, dense_vector_size: int = 768, force: bool = False):
-        """
-        Creates the collection with the required Hybrid (Dense + Sparse) configuration.
+    indices: List[int] = []
+    values: List[float] = []
 
-        Args:
-            dense_vector_size: Dimension of the dense vector (e.g., 768 for BERT/E5).
-            force: If True, deletes the existing collection before creating.
-        """
-        if force:
-            self.client.delete_collection(self.collection_name)
+    for token, freq in counts.items():
+        # Stable hash → positive int
+        idx = abs(hash(token)) % (2**31)
+        indices.append(idx)
+        values.append(float(freq))
 
-        if not self.client.collection_exists(self.collection_name):
-            self.client.create_collection(
-                collection_name=self.collection_name,
-                vectors_config={
-                    self.dense_name: models.VectorParams(
-                        size=dense_vector_size,
-                        distance=models.Distance.COSINE,
-                    )
-                },
-                sparse_vectors_config={
-                    self.sparse_name: models.SparseVectorParams(
-                        index=models.SparseIndexParams(
-                            on_disk=False,
-                        )
-                    )
-                },
-            )
-            logger.info(f"Collection '{self.collection_name}' created successfully.")
-        else:
-            logger.info(f"Collection '{self.collection_name}' already exists.")
+    return models.SparseVector(indices=indices, values=values)
 
-    def _generate_uuid(self, text: str) -> str:
-        """Generates a deterministic UUID based on content to avoid duplicates."""
-        return str(uuid.uuid5(uuid.NAMESPACE_DNS, text))
 
-    def index_documents(
-        self,
-        documents: List[Dict[str, Any]],
-        batch_size: int = 32,
-        update_only_new: bool = False,
-    ):
-        """
-        Indexes documents into Qdrant.
+def chunk_text(text: str, size: int) -> List[str]:
+    if not text or not text.strip():
+        return []
+    return [
+        text[i: i + size].strip()
+        for i in range(0, len(text), size)
+        if text[i: i + size].strip()
+    ]
 
-        Args:
-            documents: List of dicts, each containing:
-                       - 'text' (str): The content to embed.
-                       - 'metadata' (dict): Payload fields.
-                       - 'id' (optional): ID for the point. If missing, generated from text.
-            batch_size: Number of points to upload in one request.
-            update_only_new: If True, checks if ID exists and skips it.
-                             Requires 'id' to be stable or provided.
-        """
-        if not documents:
-            logger.warning("Received empty document list. Nothing to index.")
-            return
 
-        # Check if collection exists to avoid silent failures in batch processing
-        if not self.client.collection_exists(self.collection_name):
-             logger.error(f"Collection '{self.collection_name}' does not exist. Call create_collection() first.")
-             return
+def list_s3_json_files(bucket: str, prefix: str, suffix: str) -> List[str]:
+    keys = []
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            if key.endswith(suffix):
+                keys.append(key)
+                logger.debug(f"[S3 FOUND] {key}") 
+    return keys
 
-        points = []
-        
-        # Pre-process batch
-        for i, doc in enumerate(documents):
-            text = doc.get("text", "")
-            if not text or not isinstance(text, str):
-                logger.warning(f"Document at index {i} has missing or invalid 'text'. Skipping.")
+
+def extract_volume_from_s3_key(s3_key: str) -> str:
+    """
+    Extract volume name like vol_1, vol_2 from S3 path
+    """
+    for part in s3_key.split("/"):
+        if part.lower().startswith("vol_"):
+            return part
+    return "unknown"
+
+def is_author_file(s3_key: str) -> bool:
+    return s3_key.lower().endswith("authors.json")
+
+def load_documents_from_s3() -> List[Dict]:
+    documents = []
+    chunk_lengths = []
+
+    keys = list_s3_json_files(S3_BUCKET, S3_PREFIX, S3_SUFFIX)
+    logger.info(f"Found {len(keys)} JSON files in S3")
+
+    for key in keys:
+        logger.info(f"[INTRO CHECK] Processing file: {key}")
+        try:
+            obj = s3.get_object(Bucket=S3_BUCKET, Key=key)
+            data = json.loads(obj["Body"].read().decode("utf-8"))
+            
+            if not isinstance(data, dict):
+                logger.info(f"[INTRO SKIP] Not an intro JSON (likely authors): {key}")
+                continue
+            logger.info(f"[INTRO JSON LOADED] {key} | keys={list(data.keys())}")
+            intro_items = data.get("intro", [])
+            if not isinstance(intro_items, list):
                 continue
 
-            # Determine ID
-            doc_id = doc.get("id") or self._generate_uuid(text)
+            volume = extract_volume_from_s3_key(key)
 
-            # Check existence if requested
-            if update_only_new:
-                # We do a quick check. For bulk efficiency, Scroll or Retrieve is better,
-                # but valid for incremental updates.
-                try:
-                    existing = self.client.retrieve(
-                        collection_name=self.collection_name, 
-                        ids=[doc_id],
-                        with_payload=False,
-                        with_vectors=False
-                    )
-                    if existing:
-                        logger.debug(f"Skipping existing document ID: {doc_id}")
-                        continue
-                except Exception as e:
-                    logger.error(f"Error checking existence for ID {doc_id}: {e}")
-                    # Decide whether to proceed or skip. Safe default: proceed to upsert (which overwrites).
-                    pass
-
-            try:
-                # Generate Embeddings
-                dense_vector = self.dense_func(text)
-                sparse_vector = self.sparse_func(text)
-                
-                if dense_vector is None or sparse_vector is None:
-                    logger.error(f"Embedding function returned None for doc {doc_id}. Skipping.")
+            for item in intro_items:
+                text = item.get("content", "").strip()
+                if not text:
                     continue
 
-                # Prepare Point
-                metadata = doc.get("metadata", {})
-                if not isinstance(metadata, dict):
-                     metadata = {}
+                chunks = chunk_text(text, CHUNK_SIZE)
 
-                point = models.PointStruct(
-                    id=doc_id,
-                    vector={
-                        self.dense_name: dense_vector,
-                        self.sparse_name: sparse_vector,
-                    },
-                    payload={
-                        "text": text,
-                        **metadata
-                    },
+                # ✅ per-document chunk count
+                logger.info(
+                    f"S3 file: {key} | doc_id: {item.get('doc_id')} | "
+                    f"Chunks created: {len(chunks)}"
                 )
-                points.append(point)
 
-            except Exception as e:
-                logger.error(f"Failed to embed document '{doc_id}': {e}")
+                for idx, chunk in enumerate(chunks):
+                    chunk_lengths.append(len(chunk))  # collect stats
+
+                    documents.append(
+                        {
+                            "id": str(
+                                uuid.uuid5(
+                                    uuid.NAMESPACE_DNS,
+                                    f"{key}-{item.get('doc_id')}-{idx}"
+                                )
+                            ),
+                            "text": chunk,
+                            "metadata": {
+                                "doc_id": item.get("doc_id"),
+                                "doc_issue": item.get("doc_issue"),
+                                "heading": item.get("heading"),
+                                "source": "s3",
+                                "s3_key": key,
+                                "chunk_id": idx,
+                                "total_chunks": len(chunks),
+                                "volume": volume,
+                            },
+                        }
+                    )
+
+        except Exception as e:
+            logger.error(f"Failed to process {key}: {e}")
+
+    if chunk_lengths:
+        logger.info(
+            f"Chunk stats → "
+            f"count={len(chunk_lengths)}, "
+            f"min={min(chunk_lengths)}, "
+            f"max={max(chunk_lengths)}, "
+            f"avg={sum(chunk_lengths)//len(chunk_lengths)}"
+        )
+
+    logger.info(f"Prepared {len(documents)} text chunks for indexing")
+    return documents
+def load_authors_from_s3() -> List[Dict]:
+    documents = []
+
+    keys = list_s3_json_files(S3_BUCKET, S3_PREFIX, S3_SUFFIX)
+    logger.info(f"Scanning {len(keys)} JSON files for authors.json")
+
+    for key in keys:
+        if not is_author_file(key):
+            logger.debug(f"[SKIP] Not authors.json: {key}")
+            continue
+        logger.info(f"[AUTHORS FILE] Processing: {key}")
+        try:
+            obj = s3.get_object(Bucket=S3_BUCKET, Key=key)
+            data = json.loads(obj["Body"].read().decode("utf-8"))
+            logger.info(
+                f"[AUTHORS JSON LOADED] {key} | entries={len(data)}"
+            )
+            if not isinstance(data, list):
                 continue
 
-        # Upload in batches
-        if points:
-            total_uploaded = 0
-            for i in range(0, len(points), batch_size):
-                batch = points[i : i + batch_size]
-                try:
-                    self.client.upsert(
-                        collection_name=self.collection_name,
-                        points=batch,
-                    )
-                    total_uploaded += len(batch)
-                    logger.info(f"Indexed batch of {len(batch)} documents. Total: {total_uploaded}")
-                except Exception as e:
-                     logger.error(f"Failed to upload batch starting at index {i}: {e}")
-        else:
-            logger.info("No valid new documents to index after processing.")
+            volume = extract_volume_from_s3_key(key)
 
-    def delete_documents(self, doc_ids: List[Union[str, int]]):
-        """
-        Deletes documents by their IDs.
-        """
-        if not doc_ids:
-            return
+            for item in data:
+                doc_id = item.get("doc_id")
+                doc_issue = item.get("doc_issue")
 
-        self.client.delete(
-            collection_name=self.collection_name,
-            points_selector=models.PointIdsList(points=doc_ids),
+                for author in item.get("authors", []):
+                    author = author.strip()
+                    if not author:
+                        continue
+
+                    documents.append({
+                        "id": str(
+                            uuid.uuid5(
+                                uuid.NAMESPACE_DNS,
+                                f"{key}-{doc_id}-{doc_issue}-{author}"
+                            )
+                        ),
+                        "text": author,
+                        "metadata": {
+                            "author": author,
+                            "doc_id": doc_id,
+                            "doc_issue": doc_issue,
+                            "volume": volume,
+                            "source": "authors_json",
+                        }
+                    })
+
+        except Exception as e:
+            logger.error(f"Failed to process authors file {key}: {e}")
+
+    logger.info(f"Prepared {len(documents)} author entries for indexing")
+    return documents
+
+
+def main():
+    client = QdrantClient(path=QDRANT_PATH)
+
+    # Reset collection
+    if client.collection_exists(COLLECTION_NAME):
+        client.delete_collection(COLLECTION_NAME)
+        logger.info(f"Deleted existing collection: {COLLECTION_NAME}")
+
+    # Create dense-only collection
+    client.create_collection(
+        collection_name=COLLECTION_NAME,
+        vectors_config={
+            "dense": models.VectorParams(
+                size=EMBEDDING_DIM,
+                distance=models.Distance.COSINE,
+            )
+        },
+        sparse_vectors_config={
+        "sparse": models.SparseVectorParams()
+    }
+    )
+
+    logger.info(f"Created collection: {COLLECTION_NAME}")
+
+    documents = load_documents_from_s3()
+    if not documents:
+        logger.warning("No documents found to index")
+        return
+    author_documents = load_authors_from_s3()
+
+    points = []
+
+    for doc in documents:
+        try:
+            point = models.PointStruct(
+            id=doc["id"],
+            vector={
+                "dense": dense_embed_doc(doc["text"]),
+                "sparse": sparse_embed(doc["text"]),
+            },
+            payload={
+                # 🔑 what RAG reads
+                "content": doc["text"],
+                "chunk_id": doc["metadata"]["chunk_id"],
+                "type": "intro",  # because this comes from "intro" JSON
+
+                # 🔑 nested metadata (VERY IMPORTANT)
+                "metadata": {
+                    "doc_id": doc["metadata"]["doc_id"],
+                    "doc_issue": doc["metadata"]["doc_issue"],
+                    "heading": doc["metadata"]["heading"],
+                    "volume": doc["metadata"]["volume"],
+                    "source": doc["metadata"]["source"],
+                    "s3_key": doc["metadata"]["s3_key"],
+                    "total_chunks": doc["metadata"]["total_chunks"],
+                },
+            },)
+            points.append(point)
+
+            if len(points) >= BATCH_SIZE:
+                client.upsert(
+                    collection_name=COLLECTION_NAME,
+                    points=points,
+                )
+                logger.info(f"Indexed batch of {len(points)}")
+                points.clear()
+
+        except Exception as e:
+            logger.error(f"Failed to embed/index document: {e}")
+
+    if points:
+        client.upsert(
+            collection_name=COLLECTION_NAME,
+            points=points,
         )
-        logger.info(f"Deleted {len(doc_ids)} documents.")
+        logger.info(f"Indexed final batch of {len(points)}")
+    # -------------------------------
+    # Index AUTHORS
+    # -------------------------------
+    points = []  # reset buffer
 
-    def delete_by_filter(self, filter_conditions: Dict[str, Any]):
-        """
-        Deletes documents that match specific metadata conditions.
-        
-        Args:
-            filter_conditions: Dict of {field_name: value}. 
-                               Example: {"author": "Thiruvalluvar"}
-        """
-        if not filter_conditions:
-            return
+    for doc in author_documents:
+        try:
+            point = models.PointStruct(
+                id=doc["id"],
+                vector={
+                    "dense": dense_embed_doc(doc["text"]),
+                    "sparse": sparse_embed(doc["text"]),
+                },
+                payload={
+                    "content": doc["text"],   # author name
+                    "chunk_id": 0,
+                    "type": "author",
+                    "metadata": doc["metadata"],
+                },
+            )
+            points.append(point)
 
-        must_conditions = [
-            models.FieldCondition(key=k, match=models.MatchValue(value=v))
-            for k, v in filter_conditions.items()
-        ]
-        
-        self.client.delete(
-            collection_name=self.collection_name,
-            points_selector=models.FilterSelector(
-                filter=models.Filter(must=must_conditions)
-            ),
+            if len(points) >= BATCH_SIZE:
+                client.upsert(
+                    collection_name=COLLECTION_NAME,
+                    points=points,
+                )
+                logger.info(f"Indexed author batch of {len(points)}")
+                points.clear()
+
+        except Exception as e:
+            logger.error(f"Failed to embed/index author: {e}")
+
+    if points:
+        client.upsert(
+            collection_name=COLLECTION_NAME,
+            points=points,
         )
-        logger.info(f"Deleted documents matching filter: {filter_conditions}")
+        logger.info(f"Indexed final author batch of {len(points)}")
 
+    info = client.get_collection(COLLECTION_NAME)
+    logger.info(f"Total vectors indexed: {info.points_count}")
+    logger.info(
+    f"[SUMMARY] Intro chunks indexed={len(documents)}, "
+    f"Author entries indexed={len(author_documents)}"
+)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,194 +1,407 @@
-import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import List, Dict
+from qdrant_client import QdrantClient
+from sentence_transformers import SentenceTransformer
+from collections import defaultdict
+import re
+import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+import torch
+torch.set_grad_enabled(False)
+from qdrant_client import models
+from transformers import pipeline
 
-try:
-    from qdrant_client import QdrantClient, models
-except ImportError:
-    QdrantClient = None
-    models = None
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+QDRANT_PATH = "/home/ubuntu/Ponni_Rag/PonniRAG/src/db/qdrant_data"
+COLLECTION_NAME = "qdrant_indexer"
+EMBEDDING_MODEL = "intfloat/multilingual-e5-large"
+
+
+_embed_model = None
+
+def get_embed_model():
+    global _embed_model
+    if _embed_model is None:
+        _embed_model = SentenceTransformer(
+            EMBEDDING_MODEL,
+            device="cpu"   # 🔥 IMPORTANT
+        )
+    return _embed_model
+
+def dense_embed_query(text: str):
+    model = get_embed_model()
+    return model.encode(f"query: {text}").tolist()
+
+
+def sparse_embed(text: str):
+    tokens = re.findall(r"\b\w+\b", text.lower())
+    counts = defaultdict(int)
+    for t in tokens:
+        counts[t] += 1
+
+    indices, values = [], []
+    for token, freq in counts.items():
+        indices.append(abs(hash(token)) % (2**31))
+        values.append(float(freq))
+
+    return models.SparseVector(indices=indices, values=values)
+
+
+_llm = None
+
+def get_llm():
+    global _llm
+    if _llm is None:
+        _llm = pipeline(
+            "text-generation",
+            model="abhinand/tamil-llama-7b-instruct-v0.2",
+            device_map="auto",
+            torch_dtype=torch.float16,
+        )
+    return _llm
+
+
+
+def is_author_question(question: str) -> bool:
+    keywords = [
+        "author", "authors", "list",
+        "எழுத்தாளர்", "எழுத்தாளர்கள்", "பட்டியல்", "யார்"
+    ]
+    q = question.lower()
+    return any(k in q for k in keywords)
+
+def fetch_all_authors(client: QdrantClient) -> List[str]:
+    points, _ = client.scroll(
+        collection_name=COLLECTION_NAME,
+        limit=10000,
+        with_payload=True,
+    )
+
+    authors = set()
+
+    for p in points:
+        payload = p.payload or {}
+        if payload.get("type") == "author":
+            author = payload.get("content", "").strip()
+            if author:
+                authors.add(author)
+
+    return sorted(authors)
+
+def format_authors_tamil(authors: List[str]) -> str:
+    if not authors:
+        return "எழுத்தாளர் தகவல்கள் கிடைக்கவில்லை."
+
+    lines = ["பொன்னி இதழில் எழுதிய எழுத்தாளர்கள்:\n"]
+    for author in authors:
+        lines.append(f"• {author}")
+
+    return "\n".join(lines)
 
 
 class HybridQdrantSearch:
-    """
-    A module to perform Hybrid Search in Qdrant using RRF (Reciprocal Rank Fusion).
-    Combines Dense Vector Search and Sparse Keyword Search.
-    """
-
-    def __init__(
-        self,
-        client: QdrantClient,
-        collection_name: str,
-        dense_embedding_func: callable,
-        sparse_embedding_func: callable,
-        sparse_vector_name: str = "sparse",
-        dense_vector_name: str = "dense",
-    ):
-        """
-        Initialize the Hybrid Searcher.
-
-        Args:
-            client: An instance of QdrantClient.
-            collection_name: Name of the collection to search.
-            dense_embedding_func: Function that takes text -> list of floats (dense vector).
-            sparse_embedding_func: Function that takes text -> two lists (indices, values) or dictionary of {index: value}.
-                                   Should format correctly for Qdrant sparse vectors.
-            sparse_vector_name: Name of the sparse vector in your Qdrant config (default: "sparse").
-            dense_vector_name: Name of the dense vector in your Qdrant config (default: "dense").
-        """
+    def __init__(self, client: QdrantClient):
         self.client = client
-        self.collection_name = collection_name
-        self.dense_func = dense_embedding_func
-        self.sparse_func = sparse_embedding_func
-        self.sparse_name = sparse_vector_name
-        self.dense_name = dense_vector_name
 
-        if not self.client or not models:
-            logger.warning("QdrantClient not available. Hybrid search will not work.")
+    def search(self, query: str, limit: int = 30):
+        """Retrieve more chunks initially for merging"""
+        response = self.client.query_points(
+            collection_name=COLLECTION_NAME,
+            prefetch=[
+                models.Prefetch(
+                    query=dense_embed_query(query),
+                    using="dense",
+                    filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="type",
+                                match=models.MatchValue(value="intro")
+                            )
+                        ]
+                    ),
+                    limit=limit * 2,
+                ),
+                models.Prefetch(
+                    query=sparse_embed(query),
+                    using="sparse",
+                    filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="type",
+                                match=models.MatchValue(value="intro")
+                            )
+                        ]
+                    ),
+                    limit=limit * 2,
+                ),
+            ],
+            query=models.FusionQuery(fusion=models.Fusion.RRF),
+            limit=limit,
+            with_payload=True,
+        )
+        return response.points
 
-    def build_filter(self, user_filters: Dict[str, Any]) -> Optional[models.Filter]:
-        """
-        Converts a simple dictionary of user choices into a Qdrant Filter.
 
-        Args:
-            user_filters: Dict where keys are field names and values are exact match values.
-                          Example: {"category": "history", "year": 2023}
+def build_context(points) -> str:
+    """
+    Build context for LLM WITHOUT metadata markers.
+    Just clean text separated by newlines.
+    """
+    blocks = []
 
-        Returns:
-            models.Filter or None
-        """
-        if not user_filters:
-            return None
+    for p in points:
+        payload = p.payload or {}
+        content = payload.get("content", "").strip()
 
-        must_conditions = []
-        for key, value in user_filters.items():
-            # Validate value types: Qdrant MatchValue supports int, str, bool
-            if value is None:
-                continue
-            
-            if not isinstance(value, (str, int, float, bool)):
-                logger.warning(f"Filter value for '{key}' is {type(value)}, which may not be supported directly. Skipping.")
-                continue
+        # Only include intro type with substantial content
+        if payload.get("type") == "intro" and len(content) >= 50:
+            # Just add the content, no metadata markers
+            blocks.append(content)
 
-            # Simple Exact Match logic
-            must_conditions.append(
-                models.FieldCondition(key=key, match=models.MatchValue(value=value))
-            )
+    if not blocks:
+        return ""
 
-        if not must_conditions:
-            return None
+    # Join with double newline for separation
+    context = "\n\n".join(blocks)
+    return context[:4000]
 
-        return models.Filter(must=must_conditions)
 
-    def search(
-        self,
-        query_text: str,
-        user_filters: Dict[str, Any] = None,
-        limit: int = 10,
-        rrf_k: int = 60,
-    ) -> List[Dict[str, Any]]:
-        """
-        Performs the hybrid search using RRF Fusion.
-
-        Args:
-            query_text: The user's search query.
-            user_filters: Dictionary of filters (e.g. {"category": "sports"}).
-            limit: Number of results to return.
-            rrf_k: The 'k' constant in RRF formula (1 / (k + rank)). Default 60.
-
-        Returns:
-            List of payloads with 'score' and 'fusion_score'.
-        """
-        if not self.client:
-            logger.error("QdrantClient is not initialized.")
-            return []
-
-        if not query_text or not isinstance(query_text, str) or not query_text.strip():
-            logger.warning("Empty or invalid query text provided. Returning empty results.")
-            return []
+def retrieve_all_chunks_for_document(client: QdrantClient, doc_id: str, doc_issue: str, volume: str) -> List[Dict]:
+    """
+    Retrieve ALL chunks for a specific document from Qdrant.
+    This fetches the complete document by getting all its chunks.
+    """
+    all_chunks = []
+    offset = None
+    
+    while True:
+        points, offset = client.scroll(
+            collection_name=COLLECTION_NAME,
+            scroll_filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="type",
+                        match=models.MatchValue(value="intro")
+                    ),
+                    models.FieldCondition(
+                        key="metadata.doc_id",
+                        match=models.MatchValue(value=doc_id)
+                    ),
+                    models.FieldCondition(
+                        key="metadata.doc_issue",
+                        match=models.MatchValue(value=doc_issue)
+                    ),
+                    models.FieldCondition(
+                        key="metadata.volume",
+                        match=models.MatchValue(value=volume)
+                    ),
+                ]
+            ),
+            limit=100,
+            offset=offset,
+            with_payload=True,
+        )
         
-        # Sanitize limit
-        if limit <= 0:
-            logger.warning(f"Invalid limit {limit}. Setting to default 10.")
-            limit = 10
+        all_chunks.extend(points)
+        
+        if offset is None:
+            break
+    
+    return all_chunks
 
-        # 1. Generate Embeddings
-        try:
-            dense_vector = self.dense_func(query_text)
-            sparse_vector = self.sparse_func(query_text)
+
+def merge_consecutive_chunks(client: QdrantClient, points) -> List[Dict]:
+    """
+    For each document found in search results, retrieve ALL its chunks
+    from Qdrant and merge them to show complete content.
+    """
+    seen_docs = set()
+    merged_docs = []
+    
+    for p in points:
+        payload = p.payload or {}
+        if payload.get("type") != "intro":
+            continue
             
-            if dense_vector is None or sparse_vector is None:
-                 logger.error("Embedding function returned None.")
-                 return []
+        metadata = payload.get("metadata", {})
+        
+        doc_key = (
+            metadata.get("volume"),
+            metadata.get("doc_id"),
+            metadata.get("doc_issue"),
+        )
+        
+        if doc_key in seen_docs:
+            continue
+            
+        seen_docs.add(doc_key)
+        
+        all_chunks = retrieve_all_chunks_for_document(
+            client,
+            doc_id=metadata.get("doc_id"),
+            doc_issue=metadata.get("doc_issue"),
+            volume=metadata.get("volume")
+        )
+        
+        if not all_chunks:
+            continue
+        
+        chunk_data = []
+        for chunk_point in all_chunks:
+            chunk_payload = chunk_point.payload or {}
+            chunk_data.append({
+                "chunk_id": chunk_payload.get("chunk_id", 0),
+                "content": chunk_payload.get("content", "").strip(),
+            })
+        
+        chunk_data.sort(key=lambda x: x["chunk_id"])
+        
+        full_content = " ".join(chunk["content"] for chunk in chunk_data)
+        full_content = re.sub(r'\s+', ' ', full_content).strip()
+        
+        word_count = len(full_content.split())
+        
+        if word_count < 50:
+            continue
+        
+        merged_docs.append({
+            "volume": metadata.get("volume"),
+            "doc_id": metadata.get("doc_id"),
+            "doc_issue": metadata.get("doc_issue"),
+            "heading": metadata.get("heading"),
+            "content": full_content,
+            "word_count": word_count,
+            "chunk_count": len(chunk_data),
+            "score": p.score,
+        })
+    
+    merged_docs.sort(key=lambda x: x["score"], reverse=True)
+    
+    return merged_docs
 
-        except Exception as e:
-            logger.error(f"Error generating embeddings: {e}")
-            return []
 
-        # 2. Build Filter
-        qdrant_filter = self.build_filter(user_filters)
+def format_sources(client: QdrantClient, points, limit: int = 10) -> List[Dict]:
+    """
+    Format sources by retrieving complete documents from Qdrant.
+    Returns up to 'limit' unique, complete documents with 100+ words.
+    """
+    merged_docs = merge_consecutive_chunks(client, points)
+    
+    sources = []
+    for doc in merged_docs:
+        sources.append({
+            "volume": doc["volume"],
+            "heading": doc["heading"],
+            "doc_issue": doc["doc_issue"],
+            "content": doc["content"],
+            "word_count": doc["word_count"],
+            "chunks_merged": doc["chunk_count"],
+        })
+        
+        if len(sources) >= limit:
+            break
+    
+    return sources
 
-        # 3. Define Prefetch Operations (The two sub-searches)
-        # We fetch more candidates than 'limit' for better re-ranking fusion (e.g., limit * 2)
-        prefetch_limit = max(limit * 2, 20) # Ensure we fetch at least a reasonable amount
 
-        try:
-            prefetch = [
-                models.Prefetch(
-                    query=dense_vector,
-                    using=self.dense_name,
-                    filter=qdrant_filter,
-                    limit=prefetch_limit,
-                ),
-                models.Prefetch(
-                    query=sparse_vector,
-                    using=self.sparse_name,
-                    filter=qdrant_filter,
-                    limit=prefetch_limit,
-                ),
-            ]
+def call_llm(question: str, context: str) -> str:
+    """
+    Call LLM with improved prompt to generate original answer, not copy text
+    """
+    prompt = f"""நீங்கள் ஒரு தமிழ் உதவியாளர். கொடுக்கப்பட்ட தகவல்களைப் படித்து, கேள்விக்கு உங்கள் சொந்த வார்த்தைகளில் சுருக்கமாக பதிலளிக்கவும்.
 
-            # 4. Execute Query with RRF Fusion
-            response = self.client.query_points(
-                collection_name=self.collection_name,
-                prefetch=prefetch,
-                query=models.Fusion(fusion=models.FusionType.RRF),
-                limit=limit,
-                with_payload=True,
-            )
+முக்கியம்: தகவலை அப்படியே எழுத வேண்டாம். முக்கிய கருத்துகளை மட்டும் சுருக்கி கூறவும்.
 
-            # 5. Format Results
-            results = []
-            if not response or not response.points:
-                return []
+தகவல்கள்:
+{context}
 
-            for point in response.points:
-                item = point.payload or {}
-                # RRF score is small (0.0-1.0 roughly), we keep it as is
-                item["score"] = point.score
-                results.append(item)
+கேள்வி: {question}
 
-            return results
+பதில்:"""
 
-        except Exception as e:
-            logger.error(f"Qdrant Search Error: {e}")
-            return []
+    try:
+        llm = get_llm()
 
-# Example Usage helper (commented out/docstring)
-"""
-# Assuming you have a client and models set up:
+        output = llm(
+            prompt,
+            max_new_tokens=128,   # 🔥 no quality loss
+            temperature=0.4,
+            do_sample=True,
+            top_p=0.9,
+            eos_token_id=llm.tokenizer.eos_token_id,
+        )[0]["generated_text"]
 
-def my_dense_embed(text):
-    return model.encode(text).tolist()
 
-def my_sparse_embed(text):
-    # Use SPLADE or BM25 encoder here to return qdrant sparse format
-    # models.SparseVector(indices=[1, 10], values=[0.5, 0.8])
-    return ...
+        # Extract answer after "பதில்:"
+        if "பதில்:" in output:
+            answer = output.split("பதில்:")[-1].strip()
+        else:
+            answer = output.strip()
+        
+        # Clean up metadata markers aggressively
+        answer = re.sub(r'\[TEXT[^\]]*\]', '', answer)
+        answer = re.sub(r'Volume=\w+', '', answer)
+        
+        # Remove incomplete sentences at the end
+        # If answer ends with incomplete word (no punctuation), remove last sentence
+        if answer and not answer[-1] in '.!?।':
+            # Find last complete sentence
+            sentences = re.split(r'[.!?।]+', answer)
+            if len(sentences) > 1:
+                answer = '.'.join(sentences[:-1]) + '.'
+        
+        # Clean up extra whitespace
+        answer = re.sub(r'\s+', ' ', answer).strip()
+        
+        # If answer is too short or seems like it's copying, return a generic response
+        if len(answer) < 20 or answer.startswith('[TEXT'):
+            return "கொடுக்கப்பட்ட கேள்விக்கு தகவல்கள் கிடைத்துள்ளன. மூலங்களைப் பார்க்கவும்."
+        
+        return answer
+        
+    except Exception as e:
+        return "பதில் உருவாக்குவதில் சிக்கல் ஏற்பட்டது. மூலங்களைப் பார்க்கவும்."
+    finally:
+        torch.cuda.empty_cache()
 
-searcher = HybridQdrantSearch(client, "my_collection", my_dense_embed, my_sparse_embed)
-results = searcher.search("Tamil History", user_filters={"type": "article"})
-"""
+
+def ask_question(question: str, top_k: int = 10) -> Dict:
+    """
+    Ask a question and get answer with complete, merged sources.
+    
+    Args:
+        question: User's question
+        top_k: Number of unique documents to return (default 10)
+    
+    Returns:
+        Dict with 'answer' and 'sources' keys containing complete documents
+    """
+    from pathlib import Path
+    
+    BASE_DIR = Path(__file__).resolve().parent
+    QDRANT_PATH = str(BASE_DIR / "qdrant_data")
+    
+    client = QdrantClient(path=QDRANT_PATH)
+
+    if is_author_question(question):
+        authors = fetch_all_authors(client)
+        return {
+            "answer": format_authors_tamil(authors) if authors else "தகவல் இல்லை",
+            "sources": []
+        }
+
+    searcher = HybridQdrantSearch(client)
+    results = searcher.search(question, limit=30)
+
+    if not results:
+        return {"answer": "தகவல் இல்லை", "sources": []}
+
+    context = build_context(results)
+    if not context:
+        return {"answer": "தகவல் இல்லை", "sources": []}
+
+    sources = format_sources(client, results, limit=top_k)
+
+    return {
+        "answer": call_llm(question, context),
+        "sources": sources
+    }
