@@ -2,20 +2,22 @@ import time
 import streamlit as st
 import sys
 from pathlib import Path
-import base64
-import requests  # Move to top level
 
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from rag_system import RAGSystem
+BASE_DIR = Path(__file__).resolve().parent
+QDRANT_PATH = str(BASE_DIR / "qdrant_data")
 
-# PDF mapping - converts Google Drive sharing links to direct download links
+# Import the hybrid search function
+from hybrid_search import ask_question
+
 # PDF mapping - converts Google Drive sharing links to direct download links
 PDF_LINKS = {
     "vol_1_issue_1": "https://drive.google.com/uc?export=download&id=14WpSLrcqWqRXB9sQIvmRlWS2ffPKyerC",
     "vol_1_issue_2": "https://drive.google.com/uc?export=download&id=14WpSLrcqWqRXB9sQIvmRlWS2ffPKyerC",
 }
+
 # -----------------------------------------------------------------------------
 # Configuration & CSS
 # -----------------------------------------------------------------------------
@@ -25,12 +27,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
-
-# Initialize RAG System
-@st.cache_resource
-def get_rag_system():
-    """Initialize and cache RAG system."""
-    return RAGSystem()
 
 # -----------------------------------------------------------------------------
 # Localization & State Management
@@ -50,7 +46,7 @@ if "lang" in query_params:
     st.session_state.language = query_params["lang"]
     # clear param to avoid sticking
     current_params = st.query_params.to_dict()
-    current_params.pop("lang") # Remove lang to clean URL
+    current_params.pop("lang")
     st.query_params.clear()
     st.query_params.update(current_params)
     st.rerun()
@@ -82,11 +78,11 @@ TRANSLATIONS = {
         "article": "கட்டுரை",
         "intro": "அறிமுகம்",
         "filter_author": "எழுத்தாளர்",
-        "relevance_score": "தொடர்பு மதிப்பெண்",
+        "volume": "தொகுதி",
+        "heading": "தலைப்பு",
         "read": "படிக்க",
         "issue": "இதழ்",
-        
-        "about_mission_text": ''' திராவிட கருத்தியலைப் பட்டித்தொட்டி எங்கும் பரப்பும் முயற்சிக்குத் திராவிட கருத்தியலாளர்கள் பல்வேறு ஊடகங்களைப் கைக்கொண்டனர். அவற்றுள் இதழ்கள் குறிப்பிடத்தக்கன. குடியரசு, விடுதலை, திராவிடநாடு, திராவிடன், போர்வாள், தனியரசு, கிளர்ச்சி, குயில் போன்ற இதழ்கள் மிகப்பெரிய அளவில் அறிவு அரசியல் தளத்தில் தமிழ் மக்களிடையே பெரும் தாக்கத்தை ஏற்படுத்தின. இவ்விதழ்கள் பகுத்தறிவு, சுயமரியாதை, சமத்துவம் போன்ற கொள்கைகளை மக்களிடையே பரப்பியதுடன், சாதி, மத மூடநம்பிக்கைகளுக்கு எதிரான கருத்துகளை மிகக் காத்திரமாக முன்வைத்தன.
+        "about_mission_text": '''திராவிட கருத்தியலைப் பட்டித்தொட்டி எங்கும் பரப்பும் முயற்சிக்குத் திராவிட கருத்தியலாளர்கள் பல்வேறு ஊடகங்களைப் கைக்கொண்டனர். அவற்றுள் இதழ்கள் குறிப்பிடத்தக்கன. குடியரசு, விடுதலை, திராவிடநாடு, திராவிடன், போர்வாள், தனியரசு, கிளர்ச்சி, குயில் போன்ற இதழ்கள் மிகப்பெரிய அளவில் அறிவு அரசியல் தளத்தில் தமிழ் மக்களிடையே பெரும் தாக்கத்தை ஏற்படுத்தின. இவ்விதழ்கள் பகுத்தறிவு, சுயமரியாதை, சமத்துவம் போன்ற கொள்கைகளை மக்களிடையே பரப்பியதுடன், சாதி, மத மூடநம்பிக்கைகளுக்கு எதிரான கருத்துகளை மிகக் காத்திரமாக முன்வைத்தன.
 
 1900களில் வெளிவந்த இதழ்கள் சமூக மாற்றத்திற்கும் முன்னேற்றத்திற்கும் பெருந்துணையாக அமைந்துள்ளன என்பது வரலாற்று ரீதியான உண்மை. 1947 முதல் 1955 வரை இயங்கிய கலை இலக்கிய இதழ் 'பொன்னி'. பொன்னி இதழ் திரு. அரு. பெரியண்ணன் மற்றும் திரு. முருகு. சுப்பிரமணியம் ஆகியோரால் 1947ஆம் ஆண்டு பிப்ரவரி மாதம் தொடங்கப்பெற்றது. தொடங்கப்பட்ட முதல் வருடத்தில் மாதம் ஓர் இதழ் என வெளிவந்த பொன்னி 1948 முதல் மாதம் ஈரிதழாக வெளிவந்தது.'''
     },
@@ -114,12 +110,11 @@ TRANSLATIONS = {
         "article": "Article",
         "intro": "Introduction",
         "filter_author": "Author",
-        "relevance_score": "Relevance Score",
+        "volume": "Volume",
+        "heading": "Heading",
         "read": "Read",
         "issue": "Issue",
-       
         "about_mission_text": """Founded in February 1947 by A.R. Periyannan and Murugu Subramanium, Ponni magazine emerged as a powerful voice for the Dravidian movement during a transformative period in Tamil Nadu's history. This literary and cultural magazine operated from 1947 to 1955, initially publishing monthly and later twice monthly from 1948 onwards.""",
-        
         "footer_founded": "Founded: 1947",
         "footer_founder": "A.R. Periyannan & Murugu Subramanium"
     }
@@ -530,40 +525,75 @@ def render_home():
     else:
         st.markdown("<div style='height: 6rem;'></div>", unsafe_allow_html=True) 
         
-        for msg in st.session_state.messages:
+        for msg_idx, msg in enumerate(st.session_state.messages):
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
                 if msg.get("sources"):
-                    with st.expander(f"{t('sources_title')} ({len(msg['sources'])} documents)"):
+                    with st.expander(f"{t('sources_title')} ({len(msg['sources'])} {t('document_type').lower()})"):
                         for idx, src in enumerate(msg["sources"], 1):
-                            doc_type = t('article') if src['type'] == 'article' else t('intro')
+                            # Build metadata display
+                            meta_parts = [f"{t('volume')}: {src.get('volume', 'N/A')}"]
                             
-                            meta_parts = [
-                                f"{t('document_type')}: {doc_type}",
-                                f"{t('lib_vol')}: {src['volume']}"
-                            ]
+                            if src.get('heading'):
+                                meta_parts.append(f"{t('heading')}: {src['heading']}")
                             
-                            if src['type'] == 'article' and src.get('author'):
-                                meta_parts.append(f"{t('filter_author')}: {src['author']}")
-                            
-                            if src['type'] == 'article' and src.get('article_heading'):
-                                meta_parts.append(f"தலைப்பு: {src['article_heading']}")
+                            if src.get('doc_issue'):
+                                meta_parts.append(f"{t('issue')}: {src['doc_issue']}")
                             
                             meta_str = " • ".join(meta_parts)
                             
-                            st.markdown(
-                                f"""
-                                <div class="source-card">
-                                    <div class="source-header">
-                                        <span class="source-title">📄 Source {idx}</span>
-                                        <span class="source-score">{t('relevance_score')}: {src['score']}%</span>
+                            # Full content
+                            full_content = src.get('content', '').strip()
+                            
+                            # Word count check (minimum 100 words)
+                            word_count = len(full_content.split())
+                            
+                            # Create unique key for this source's expander state
+                            read_more_key = f"read_more_{msg_idx}_{idx}"
+                            
+                            # Initialize session state for this source if not exists
+                            if read_more_key not in st.session_state:
+                                st.session_state[read_more_key] = False
+                            
+                            # Display preview or full content based on state
+                            if len(full_content) > 300:  # Show read more if content is long
+                                preview_content = full_content[:300] + "..."
+                                
+                                st.markdown(
+                                    f"""
+                                    <div class="source-card">
+                                        <div class="source-header">
+                                            <span class="source-title">📄 {t('sources_title')} {idx}</span>
+                                        </div>
+                                        <div class="source-meta">{meta_str} • {word_count} words</div>
+                                        <div class="source-preview" id="content_{read_more_key}">
+                                            {full_content if st.session_state[read_more_key] else preview_content}
+                                        </div>
                                     </div>
-                                    <div class="source-meta">{meta_str}</div>
-                                    <div class="source-preview">{src['content_preview']}</div>
-                                </div>
-                                """,
-                                unsafe_allow_html=True
-                            )
+                                    """,
+                                    unsafe_allow_html=True
+                                )
+                                
+                                # Read More / Show Less button
+                                button_label = "Show Less " if st.session_state[read_more_key] else "Read More "
+                                if st.button(button_label, key=f"btn_{read_more_key}", use_container_width=False):
+                                    st.session_state[read_more_key] = not st.session_state[read_more_key]
+                                    st.rerun()
+                                    
+                            else:
+                                # Short content - display directly
+                                st.markdown(
+                                    f"""
+                                    <div class="source-card">
+                                        <div class="source-header">
+                                            <span class="source-title">📄 {t('sources_title')} {idx}</span>
+                                        </div>
+                                        <div class="source-meta">{meta_str} • {word_count} words</div>
+                                        <div class="source-preview">{full_content}</div>
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True
+                                )
 
     if "temp_submit" in st.session_state:
         user_input = st.session_state.temp_submit
@@ -576,18 +606,19 @@ def render_home():
         
         with st.spinner(t('searching')):
             try:
-                rag = get_rag_system()
-                response = rag.search(user_input, top_k=10)
+                # Call the hybrid search function
+                result = ask_question(user_input)
                 
                 st.session_state.messages.append({
                     "role": "assistant", 
-                    "content": response["text"],
-                    "sources": response["sources"]
+                    "content": result["answer"],
+                    "sources": result["sources"]
                 })
             except Exception as e:
+                error_msg = "மன்னிக்கவும், பிழை ஏற்பட்டது" if lang == "ta" else "Sorry, an error occurred"
                 st.session_state.messages.append({
                     "role": "assistant",
-                    "content": f"மன்னிக்கவும், பிழை ஏற்பட்டது: {str(e)}",
+                    "content": f"{error_msg}: {str(e)}",
                     "sources": []
                 })
         

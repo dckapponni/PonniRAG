@@ -22,9 +22,8 @@ BATCH_SIZE = 100
 
 
 S3_BUCKET = "ponni-dev"
-S3_PREFIX = "output_json//vol_1/"
+S3_PREFIX = "output_json/"
 S3_SUFFIX = ".json"
 
 
-DEFAULT_VOLUME = "vol_1"
 

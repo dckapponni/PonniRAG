@@ -20,8 +20,16 @@ from config.config import (
     S3_BUCKET,
     S3_PREFIX,
     S3_SUFFIX,
-    DEFAULT_VOLUME,
 )
+def extract_volume_from_key(key: str) -> str:
+    """
+    output_json/vol_1/file.json → vol_1
+    """
+    parts = key.strip("/").split("/")
+    for part in parts:
+        if part.lower().startswith("vol_"):
+            return part
+    return "unknown"
 
 def load_documents_from_s3():
     documents = []
@@ -42,6 +50,7 @@ def load_documents_from_s3():
 
     for key in json_keys:
         try:
+            volume = extract_volume_from_key(key)
             raw_bytes = read_bytes(S3_BUCKET, key)
             data = json.loads(raw_bytes.read().decode("utf-8"))
 
@@ -53,7 +62,7 @@ def load_documents_from_s3():
                         "doc_id": item.get("doc_id", ""),
                         "doc_issue": item.get("doc_issue", ""),
                         "heading": item.get("heading", ""),
-                        "volume": DEFAULT_VOLUME
+                        "volume": volume
                     }
                 })
 
@@ -67,7 +76,7 @@ def load_documents_from_s3():
                         "article_no": item.get("article_no", ""),
                         "article_heading": item.get("article_heading", ""),
                         "article_author_name": item.get("article_author_name", ""),
-                        "volume": DEFAULT_VOLUME
+                        "volume": volume
                     }
                 })
 
