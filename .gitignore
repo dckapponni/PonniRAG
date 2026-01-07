@@ -5,6 +5,7 @@ venv
 __pycache__/
 *.pyc
 qdrant_storage/
+qdrant_data/
 *.json
 *.log
 .env
