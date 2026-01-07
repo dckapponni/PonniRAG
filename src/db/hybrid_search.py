@@ -577,9 +577,194 @@ def format_topic_authors(result: Dict) -> str:
     
     return '\n'.join(lines)
 
+def detect_issue_count_query(question: str) -> bool:
+    """
+    Detect if user is asking about issue count
+    """
+    q = question.lower()
+    
+    patterns = [
+        'இதழ் எண்ணிக்கை',
+        'எத்தனை இதழ்',
+        'இதழ்கள் எத்தனை',
+        'மொத்த இதழ்',
+        'இதழ் count',
+        'issue count',
+        'how many issues',
+        'number of issues',
+        'total issues',
+        'இதழ் பட்டியல்',
+        'இதழ்களின் பட்டியல்'
+    ]
+    
+    return any(pattern in q for pattern in patterns)
+
+
+def get_issue_count(csv_path: str) -> Dict:
+    """
+    Get unique issue count from CSV
+    """
+    try:
+        csv_path = Path(csv_path)
+        
+        if not csv_path.exists():
+            return {
+                "success": False,
+                "message": "CSV கோப்பு கிடைக்கவில்லை",
+                "count": 0,
+                "issues": []
+            }
+        
+        print(f"📂 Loading CSV for issue count: {csv_path}")
+        
+        # Try loading CSV with multiple strategies
+        df = None
+        strategies = [
+            {"encoding": "utf-8", "skipinitialspace": True},
+            {"encoding": "utf-8", "on_bad_lines": "skip"},
+            {"encoding": "utf-8", "engine": "python", "on_bad_lines": "skip"},
+        ]
+        
+        for kwargs in strategies:
+            try:
+                df = pd.read_csv(csv_path, **kwargs)
+                break
+            except:
+                continue
+        
+        if df is None or df.empty:
+            return {
+                "success": False,
+                "message": "CSV தரவை படிக்க முடியவில்லை",
+                "count": 0,
+                "issues": []
+            }
+        
+        # Clean column names
+        df.columns = df.columns.str.strip()
+        
+        # Check for issue column (இதழ் or issue)
+        issue_col = None
+        for col in ['இதழ்', 'issue', 'Issue', 'doc_issue']:
+            if col in df.columns:
+                issue_col = col
+                break
+        
+        if not issue_col:
+            return {
+                "success": False,
+                "message": "இதழ் column கிடைக்கவில்லை",
+                "count": 0,
+                "issues": []
+            }
+        
+        # Get unique issues
+        df[issue_col] = df[issue_col].fillna('').astype(str).str.strip()
+        df_filtered = df[df[issue_col] != '']
+        
+        unique_issues = df_filtered[issue_col].unique()
+        issue_counts = df_filtered[issue_col].value_counts()
+        
+        # Sort issues (try numeric first, then alphabetic)
+        try:
+            sorted_issues = sorted(unique_issues, key=lambda x: int(x) if x.isdigit() else x)
+        except:
+            sorted_issues = sorted(unique_issues)
+        
+        # Create detailed issue list
+        issues_list = []
+        for issue in sorted_issues:
+            article_count = int(issue_counts[issue])
+            issues_list.append({
+                "issue_number": issue,
+                "article_count": article_count
+            })
+        
+        return {
+            "success": True,
+            "count": len(unique_issues),
+            "total_articles": len(df_filtered),
+            "issues": issues_list
+        }
+        
+    except Exception as e:
+        print(f"❌ Error getting issue count: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "message": f"பிழை: {str(e)}",
+            "count": 0,
+            "issues": []
+        }
+
+
+def format_issue_count(result: Dict) -> str:
+    """
+    Format issue count result for display
+    """
+    if not result['success']:
+        return f"❌ {result['message']}"
+    
+    lines = [
+        "பொன்னி இதழ்கள் விவரம்",
+        f"மொத்த இதழ்கள்: {result['count']}",
+        f"மொத்த கட்டுரைகள்: {result['total_articles']}",
+        ""
+    ]
+    
+    # Group issues for better display
+    issues = result['issues']
+    
+    if len(issues) <= 20:
+        # Display all if less than 20
+        lines.append("இதழ் எண் | கட்டுரைகள்")
+        lines.append("-" * 30)
+        for issue_info in issues:
+            lines.append(f"{issue_info['issue_number']:>8} | {issue_info['article_count']} கட்டுரைகள்")
+    else:
+        # Display summary for large counts
+        lines.append("இதழ் விவரங்கள்:")
+        lines.append("")
+        
+        # First 5
+        lines.append("முதல் 5 இதழ்கள்:")
+        for issue_info in issues[:5]:
+            lines.append(f"  • இதழ் {issue_info['issue_number']}: {issue_info['article_count']} கட்டுரைகள்")
+        
+        lines.append("")
+        lines.append(f"... (மேலும் {len(issues) - 10} இதழ்கள்)")
+        lines.append("")
+        
+        # Last 5
+        lines.append("கடைசி 5 இதழ்கள்:")
+        for issue_info in issues[-5:]:
+            lines.append(f"  • இதழ் {issue_info['issue_number']}: {issue_info['article_count']} கட்டுரைகள்")
+    
+    lines.append("")
+    
+    # Statistics
+    if result['issues']:
+        article_counts = [i['article_count'] for i in result['issues']]
+        lines.append("புள்ளிவிவரம்:")
+        lines.append(f"  • சராசரி கட்டுரைகள் ஒரு இதழுக்கு: {sum(article_counts) / len(article_counts):.1f}")
+        lines.append(f"  • குறைந்தபட்ச கட்டுரைகள்: {min(article_counts)}")
+        lines.append(f"  • அதிகபட்ச கட்டுரைகள்: {max(article_counts)}")
+    
+    return '\n'.join(lines)
+
 
 def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
-    """Main handler for author queries"""
+    """
+    Enhanced handler for author queries and issue count queries
+    """
+    # Check for issue count query first
+    if detect_issue_count_query(question):
+        print("🔍 Detected issue count query")
+        result = get_issue_count(csv_path)
+        return True, format_issue_count(result)
+    
+    # Original author query handling
     system = EnhancedAuthorQuerySystem(csv_path)
     
     if system.df is None or system.df.empty:
