@@ -4,19 +4,56 @@ from sentence_transformers import SentenceTransformer
 from collections import defaultdict
 import re
 import os
+from pathlib import Path
+
+# CRITICAL: Use dynamic paths instead of hardcoded ones
+BASE_DIR = Path(__file__).resolve().parent
+QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
+QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
+COLLECTION_NAME = "qdrant_indexer"
+EMBEDDING_MODEL = "intfloat/multilingual-e5-large"
+CSV_PATH = BASE_DIR / "summary.csv"
+
+
+# Environment setup
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 import torch
 torch.set_grad_enabled(False)
 from qdrant_client import models
 from transformers import pipeline
 import pandas as pd
-from pathlib import Path
+
+def log_info(message: str):
+    """Print with emoji for better visibility"""
+    print(f"ℹ️  {message}")
 
 
-QDRANT_PATH = "/home/ubuntu/Ponni_Rag/PonniRAG/src/db/qdrant_data"
-COLLECTION_NAME = "qdrant_indexer"
-EMBEDDING_MODEL = "intfloat/multilingual-e5-large"
-CSV_PATH = Path("/home/ubuntu/Ponni_Rag/PonniRAG/src/db/summary.csv")
+def log_error(message: str):
+    """Print error with emoji"""
+    print(f"❌ {message}")
+
+
+def log_success(message: str):
+    """Print success with emoji"""
+    print(f"✅ {message}")
+    
+def verify_files():
+    log_info("Verifying critical files...")
+
+    # Check CSV
+    if CSV_PATH.exists():
+        log_success(f"CSV found: {CSV_PATH}")
+        log_info(f"CSV size: {CSV_PATH.stat().st_size / 1024:.2f} KB")
+    else:
+        log_error(f"CSV NOT FOUND: {CSV_PATH}")
+        log_info("Searching for CSV files...")
+        for csv_file in BASE_DIR.rglob("*.csv"):
+            log_info(f"  Found: {csv_file}")
+
+
+# Run verification on import
+verify_files()
 
 
 _embed_model = None
@@ -24,13 +61,15 @@ _embed_model = None
 def get_embed_model():
     global _embed_model
     if _embed_model is None:
-        print("🔄 Loading embedding model...")
+        log_info("Loading embedding model...")
         _embed_model = SentenceTransformer(EMBEDDING_MODEL, device="cpu")
-        print("✓ Embedding model cached")
+        log_success("Embedding model cached")
     return _embed_model
+
 
 def dense_embed_query(text: str):
     return get_embed_model().encode(f"query: {text}").tolist()
+
 
 def sparse_embed(text: str):
     tokens = re.findall(r"\b\w+\b", text.lower())
@@ -58,23 +97,53 @@ def get_llm():
         return _llm
     _llm_lock = True
     try:
-        print("🔄 Loading LLM model...")
+        log_info("Loading LLM model...")
         _llm = pipeline(
             "text-generation",
             model="abhinand/tamil-llama-7b-instruct-v0.2",
-            device_map="auto",
+            device_map="cuda:0",
             torch_dtype=torch.float16,
         )
-        print("✓ LLM model cached")
+        log_success("LLM model cached")
     finally:
         _llm_lock = False
     return _llm
 
 
-# ============================================================================
-# AUTHOR NAME NORMALIZATION AND MATCHING
-# ============================================================================
+def check_qdrant_health() -> Dict:
+    try:
+        client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
 
+        # Ping server
+        client.get_collections()
+
+        # Check collection
+        try:
+            collection_info = client.get_collection(COLLECTION_NAME)
+            return {
+                "healthy": True,
+                "collection": COLLECTION_NAME,
+                "points_count": collection_info.points_count,
+                "message": "Qdrant server is healthy"
+            }
+        except Exception as e:
+            return {
+                "healthy": False,
+                "error": "collection_not_found",
+                "message": f"Collection '{COLLECTION_NAME}' not found",
+                "details": str(e),
+                "action": "Create the collection on the server"
+            }
+
+    except Exception as e:
+        return {
+            "healthy": False,
+            "error": "connection_failed",
+            "message": "Failed to connect to Qdrant server",
+            "details": str(e),
+            "action": "Ensure Qdrant server is running on port 6333"
+        }
+        
 def normalize_author_name(name: str) -> str:
     """
     Normalize author names by removing prefixes and common variations
@@ -148,11 +217,6 @@ def flexible_author_match(search_name: str, csv_name: str) -> bool:
     
     return False
 
-
-# ============================================================================
-# ENHANCED CSV-BASED AUTHOR QUERY SYSTEM
-# ============================================================================
-
 class EnhancedAuthorQuerySystem:
     """
     Robust author query system with improved CSV parsing and query detection
@@ -167,11 +231,11 @@ class EnhancedAuthorQuerySystem:
         """Load CSV with multiple fallback strategies"""
         try:
             if not self.csv_path.exists():
-                print(f"❌ CSV not found: {self.csv_path}")
+                log_error(f"CSV not found: {self.csv_path}")
                 self.df = pd.DataFrame()
                 return
             
-            print(f"📂 Loading CSV: {self.csv_path}")
+            log_info(f"Loading CSV: {self.csv_path}")
             
             # Try multiple parsing strategies
             strategies = [
@@ -185,22 +249,22 @@ class EnhancedAuthorQuerySystem:
             for strategy_name, kwargs in strategies:
                 try:
                     self.df = pd.read_csv(self.csv_path, **kwargs)
-                    print(f"✓ Loaded with: {strategy_name}")
+                    log_success(f"Loaded with: {strategy_name}")
                     loaded = True
                     break
                 except Exception as e:
-                    print(f"⚠ {strategy_name} failed: {str(e)[:60]}")
+                    log_error(f"{strategy_name} failed: {str(e)[:60]}")
                     continue
             
             if not loaded or self.df is None or self.df.empty:
-                print("❌ All loading strategies failed")
+                log_error("All loading strategies failed")
                 self.df = pd.DataFrame()
                 return
             
             # Clean column names
             self.df.columns = self.df.columns.str.strip()
-            print(f"📋 Columns: {list(self.df.columns)}")
-            print(f"📊 Rows: {len(self.df)}")
+            log_info(f"Columns: {list(self.df.columns)}")
+            log_info(f"Rows: {len(self.df)}")
             
             # Check and fix column names
             self._fix_column_names()
@@ -210,9 +274,9 @@ class EnhancedAuthorQuerySystem:
                 self.df['ஆசிரியர்'] = self.df['ஆசிரியர்'].fillna('').astype(str).str.strip()
                 before = len(self.df)
                 self.df = self.df[self.df['ஆசிரியர்'] != '']
-                print(f"✓ Authors: {before} → {len(self.df)} rows")
+                log_success(f"Authors: {before} → {len(self.df)} rows")
             else:
-                print(f"⚠ Missing 'ஆசிரியர்' column!")
+                log_error("Missing 'ஆசிரியர்' column!")
                 return
             
             if 'தலைப்பு' in self.df.columns:
@@ -221,10 +285,10 @@ class EnhancedAuthorQuerySystem:
             # Show sample
             if len(self.df) > 0:
                 sample = self.df.iloc[0]
-                print(f"📄 Sample: {sample.get('ஆசிரியர்', 'N/A')[:30]}")
+                log_info(f"Sample: {sample.get('ஆசிரியர்', 'N/A')[:30]}")
             
         except Exception as e:
-            print(f"❌ CSV error: {e}")
+            log_error(f"CSV error: {e}")
             import traceback
             traceback.print_exc()
             self.df = pd.DataFrame()
@@ -242,7 +306,7 @@ class EnhancedAuthorQuerySystem:
         for old, new in mappings.items():
             if old in self.df.columns and new not in self.df.columns:
                 self.df.rename(columns={old: new}, inplace=True)
-                print(f"✓ Renamed '{old}' → '{new}'")
+                log_success(f"Renamed '{old}' → '{new}'")
     
     def detect_query_type(self, question: str) -> str:
         """Enhanced query type detection"""
@@ -494,7 +558,6 @@ class EnhancedAuthorQuerySystem:
             "articles": articles
         }
 
-
 def format_author_list(result: Dict) -> str:
     """Format list of all authors - simplified without decorative lines"""
     if not result['success']:
@@ -578,9 +641,7 @@ def format_topic_authors(result: Dict) -> str:
     return '\n'.join(lines)
 
 def detect_issue_count_query(question: str) -> bool:
-    """
-    Detect if user is asking about issue count
-    """
+    """Detect if user is asking about issue count"""
     q = question.lower()
     
     patterns = [
@@ -601,9 +662,7 @@ def detect_issue_count_query(question: str) -> bool:
 
 
 def get_issue_count(csv_path: str) -> Dict:
-    """
-    Get unique issue count from CSV
-    """
+    """Get unique issue count from CSV"""
     try:
         csv_path = Path(csv_path)
         
@@ -615,7 +674,7 @@ def get_issue_count(csv_path: str) -> Dict:
                 "issues": []
             }
         
-        print(f"📂 Loading CSV for issue count: {csv_path}")
+        log_info(f"Loading CSV for issue count: {csv_path}")
         
         # Try loading CSV with multiple strategies
         df = None
@@ -643,7 +702,7 @@ def get_issue_count(csv_path: str) -> Dict:
         # Clean column names
         df.columns = df.columns.str.strip()
         
-        # Check for issue column (இதழ் or issue)
+        # Check for issue column
         issue_col = None
         for col in ['இதழ்', 'issue', 'Issue', 'doc_issue']:
             if col in df.columns:
@@ -665,7 +724,7 @@ def get_issue_count(csv_path: str) -> Dict:
         unique_issues = df_filtered[issue_col].unique()
         issue_counts = df_filtered[issue_col].value_counts()
         
-        # Sort issues (try numeric first, then alphabetic)
+        # Sort issues
         try:
             sorted_issues = sorted(unique_issues, key=lambda x: int(x) if x.isdigit() else x)
         except:
@@ -688,7 +747,7 @@ def get_issue_count(csv_path: str) -> Dict:
         }
         
     except Exception as e:
-        print(f"❌ Error getting issue count: {e}")
+        log_error(f"Error getting issue count: {e}")
         import traceback
         traceback.print_exc()
         return {
@@ -700,9 +759,7 @@ def get_issue_count(csv_path: str) -> Dict:
 
 
 def format_issue_count(result: Dict) -> str:
-    """
-    Format issue count result for display
-    """
+    """Format issue count result for display"""
     if not result['success']:
         return f"❌ {result['message']}"
     
@@ -755,12 +812,10 @@ def format_issue_count(result: Dict) -> str:
 
 
 def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
-    """
-    Enhanced handler for author queries and issue count queries
-    """
+    """Enhanced handler for author queries and issue count queries"""
     # Check for issue count query first
     if detect_issue_count_query(question):
-        print("🔍 Detected issue count query")
+        log_info("Detected issue count query")
         result = get_issue_count(csv_path)
         return True, format_issue_count(result)
     
@@ -771,7 +826,7 @@ def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
         return False, ""
     
     query_type = system.detect_query_type(question)
-    print(f"🔍 Query type: {query_type}")
+    log_info(f"Query type: {query_type}")
     
     if query_type == 'none':
         return False, ""
@@ -782,7 +837,7 @@ def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
     
     elif query_type == 'author_topics':
         entity = system.extract_entity(question, 'author_topics')
-        print(f"📝 Extracted author: '{entity}'")
+        log_info(f"Extracted author: '{entity}'")
         
         if not entity:
             return True, "⚠ எழுத்தாளர் பெயரை தெளிவாக குறிப்பிடவும்"
@@ -792,7 +847,7 @@ def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
     
     elif query_type == 'topic_author':
         entity = system.extract_entity(question, 'topic_author')
-        print(f"📝 Extracted topic: '{entity}'")
+        log_info(f"Extracted topic: '{entity}'")
         
         if not entity:
             return True, "⚠ தலைப்பை தெளிவாக குறிப்பிடவும்"
@@ -802,16 +857,13 @@ def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
     
     return False, ""
 
-
-# ============================================================================
-# QDRANT SEARCH FUNCTIONS
-# ============================================================================
-
 def is_author_question(question: str) -> bool:
     keywords = ["author", "authors", "list", "எழுத்தாளர்", "எழுத்தாளர்கள்", "பட்டியல்", "யார்"]
     return any(k in question.lower() for k in keywords)
 
+
 def fetch_all_authors(client: QdrantClient) -> List[str]:
+    """Uses passed client instead of creating new one"""
     points, _ = client.scroll(collection_name=COLLECTION_NAME, limit=10000, with_payload=True)
     authors = set()
     for p in points:
@@ -821,6 +873,7 @@ def fetch_all_authors(client: QdrantClient) -> List[str]:
             if author:
                 authors.add(author)
     return sorted(authors)
+
 
 def format_authors_tamil(authors: List[str]) -> str:
     if not authors:
@@ -860,6 +913,7 @@ class HybridQdrantSearch:
 
 
 def retrieve_all_chunks_for_document(client: QdrantClient, doc_id: str, doc_issue: str, volume: str) -> List[Dict]:
+    """Uses passed client instead of creating new one"""
     all_chunks = []
     offset = None
     while True:
@@ -973,37 +1027,45 @@ def extract_key_facts(docs: List[Dict], question: str) -> List[Dict]:
     return facts[:20]
 
 
-# ============================================================================
-# LLM GENERATION WITH ENHANCED SYSTEM PROMPT
-# ============================================================================
-
-TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இதழ் பற்றிய கேள்விகளுக்கு பதிலளிக்கும் ஒரு தமிழ் நிபுணர்.
+TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இதழ் தொடர்பான கேள்விகளுக்கு பதிலளிக்கும் ஒரு தமிழ் நிபுணர்.
 
 உங்கள் பணி:
 1. கொடுக்கப்பட்ட சூழல் (context) மற்றும் கேள்வியின் அடிப்படையில் விரிவான பதில் எழுதுக
 2. பதில் 200 முதல் 500 சொற்கள் வரை இருக்க வேண்டும்
-3. தெளிவான, எளிமையான தமிழில் எழுதுக
-4. சூழலில் உள்ள தகவல்களை மட்டுமே பயன்படுத்துக - கற்பனையாக எதையும் சேர்க்காதீர்கள்
-5. பதில் நன்கு கட்டமைக்கப்பட்டதாகவும், படிக்க எளிதாகவும் இருக்க வேண்டும்
+3. தெளிவான, எளிமையான, நடைமுறை தமிழில் எழுதுக
+4. சூழலில் உள்ள தகவல்களை மட்டுமே பயன்படுத்துக – கற்பனையாக எதையும் சேர்க்காதீர்கள்
+5. பதில் வாசிப்பதற்கு மிகவும் எளிதாகவும், நன்கு கட்டமைக்கப்பட்டதாகவும் இருக்க வேண்டும்
+6. பதில் தொடங்கும் போதும் முடியும் போதும் எந்தச் சொலும் துண்டிக்கப்பட்டதாக இருக்கக் கூடாது
+
+மிக முக்கியமான வடிவமைப்பு விதிகள் (Formatting Rules):
+- கேள்வி **புள்ளிவாரியான (points-wise)** பதிலை எதிர்பார்க்குமானால்:
+  * ஒவ்வொரு புள்ளியும் தனித்தனி வரியில் எழுதப்பட வேண்டும்
+  * ஒரு புள்ளி முடிந்தவுடன் அடுத்த புள்ளி புதிய வரியில் தொடங்க வேண்டும்
+  * புள்ளிகளுக்கிடையே சரியான வரி இடைவெளி இருக்க வேண்டும்
+  * ஒரே புள்ளியில் பல கருத்துகளை கலக்கக் கூடாது
+
+- கேள்வி **பத்திவாரியான (paragraph-wise)** பதிலை எதிர்பார்க்குமானால்:
+  * ஒவ்வொரு பத்தியும் தனித்தனி வரியில் இருக்க வேண்டும்
+  * ஒவ்வொரு பத்தியின் முன்பும் பின்பும் ஒரு காலி வரி (spacing) இருக்க வேண்டும்
+  * மிக நீளமான ஒரே பத்தியாக எழுதக்கூடாது
+  * ஒவ்வொரு பத்தியும் ஒரு முக்கிய கருத்தை மட்டும் விளக்க வேண்டும்
 
 எழுதும் முறை:
-- முதல் வாக்கியத்தில் கேள்விக்கான நேரடி பதிலை தெளிவாக கூறுக
-- பின்னர் கூடுதல் விவரங்கள், சூழல், எடுத்துக்காட்டுகள் போன்றவற்றை விளக்குக
-- முக்கியமான புள்ளிகளை தனித்தனியாக விளக்குக
-- இறுதியில் சுருக்கமான முடிவுரை கொடுக்கலாம்
+- முதல் வாக்கியத்தில் கேள்விக்கான நேரடியான பதிலை தெளிவாக கூறுக
+- அதன் பின்னர் விவரங்கள், விளக்கங்கள், எடுத்துக்காட்டுகளை ஒழுங்காக எழுதுக
+- தேவையான இடங்களில் துணைத்தலைப்புகளை பயன்படுத்தலாம்
+- இறுதியில் சுருக்கமான முடிவுரை எழுதலாம்
 
 கவனிக்க வேண்டியவை:
-- சூழலில் இல்லாத தகவல்களை எழுதாதீர்கள்
-- "சூழலின் படி" அல்லது "ஆதாரத்தின் படி" என்று குறிப்பிட வேண்டாம் - நேரடியாக எழுதுக
-- எளிய, நடைமுறை தமிழ் பயன்படுத்துக - வாசிப்பதற்கு எளிதாக இருக்க வேண்டும்
+- சூழலில் இல்லாத தகவல்களை எதையும் எழுதாதீர்கள்
+- "சூழலின் படி", "ஆதாரத்தின் படி" போன்ற சொற்களை பயன்படுத்த வேண்டாம்
+- வாசிப்பவரின் கண்களுக்கு சோர்வு வராத வகையில் பதிலை அமைக்க வேண்டும்
 
-இப்போது கீழே கொடுக்கப்பட்ட கேள்வி மற்றும் சூழலின் அடிப்படையில் விரிவான பதில் எழுதுக."""
+இப்போது, கீழே கொடுக்கப்பட்ட கேள்வி மற்றும் சூழலின் அடிப்படையில், மேலுள்ள அனைத்து விதிகளையும் கட்டாயமாக பின்பற்றி, தெளிவாகவும் வாசிக்க எளிதாகவும் விரிவான பதிலை எழுதுக."""
 
 
 def generate_llm_answer(question: str, context: str, max_words: int = 500) -> str:
-    """
-    Generate a detailed answer using LLM (200-500 words)
-    """
+    """Generate a detailed answer using LLM (200-500 words)"""
     try:
         llm = get_llm()
         
@@ -1018,10 +1080,10 @@ def generate_llm_answer(question: str, context: str, max_words: int = 500) -> st
 விரிவான பதில் (200-500 சொற்கள்):"""
         
         # Generate response
-        print("🤖 Generating LLM answer...")
+        log_info("Generating LLM answer...")
         outputs = llm(
             prompt,
-            max_new_tokens=800,  # Increased for 500 words
+            max_new_tokens=800,
             temperature=0.0,
             top_p=0.9,
             do_sample=False,
@@ -1031,7 +1093,7 @@ def generate_llm_answer(question: str, context: str, max_words: int = 500) -> st
         
         generated_text = outputs[0]['generated_text']
         
-        # Extract only the answer part (after the prompt)
+        # Extract only the answer part
         answer = generated_text.split("விரிவான பதில் (200-500 சொற்கள்):")[-1].strip()
         
         # Clean up
@@ -1039,19 +1101,17 @@ def generate_llm_answer(question: str, context: str, max_words: int = 500) -> st
         
         # Count words
         word_count = len(re.findall(r'[\u0B80-\u0BFF]+|\w+', answer))
-        print(f"✓ Generated answer: {word_count} words")
+        log_success(f"Generated answer: {word_count} words")
         
         return answer
         
     except Exception as e:
-        print(f"⚠ LLM generation failed: {e}")
+        log_error(f"LLM generation failed: {e}")
         return ""
 
 
 def generate_extractive_answer(facts: List[Dict], question: str) -> str:
-    """
-    Fallback extractive answer if LLM fails
-    """
+    """Fallback extractive answer if LLM fails"""
     if not facts:
         return ""
     
@@ -1127,31 +1187,75 @@ def format_answer_output(answer: str, sources: List[Dict]) -> str:
     return '\n'.join(lines)
 
 
+import threading
+from typing import Optional
+
+# Global client with thread-safe initialization
+_qdrant_client: Optional[QdrantClient] = None
+_client_lock = threading.Lock()
+def get_qdrant_client() -> QdrantClient:
+    global _qdrant_client
+
+    if _qdrant_client is not None:
+        return _qdrant_client
+
+    with _client_lock:
+        if _qdrant_client is not None:
+            return _qdrant_client
+
+        try:
+            log_info("Connecting to Qdrant SERVER...")
+
+            _qdrant_client = QdrantClient(
+                host=QDRANT_HOST,
+                port=QDRANT_PORT,
+                prefer_grpc=False,
+                timeout=30.0
+            )
+
+            collection_info = _qdrant_client.get_collection(COLLECTION_NAME)
+            log_success(f"Connected: {collection_info.points_count} points")
+
+            return _qdrant_client
+
+        except Exception as e:
+            log_error(f"Failed to connect to Qdrant server: {e}")
+            raise
+
 def ask_question(question: str, top_k: int = 10, return_formatted: bool = False, use_llm: bool = True) -> Dict:
     """
-    Enhanced ask_question with CSV-based author query support and LLM generation
-    
-    Args:
-        question: User's question
-        top_k: Number of sources to return
-        return_formatted: Return formatted string or dict
-        use_llm: Use LLM for answer generation (200-500 words)
+    Enhanced ask_question with database health check and read-only support
     """
-    from pathlib import Path
-    BASE_DIR = Path(__file__).resolve().parent
-    QDRANT_PATH = str(BASE_DIR / "qdrant_data")
+    # Check database health first
+    health_status = check_qdrant_health()
     
-    # Check CSV-based author queries first
-    print(f"🔍 CSV path: {CSV_PATH}")
-    print(f"📁 Exists: {CSV_PATH.exists()}")
+    if not health_status["healthy"]:
+        error_message = f"""
+❌ Database Error: {health_status['message']}
+
+Details: {health_status.get('details', 'No additional details')}
+Action: {health_status.get('action', 'Contact administrator')}
+
+Error Type: {health_status['error']}
+"""
+        if return_formatted:
+            return error_message
+        return {
+            "answer": error_message,
+            "sources": [],
+            "error": health_status
+        }
     
+    log_success("Database is healthy - proceeding with query")
+    
+    # Check CSV-based queries
     if CSV_PATH.exists():
         try:
-            print(f"🔄 Checking author query...")
+            log_info("Checking author query...")
             is_handled, response = handle_author_query(question, str(CSV_PATH))
             
             if is_handled:
-                print(f"✓ Handled as CSV author query")
+                log_success("Handled as CSV author query")
                 if return_formatted:
                     return response
                 return {
@@ -1159,78 +1263,80 @@ def ask_question(question: str, top_k: int = 10, return_formatted: bool = False,
                     "sources": [],
                     "query_type": "author_csv"
                 }
-            else:
-                print(f"✓ Not author query, using Qdrant")
         except Exception as e:
-            print(f"⚠ CSV query error: {e}")
-    else:
-        print(f"⚠ CSV not found at: {CSV_PATH}")
-    
-    # Regular Qdrant search
-    client = QdrantClient(path=QDRANT_PATH)
+            log_error(f"CSV query error: {e}")
+    try:
+        client = get_qdrant_client()  
 
-    if is_author_question(question):
-        authors = fetch_all_authors(client)
-        answer = format_authors_tamil(authors) if authors else "எழுத்தாளர் தகவல்கள் கிடைக்கவில்லை."
+        if is_author_question(question):
+            authors = fetch_all_authors(client)
+            answer = format_authors_tamil(authors) if authors else "எழுத்தாளர் தகவல்கள் கிடைக்கவில்லை."
+            if return_formatted:
+                return format_answer_output(answer, [])
+            return {"answer": answer, "sources": []}
+
+        log_info(f"Searching: {question[:60]}...")
+        
+        searcher = HybridQdrantSearch(client)
+        results = searcher.search(question, limit=50)
+
+        if not results:
+            answer = "மன்னிக்கவும், தகவல்கள் கிடைக்கவில்லை."
+            if return_formatted:
+                return format_answer_output(answer, [])
+            return {"answer": answer, "sources": []}
+
+        log_success(f"Found {len(results)} chunks")
+
+        merged_docs = merge_consecutive_chunks(client, results)
+        
+        if not merged_docs:
+            answer = "போதுமான தகவல்கள் இல்லை."
+            if return_formatted:
+                return format_answer_output(answer, [])
+            return {"answer": answer, "sources": []}
+        
+        log_success(f"Merged into {len(merged_docs)} documents")
+
+        # Prepare context for LLM
+        context_parts = []
+        for idx, doc in enumerate(merged_docs[:5], 1):
+            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:800]}")
+        
+        context = "\n\n".join(context_parts)
+        
+        # Try LLM generation first
+        answer = ""
+        if use_llm:
+            answer = generate_llm_answer(question, context)
+        
+        # Fallback to extractive if LLM fails
+        if not answer or len(answer) < 100:
+            log_error("LLM failed, using extractive answer")
+            facts = extract_key_facts(merged_docs, question)
+            log_success(f"Extracted {len(facts)} facts")
+            answer = generate_extractive_answer(facts, question)
+        
+        if not answer or len(answer) < 50:
+            answer = "கேள்விக்கான தகவல்கள் ஆதாரங்களில் உள்ளன."
+
+        sources = format_sources(merged_docs, limit=top_k)
+        log_success(f"Ready with {len(sources)} sources")
+
         if return_formatted:
-            return format_answer_output(answer, [])
-        return {"answer": answer, "sources": []}
-
-    print(f"🔍 Searching: {question[:60]}...")
-    
-    searcher = HybridQdrantSearch(client)
-    results = searcher.search(question, limit=50)
-
-    if not results:
-        answer = "மன்னிக்கவும், தகவல்கள் கிடைக்கவில்லை."
+            return format_answer_output(answer, sources)
+        
+        return {
+            "answer": answer,
+            "sources": sources
+        }
+        
+    except Exception as e:
+        error_msg = f"Query error: {str(e)}"
+        log_error(error_msg)
         if return_formatted:
-            return format_answer_output(answer, [])
-        return {"answer": answer, "sources": []}
-
-    print(f"✓ Found {len(results)} chunks")
-
-    merged_docs = merge_consecutive_chunks(client, results)
-    
-    if not merged_docs:
-        answer = "போதுமான தகவல்கள் இல்லை."
-        if return_formatted:
-            return format_answer_output(answer, [])
-        return {"answer": answer, "sources": []}
-    
-    print(f"✓ Merged into {len(merged_docs)} documents")
-
-    # Prepare context for LLM
-    context_parts = []
-    for idx, doc in enumerate(merged_docs[:5], 1):
-        context_parts.append(f"ஆவணம் {idx}: {doc['content'][:800]}")
-    
-    context = "\n\n".join(context_parts)
-    
-    # Try LLM generation first
-    answer = ""
-    if use_llm:
-        answer = generate_llm_answer(question, context)
-    
-    # Fallback to extractive if LLM fails
-    if not answer or len(answer) < 100:
-        print("⚠ LLM failed, using extractive answer")
-        facts = extract_key_facts(merged_docs, question)
-        print(f"✓ Extracted {len(facts)} facts")
-        answer = generate_extractive_answer(facts, question)
-    
-    if not answer or len(answer) < 50:
-        answer = "கேள்விக்கான தகவல்கள் ஆதாரங்களில் உள்ளன."
-
-    sources = format_sources(merged_docs, limit=top_k)
-    print(f"✓ Ready with {len(sources)} sources")
-
-    if return_formatted:
-        return format_answer_output(answer, sources)
-    
-    return {
-        "answer": answer,
-        "sources": sources
-    }
+            return f"❌ {error_msg}"
+        return {"answer": error_msg, "sources": [], "error": str(e)}
 
 
 def preload_models():
@@ -1240,5 +1346,5 @@ def preload_models():
     _ = get_embed_model()
     _ = get_llm()
     print("=" * 60)
-    print("✓ MODELS READY")
+    log_success("MODELS READY")
     print("=" * 60)

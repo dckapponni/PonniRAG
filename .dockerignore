@@ -1,0 +1,14 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.swp
+*.tmp
+.DS_Store
+.coverage
+*.log
+.cache/
+*.pth
+*.pt
+data/

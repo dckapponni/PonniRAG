@@ -66,10 +66,6 @@ def sparse_embed(text: str) -> models.SparseVector:
     return models.SparseVector(indices=indices, values=values)
 
 
-# =============================================================================
-# FIXED CHUNKING - SENTENCE AWARE
-# =============================================================================
-
 def split_into_sentences(text: str) -> List[str]:
     """
     Split text into sentences respecting Tamil and English punctuation.
@@ -200,10 +196,6 @@ def validate_chunk(chunk: str) -> bool:
     return True
 
 
-# =============================================================================
-# S3 FUNCTIONS (unchanged)
-# =============================================================================
-
 def list_s3_json_files(bucket: str, prefix: str, suffix: str) -> List[str]:
     keys = []
     paginator = s3.get_paginator("list_objects_v2")
@@ -227,10 +219,6 @@ def extract_volume_from_s3_key(s3_key: str) -> str:
 def is_author_file(s3_key: str) -> bool:
     return s3_key.lower().endswith("authors.json")
 
-
-# =============================================================================
-# DOCUMENT LOADING (improved)
-# =============================================================================
 
 def load_documents_from_s3() -> List[Dict]:
     documents = []
@@ -372,12 +360,9 @@ def load_authors_from_s3() -> List[Dict]:
     return documents
 
 
-# =============================================================================
-# MAIN INDEXING
-# =============================================================================
-
 def main():
-    client = QdrantClient(path=QDRANT_PATH)
+    client = QdrantClient(host="localhost", port=6333)
+
 
     # Reset collection
     if client.collection_exists(COLLECTION_NAME):
