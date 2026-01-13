@@ -891,9 +891,9 @@ def render_library():
     
     # Volume data with images
     volumes = [
-        {"id": 1, "title": f"பொன்னி\n\n {t('lib_vol')} 1\n\n", "desc": "1947", "image": "Volume1.png"},
+        {"id": 1, "title": f"பொன்னி\n\n {t('lib_vol')} 1\n\n", "desc": "1947", "image": "Volume1.jpg"},
         {"id": 2, "title": f"பொன்னி\n\n {t('lib_vol')} 2\n\n", "desc": "1948", "image": "Volume2.jpg"},
-        {"id": 3, "title": f"பொன்னி\n\n {t('lib_vol')} 3\n\n", "desc": "1949", "image": "Volume3.png"},
+        {"id": 3, "title": f"பொன்னி\n\n {t('lib_vol')} 3\n\n", "desc": "1949", "image": "Volume3.jpg"},
         {"id": 4, "title": f"பொன்னி\n\n {t('lib_vol')} 4\n\n", "desc": "1950", "image": "Volume4.jpg"},
         {"id": 5, "title": f"பொன்னி\n\n {t('lib_vol')} 5\n\n", "desc": "1951", "image": "Volume5.jpg"},
         {"id": 6, "title": f"பொன்னி\n\n {t('lib_vol')} 6\n\n", "desc": "1952", "image": "Volume6.jpg"},
@@ -936,10 +936,10 @@ def render_library():
     """, unsafe_allow_html=True)
     
     # Create 2 columns per row
-    for i in range(0, len(volumes), 2):
-        cols = st.columns(2, gap="large")
+    for i in range(0, len(volumes), 3):
+        cols = st.columns(3, gap="medium")
         
-        for j in range(2):
+        for j in range(3):
             if i + j < len(volumes):
                 vol = volumes[i + j]
                 col = cols[j]
@@ -961,27 +961,41 @@ def render_library():
                             buffered = io.BytesIO()
                             img.save(buffered, format="JPEG")
                             img_str = base64.b64encode(buffered.getvalue()).decode()
-                            
-                            # Create clickable image using HTML with onclick
-                            click_handler = f"""
-                            <div style="text-align: center; padding: 1rem; cursor: pointer;" 
-                                 onclick="document.querySelector('[data-testid=\\'stButton\\'] button[kind=\\'primary\\']').click()">
-                                <img src="data:image/jpeg;base64,{img_str}" 
-                                     style="max-width: 100%; height: auto; border-radius: 0.5rem; margin-bottom: 1rem; box-shadow: 0 2px 8px rgba(0,0,0,0.1); cursor: pointer;">
+                            card_html = f"""
+                            <a href="?page=issues&volume={vol['id']}" 
+                            target="_self" 
+                            style="text-decoration:none; display:block; width:100%;">
+
+                            <div style="
+                                background:#ffffff;
+                                border:1px solid #e2e8f0;
+                                border-radius:0.75rem;
+                                padding:1rem;
+                                text-align:center;
+                                box-shadow:0 2px 8px rgba(0,0,0,0.08);
+                                transition:all 0.3s ease;
+                                cursor:pointer;
+                                width:350px;             
+                                margin:0 auto; 
+                            ">
+
+                            <img src="data:image/jpeg;base64,{img_str}"
+                                style="max-width:100%; height:auto; border-radius:0.5rem; margin-bottom:0.8rem; pointer-events:auto;">
+
+                            <div style="font-weight:600; font-size:1.1rem; color:#1e3a8a; line-height:1.4;">
+                                பொன்னி<br>
+                                {t('lib_vol')} {vol['id']}
+                                <div style="margin-top:0.4rem;"></div>
+                                <span style="font-weight:500; color:#64748b;">{vol['desc']}</span>
                             </div>
+
+                            </div>
+                            </a>
                             """
-                            st.markdown(click_handler, unsafe_allow_html=True)
-                            
-                            # Text as button (looks like text but acts as button)
-                            button_label = f"{vol['title']}\n{vol['desc']}"
-                            if st.button(button_label, key=f"vol_{vol['id']}", use_container_width=True, type="primary"):
-                                st.query_params.clear()
-                                st.query_params["page"] = "issues"
-                                st.query_params["volume"] = str(vol['id'])
-                                st.rerun()
+                            st.markdown(card_html, unsafe_allow_html=True)
                                 
                         except Exception as e:
-                            st.error(f"Error: {vol['image']}")
+                            st.error(f"Error loading {vol['image']}: {e}")
                     else:
                         st.warning(f"Not found: {vol['image']}")
         
@@ -995,9 +1009,6 @@ def set_page(**params):
     st.query_params.clear()
     st.query_params.update(qp)
 
-
-
-
 def render_issues(volume_id):
     st.markdown("<div style='height: 6rem;'></div>", unsafe_allow_html=True)
 
@@ -1009,15 +1020,87 @@ def render_issues(volume_id):
     st.markdown(f"## 📑 {t('lib_vol')} {volume_id}")
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Build issue list dynamically from PDF_LINKS (only available ones)
-    issues_data = []
-    for i in range(1, 31):
-        key = f"vol_{volume_id}_issue_{i}"
-        if key in PDF_LINKS:  # Only show available issues
-            issues_data.append({
-                "issue_num": i,
-                "has_pdf": True
-            })
+    from pathlib import Path
+    
+    # Ensure IMG_DIR is a Path object
+    if isinstance(IMG_DIR, str):
+        base_dir = Path(IMG_DIR)
+    else:
+        base_dir = IMG_DIR
+    
+    # Volume folder name: "volume {volume_id} cover images"
+    volume_folder = base_dir / f"volume {volume_id} cover images"
+    
+    # Get all images from the folder and sort them
+    if volume_folder.exists():
+        # Get all image files (jpg, png, jpeg)
+        image_files = []
+        for ext in ['*.jpg', '*.png', '*.jpeg', '*.JPG', '*.PNG', '*.JPEG']:
+            image_files.extend(volume_folder.glob(ext))
+        
+        # Sort by filename
+        image_files.sort()
+        
+        # Create issues_data from available images
+        issues_data = []
+        issue_counter = 1
+        
+        for img_path in image_files:
+            # Check if this issue has a PDF link
+            key = f"vol_{volume_id}_issue_{issue_counter}"
+            if key in PDF_LINKS:
+                issues_data.append({
+                    "issue_num": issue_counter,
+                    "has_pdf": True,
+                    "image_path": img_path
+                })
+            issue_counter += 1
+    else:
+        issues_data = []
+        st.warning(f"Image folder not found: {volume_folder}")
+
+    # Custom CSS for issue cards
+    st.markdown("""
+    <style>
+    .issue-card {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 0.75rem;
+        overflow: hidden;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        transition: all 0.3s ease;
+        cursor: pointer;
+        height: 100%;
+        text-decoration: none;
+        display: block;
+    }
+    .issue-card:hover {
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+        transform: translateY(-4px);
+        text-decoration: none;
+    }
+    .issue-card:active {
+        transform: translateY(-2px);
+    }
+    .issue-card img {
+        width: 100%;
+        height: 280px;
+        object-fit: cover;
+    }
+    .issue-card-title {
+        padding: 1rem;
+        text-align: center;
+        color: #1e3a8a;
+        font-weight: 600;
+        font-size: 1.1rem;
+        background: #f8fafc;
+    }
+    /* Hide the read button */
+    div[data-testid="column"] .stButton {
+        display: none !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
     # Render 4 issues per row
     for i in range(0, len(issues_data), 4):
@@ -1029,26 +1112,38 @@ def render_issues(volume_id):
                 col = cols[j]
                 
                 with col:
-                    st.markdown(f"### {t('issue')} {issue['issue_num']}")
-                    
-                    if st.button(
-                        t("read"),
-                        key=f"issue_{volume_id}_{issue['issue_num']}",
-                        use_container_width=True
-                    ):
-                        set_page(
-                            page="pdf_viewer",
-                            volume=volume_id,
-                            issue=str(issue["issue_num"]),
-                        )
-                        st.rerun()
+                    # Load and display issue image
+                    try:
+                        img = Image.open(issue["image_path"])
+                        if img.mode != "RGB":
+                            img = img.convert("RGB")
+                        
+                        # Resize to consistent size
+                        img.thumbnail((300, 400), Image.Resampling.LANCZOS)
+                        
+                        # Convert to base64
+                        buffered = io.BytesIO()
+                        img.save(buffered, format="JPEG", quality=85)
+                        img_str = base64.b64encode(buffered.getvalue()).decode()
+                        
+                        # Create clickable card with proper link
+                        card_html = f"""
+                        <a href="?page=pdf_viewer&volume={volume_id}&issue={issue['issue_num']}" target="_self" class="issue-card" style="text-decoration: none;">
+                            <img src="data:image/jpeg;base64,{img_str}" alt="{t('issue')} {issue['issue_num']}">
+                            <div class="issue-card-title">{t('issue')} {issue['issue_num']}</div>
+                        </a>
+                        """
+                        st.markdown(card_html, unsafe_allow_html=True)
+                    except Exception as e:
+                        # Skip this issue if image can't be loaded
+                        st.error(f"Failed to load {issue['image_path']}: {e}")
         
         # Add spacing between rows
         st.markdown("<br>", unsafe_allow_html=True)
 
-
-
+      
 def render_pdf_viewer(volume_id, issue_num):
+    
     st.markdown("<div style='height: 6rem;'></div>", unsafe_allow_html=True)
 
     # Back button (safe routing, no lang loss)
@@ -1106,14 +1201,162 @@ def render_pdf_viewer(volume_id, issue_num):
 
 
 def render_about():
-    st.markdown("<div style='height: 6rem;'></div>", unsafe_allow_html=True)
-    col1, col2 = st.columns([2, 1])
-
+    # Reduced top padding to 1rem
+    st.markdown("<div style='height: 1rem;'></div>", unsafe_allow_html=True)
+    
+    # Add custom CSS for about page
+    st.markdown("""
+    <style>
+    .about-main-container {
+        padding: 1.5rem;
+        max-width: 100%;
+    }
+    .about-content-wrapper {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 0 15%;
+    }
+    .about-heading {
+        color: #1e3a8a;
+        font-size: 2.5rem;
+        font-weight: 800;
+        margin-bottom: 2rem;
+        text-align: center;
+        padding-bottom: 1rem;
+        font-family: 'Inter', sans-serif;
+    }
+    .about-text {
+        line-height: 1.8;
+        text-align: justify;
+        color: #1e293b;
+        font-size: 0.95rem;
+        margin-bottom: 2rem;
+        font-family: 'Inter', sans-serif;
+    }
+    .about-single-image {
+        display: flex;
+        justify-content: center;
+        margin: 0 0 2rem 0; 
+    }
+    .about-single-image img {
+        max-width: 50% !important;  /* Increased from 20% to 30% */
+        width: auto !important;
+        height: auto !important;
+        border-radius: 1rem;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+        display: block;
+        margin: 0 auto;
+    }
+    .about-double-image {
+        display: flex;
+        justify-content: center;
+        gap: 2rem;
+        margin: 2rem 0;
+    }
+    .about-double-image > div {
+        flex: 0 0 10% !important;
+        max-width: 10% !important;
+    }
+    .about-double-image img {
+        width: 100% !important;
+        max-width: 100% !important;
+        height: auto !important;
+        border-radius: 1rem;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+    }
+    /* Override Streamlit's default image styling */
+    .stImage {
+        max-width: 100% !important;
+    }
+    .stImage > img {
+        max-width: 100% !important;
+        width: auto !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Main container
+    st.markdown('<div class="about-main-container">', unsafe_allow_html=True)
+    st.markdown('<div class="about-content-wrapper">', unsafe_allow_html=True)
+    
+    # Heading
+    st.markdown('<h2 class="about-heading">பொன்னி களஞ்சியம்\n\n\n</h2>', unsafe_allow_html=True)
+    
+    # First text block
+    st.markdown('''<div class="about-text">
+    திராவிட கருத்தியலைப் பட்டித்தொட்டி எங்கும் பரப்பும் முயற்சிக்குத் திராவிட கருத்தியலாளர்கள் பல்வேறு ஊடகங்களைப் கைக்கொண்டனர். அவற்றுள் இதழ்கள் குறிப்பிடத்தக்கன. குடியரசு, விடுதலை, திராவிடநாடு, திராவிடன், போர்வாள், தனியரசு, கிளர்ச்சி, குயில் போன்ற இதழ்கள் மிகப்பெரிய அளவில் அறிவு அரசியல் தளத்தில் தமிழ் மக்களிடையே பெரும் தாக்கத்தை ஏற்படுத்தின. இவ்விதழ்கள் பகுத்தறிவு, சுயமரியாதை, சமத்துவம் போன்ற கொள்கைகளை மக்களிடையே பரப்பியதுடன், சாதி, மத மூடநம்பிக்கைகளுக்கு எதிரான கருத்துகளை மிகக் காத்திரமாக முன்வைத்தன.
+    <br><br>
+    1900களில் வெளிவந்த இதழ்கள் சமூக மாற்றத்திற்கும் முன்னேற்றத்திற்கும் பெருந்துணையாக அமைந்துள்ளன என்பது வரலாற்று ரீதியான உண்மை. 1947 முதல் 1955 வரை இயங்கிய கலை இலக்கிய இதழ் 'பொன்னி'. பொன்னி இதழ் திரு. அரு. பெரியண்ணன் மற்றும் திரு. முருகு. சுப்பிரமணியம் ஆகியோரால் 1947ஆம் ஆண்டு பிப்ரவரி மாதம் தொடங்கப்பெற்றது. தொடங்கப்பட்ட முதல் வருடத்தில் மாதம் ஓர் இதழ் என வெளிவந்த பொன்னி 1948 முதல் மாதம் ஈரிதழாக வெளிவந்தது.
+    </div>''', unsafe_allow_html=True)
+    
+    st.markdown('<div class="about-single-image">', unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1, 2, 1])  # Adjusted ratio for 30% width
+    with col2:
+        load_image("about1")
+    st.markdown('</div>', unsafe_allow_html=True)
+    # Second text block
+    st.markdown('''<div class="about-text">
+    திராவிட இதழ்களின் வரிசையில் வைத்து போற்றத்தக்க பெரிதும் அறியப்படாத இதழாகப் பொன்னி இதழ் திகழ்கிறது. பகுத்தறிவு, சுயமரியாதை, சமத்துவம் ஆகியவற்றை மிகத் தீவிரமாக எடுத்துரைக்கும் இதழாக இவ்விதழ் வெளிவந்தது. தமிழகத்தின் தலைசிறந்த எழுத்தாளர்களும் படைப்பாளர்களும் தம் சீரிய கருத்துகளை இவ்விதழின்வழி எடுத்துரைத்தனர். தமிழ்ச் சமூகத்தை அறிவுச் சமூகமாக்கும் முன்னெடுப்பில் பொன்னி இதழின் பணி தலையாயதாகும்.
+    <br><br>
+    திராவிடக் கருத்தியலை துப்பாக்கியாகச் செயல்பட்ட திரு. அரு. பெரியண்ணன் அவர்களும், உள்வாங்கி இரட்டைக்குழல் திரு. முருகு. சுப்பிரமணியம் அவர்களும் இணைந்து 1947ஆம் ஆண்டு பிப்ரவரி மாதம் பொன்னி இதழைத் தொடங்கினர். பொன்னி இதழ் வண்ண அட்டைப்படத்தில் மிக நேர்த்தியாக வடிவமைக்கப்பட்டு வெளியிடப்பெற்றது. கவிஞர் கண்ணதாசன் தன் வனவாசம் புத்தகத்தில் 'திராவிடர் கழகத்தை ஆதரிக்கும் ஏடுகள் மிகக் குறைவாக இருந்த காலம். அவையும் அழகில்லாமல், அச்சுப்பிழை மிகுந்து வெளிவந்தன. அந்த நேரத்தில் வண்ண முகப்பு அட்டை போட்டு அழகாக நடந்த இதழ் 'பொன்னி' தான். பத்திரிக்கை துறையில் மற்றவர்கள் செய்துகாட்டாத புதுமை எல்லாம் அவர்கள் செய்து காட்டினார்கள். இன்றும் தமிழகத்தில் சிலரை அச்சுக்கலை நிபுணர்கள் என்று தேர்ந்தெடுத்தால், அவர்களில் பெரியண்ணன் மிக முக்கியமானவராக இருப்பார்' என்று குறிப்பிட்டுள்ளார்.
+    <br><br>
+    தமிழ் இலக்கிய உலகில் முக்கியமான கவிஞர் பாரதிதாசன் அவரின் 'குயில்' இதழ் அரசால் தடை செய்யப்பட்ட பிறகு பொன்னியில் எழுதினார். அவரின் கொள்கைகளையும் நடையையும் பின்பற்றி எழுதியவர்களை 'பாரதிதாசன் பரம்பரை கவிஞர்கள்' என்று அறிமுகப்படுத்தியது பொன்னி இதழ்.
+    </div>''', unsafe_allow_html=True)
+    
+    # Two images side by side (about2 and about3)
+    st.markdown('<div class="about-double-image">', unsafe_allow_html=True)
+    col1, col2 = st.columns(2, gap="large")
     with col1:
-        st.markdown(f"## {t('nav_about')}")
-        st.markdown(f"{t('about_mission_text')}")
+        load_image("about2")
+    with col2:
+        load_image("about3")
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Third text block
+    st.markdown('''<div class="about-text">
+    இவ்விதழில் மாநில சுயாட்சி, இந்தித் திணிப்பு, தனித்தமிழ் பற்று, விடுதலை, அரசியல், சமூகம் சார்ந்த திராவிடச் சிந்தனைகள் கட்டுரைகளாக, கதைகளாக, கவிதைகளாக. கிறனாய்வுகளாக, துணுக்குகளாக வெளிவந்தன.
+    <br><br>
+    தந்தை பெரியார், பேரறிஞர் அண்ணா, பாவேந்தர், திரு.வி.க., கலைஞர் மு. கருணாநிதி, கா. அப்பாதுரையார், கவியரசு கண்ணதாசன், டி. கே. சீனிவாசன், மு. வ., மு. அண்ணாமலை, கவிஞர் வாணிதாசன், கவிஞர் சுரதா போன்ற பல முதன்மையான இலக்கிய, அரசியல் ஆளுமைகள் பொன்னியில் எழுதியுள்ளனர்.
+    <br><br>
+    கவிதைகள், சிறுகதைகள், தொடர்கதைகள், நொடிக் கதைகள், நாடகங்கள், பொதுக் கட்டுரைகள், ஆய்வுக் கட்டுரைகள், ஒப்பாய்வுக் கட்டுரைகள், தொடர் கட்டுரைகள், செய்திப் பாட்டு போன்ற இலக்கிய வகைமைகளில் பொன்னியில் படைப்புகள் வெளியாகியுள்ளன. இது மட்டுமன்றி அட்டைப்படக் குறிப்பு, மகளிர் அழகுக் குறிப்புகள், குழந்தை வளர்ப்புமுறை, பொன்னி வாழ்த்துகள், விகடங்கள், சிறுவர் அரங்கம் (சிறுவர் இலக்கியம்) போன்ற படைப்புகளும் இடம்பெற்றுள்ளன.
+    </div>''', unsafe_allow_html=True)
+    
+    # Two more images side by side (about4 and about5)
+    st.markdown('<div class="about-double-image">', unsafe_allow_html=True)
+    col1, col2 = st.columns(2, gap="large")
+    with col1:
+        load_image("about4")
+    with col2:
+        load_image("about5")
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Fourth text block
+    st.markdown('''<div class="about-text">
+    1948ல் போராட்டச் செய்தி நாட்குறிப்பு என்னும் தலைப்பில் கா. அப்பாதுரையார் அவர்கள், அக்கால விடுதலைப் போராட்ட நிலவரங்களை பதிவு செய்துள்ளார். எங்கே, யார் எதற்காக கைது செய்யப் படுகிறார்கள்? அவர்களுக்கு என்ன தண்டனை? போன்றவற்றை இப்பகுதியில் காணமுடிகிறது. தமிழ் இலக்கியம் மட்டுமன்றி சீனம், யார் எதற்காகக் கைது செய்யப் உலக இலக்கியங்களையும் பொன்னியில் அறிமுகம் செய்துள்ளனர். பாரசீகம், ரஷ்ய, கன்னடம், உருது, வடமொழி, தெலுங்கு போன்ற உலக இலக்கியங்களையும் பொன்னியில் அறிமுகம் செய்துள்ளனர்.
+    <br><br>
+    நாடக விளம்பரங்கள், புத்தக விளம்பரங்கள், திரைப்பட விளம்பரங்கள், வணிக விளம்பரங்கள் போன்றவை பொன்னி இதழில் இடம் பெற்றுள்ளன. கலையுலகம் என்ற பகுதியின் கீழ் திரைப்படங்கள், நாடகங்களின் விமர்சனங்களை எழுதியுள்ளனர். பொன்னியில் மேலும் ஒரு சிறப்பிற்குரிய விஷயம் அதில் இடம்பெற்றுள்ள படங்கள் மற்றும் ஓவியங்கள். படைப்பின் தலைப்புகளை வரைந்து இதழில் சேர்த்துள்ளனர். புதுமைப்பித்தன் நினைவுகளைப் பற்றி அவரது மனைவி கமலா அவர்கள் பொன்னி இதழில் எழுதியுள்ளார். பொன்னி இதழ் தொடங்கப்பெற்ற காலத்திலிருந்து இந்தி எதிர்ப்பு குறித்தான எழுத்துகள் தொடர்ந்து காத்திரமாக இடம்பெற்றுள்ளது. அறிஞர்களும் மக்களும் இதில் எழுதியுள்ளனர். பொன்னி இதழ் விடுதலை போராட்ட காலகட்டத்தில் வெளியான இதழ் என்பதால், அக்கால அரசியல் சூழ்நிலைகள் மற்றும் சமூக நிலைகள் படைப்புகளில் பிரதிபலிக்கின்றன.
+    <br><br>
+    மார்க்சியம், பெண்ணியம் போன்ற இசங்களும் பொன்னி இதழில் இடம்பெற்றுள்ளன. இன்றைய தமிழ்நாடு 1947இல் மதராஸ் மாகாணமாக இருந்தது. 1950ல் அது மெட்ராஸ் மாநிலமாக மாறியது. இது தொடர்பான கட்டுரைகள் பொன்னியில் இடம்பெற்றுள்ளன. பொன்னியில் பார்ப்பனியத்திற்கு எதிரான கருத்துகளும் திராவிடத்தை ஆதரிக்கும் கருத்துகளும் வலுவாகத் தொடர்ந்து இடம்பெற்று வந்திருக்கின்றன. மாநில சுயாட்சி, தனித்தமிழ் போன்றவற்றைக் குறித்தும் பொன்னியில் எழுதப்பட்டுள்ளன. ஓர் இலக்கியம் கருத்துடன் சேர்ந்து காலத்திற்கு ஏற்ப அமைந்தால் மட்டுமே அது நிலைத்து நிற்கும். பொன்னியில் இடம் பெற்றுள்ள படைப்புகளும் அக்காலகட்ட சூழலுக்கு ஏற்ப அமைந்திருக்கின்றன. பொன்னி இதழ் ஒரு கலை இலக்கிய இதழாக மட்டுமின்றி புரட்சி இதழாகவே இருந்திருக்கிறது.
+    <br><br>
+    1947 முதல் 1955 வரையிலான தமிழகத்தின் காலக் கண்ணாடியாகப் பொன்னி இதழ் விளங்குகிறது. தொடக்க காலத் திராவிடக் கருத்தியல்களையும், அவை பரப்பப்பெற்ற வடிவங்களையும் முறைகளையும் ஆயும் ஆய்வாளர்களுக்கு மிகச் சிறந்த களமாகப் பொன்னி இதழ்கள் அமையும். 1947க்கு பிறகான எழுத்துருக்கள், சிந்தனைகள், உரிமை முழக்கங்கள், கேலிச் சித்திரங்கள், நூலறிமுகங்கள் போன்றவற்றை அறியவும், அவற்றை ஆய்வுக்குட்படுத்தவும் பெரும் வாய்ப்பை பொன்னி இதழ்கள் ஏற்படுத்திக் கொடுக்கும்.
+    </div>''', unsafe_allow_html=True)
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
-
+def load_image(image_name):
+    """Helper function to load images with multiple extension attempts"""
+    for ext in ['.png', '.jpg', '.jpeg', '.PNG', '.JPG', '.JPEG']:
+        img_path = IMG_DIR / f"{image_name}{ext}"
+        if img_path.exists():
+            try:
+                img = Image.open(img_path)
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+                st.image(img, use_container_width=False)
+                return
+            except:
+                continue
 # -------------------------------------------------------------------------
 # Main Routing
 # -------------------------------------------------------------------------
