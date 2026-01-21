@@ -1,35 +1,6 @@
-# import boto3
-# from io import BytesIO
-# import json
-
-# s3 = boto3.client('s3')
-
-# def list_files(bucket, prefix, suffix=None):
-#     """List files in S3 bucket/prefix, optionally filtered by suffix"""
-#     files = []
-#     paginator = s3.get_paginator('list_objects_v2')
-#     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-#         for obj in page.get('Contents', []):
-#             key = obj['Key']
-#             if suffix is None or key.endswith(suffix):
-#                 files.append(key)
-#     return files
-
-# def read_bytes(bucket, key):
-#     """Read a binary file from S3 (like .docx)"""
-#     obj = s3.get_object(Bucket=bucket, Key=key)
-#     return BytesIO(obj['Body'].read())
-
-# def upload_text(bucket, key, text):
-#     """Upload text to S3"""
-#     s3.put_object(Bucket=bucket, Key=key, Body=text.encode('utf-8'))
-
-# def upload_json(bucket, key, data):
-#     """Upload JSON to S3"""
-#     s3.put_object(Bucket=bucket, Key=key, Body=json.dumps(data, ensure_ascii=False, indent=2).encode('utf-8'))
-
 """
 S3 utility functions with comprehensive error handling and logging.
+Provides functions for listing, reading, writing, and managing files in AWS S3.
 """
 import boto3
 import logging
@@ -37,10 +8,8 @@ from io import BytesIO
 import json
 from botocore.exceptions import ClientError, NoCredentialsError
 
-# Get logger (will be configured by main script)
 logger = logging.getLogger('TamilDocProcessor.s3_utils')
 
-# Initialize S3 client
 try:
     s3 = boto3.client('s3')
     logger.debug("S3 client initialized successfully in s3_utils")
@@ -59,10 +28,10 @@ def list_files(bucket, prefix, suffix=None):
     Args:
         bucket (str): S3 bucket name
         prefix (str): S3 prefix path
-        suffix (str, optional): File extension filter
+        suffix (str, optional): File extension filter (e.g., '.txt', '.json')
         
     Returns:
-        list: List of S3 object keys
+        list: List of S3 object keys matching the criteria
         
     Raises:
         ClientError: If S3 operation fails
@@ -99,7 +68,7 @@ def list_files(bucket, prefix, suffix=None):
 
 def read_bytes(bucket, key):
     """
-    Read a binary file from S3 (like .docx).
+    Read a binary file from S3 (like .docx, .pdf).
     
     Args:
         bucket (str): S3 bucket name
@@ -135,15 +104,16 @@ def read_bytes(bucket, key):
 
 def upload_text(bucket, key, text):
     """
-    Upload text to S3.
+    Upload text to S3 with UTF-8 encoding.
     
     Args:
         bucket (str): S3 bucket name
-        key (str): S3 object key
+        key (str): S3 object key where text will be stored
         text (str): Text content to upload
         
     Raises:
         ClientError: If S3 operation fails
+        UnicodeEncodeError: If text contains invalid characters
     """
     try:
         logger.debug(f"Uploading text file: s3://{bucket}/{key}")
@@ -180,11 +150,11 @@ def upload_text(bucket, key, text):
 
 def upload_json(bucket, key, data):
     """
-    Upload JSON to S3.
+    Upload JSON to S3 with UTF-8 encoding and pretty formatting.
     
     Args:
         bucket (str): S3 bucket name
-        key (str): S3 object key
+        key (str): S3 object key where JSON will be stored
         data (dict/list): Data to serialize as JSON
         
     Raises:
@@ -194,11 +164,9 @@ def upload_json(bucket, key, data):
     try:
         logger.debug(f"Uploading JSON file: s3://{bucket}/{key}")
         
-        # Serialize to JSON
         json_str = json.dumps(data, ensure_ascii=False, indent=2)
         logger.debug(f"Serialized JSON to {len(json_str)} characters")
         
-        # Upload to S3
         s3.put_object(
             Bucket=bucket,
             Key=key,
@@ -229,7 +197,7 @@ def upload_json(bucket, key, data):
 
 def read_text_from_s3(bucket, key):
     """
-    Read text file from S3 and return as string.
+    Read text file from S3 and return as UTF-8 string.
     
     Args:
         bucket (str): S3 bucket name
@@ -240,6 +208,7 @@ def read_text_from_s3(bucket, key):
         
     Raises:
         ClientError: If S3 operation fails
+        UnicodeDecodeError: If file is not valid UTF-8
     """
     try:
         logger.debug(f"Reading text file: s3://{bucket}/{key}")

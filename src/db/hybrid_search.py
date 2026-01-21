@@ -1,22 +1,16 @@
-from typing import List, Dict, Tuple
+"""
+Hybrid Search Module for Tamil Document Processing.
+Provides vector and keyword-based search with LLM-powered answer generation.
+"""
+from typing import List, Dict, Tuple, Optional
 from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
 from collections import defaultdict
 import re
 import os
+import logging
+import threading
 from pathlib import Path
-
-# CRITICAL: Use dynamic paths instead of hardcoded ones
-BASE_DIR = Path(__file__).resolve().parent
-QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
-QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
-COLLECTION_NAME = "qdrant_indexer"
-EMBEDDING_MODEL = "intfloat/multilingual-e5-large"
-CSV_PATH = BASE_DIR / "summary.csv"
-
-
-# Environment setup
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 import torch
 torch.set_grad_enabled(False)
@@ -24,54 +18,82 @@ from qdrant_client import models
 from transformers import pipeline
 import pandas as pd
 
-def log_info(message: str):
-    """Print with emoji for better visibility"""
-    print(f"ℹ️  {message}")
+BASE_DIR = Path(__file__).resolve().parent
+QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
+QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
+COLLECTION_NAME = "qdrant_indexer"
+EMBEDDING_MODEL = "intfloat/multilingual-e5-large"
+CSV_PATH = BASE_DIR / "summary.csv"
+
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 
-def log_error(message: str):
-    """Print error with emoji"""
-    print(f"❌ {message}")
-
-
-def log_success(message: str):
-    """Print success with emoji"""
-    print(f"✅ {message}")
-    
 def verify_files():
-    log_info("Verifying critical files...")
+    """
+    Verify existence of critical files (CSV).
+    Logs file locations and sizes if found.
+    """
+    logger.info("Verifying critical files...")
 
-    # Check CSV
     if CSV_PATH.exists():
-        log_success(f"CSV found: {CSV_PATH}")
-        log_info(f"CSV size: {CSV_PATH.stat().st_size / 1024:.2f} KB")
+        logger.info(f"CSV found: {CSV_PATH}")
+        logger.info(f"CSV size: {CSV_PATH.stat().st_size / 1024:.2f} KB")
     else:
-        log_error(f"CSV NOT FOUND: {CSV_PATH}")
-        log_info("Searching for CSV files...")
+        logger.error(f"CSV NOT FOUND: {CSV_PATH}")
+        logger.info("Searching for CSV files...")
         for csv_file in BASE_DIR.rglob("*.csv"):
-            log_info(f"  Found: {csv_file}")
+            logger.info(f"  Found: {csv_file}")
 
 
-# Run verification on import
 verify_files()
-
 
 _embed_model = None
 
+
 def get_embed_model():
+    """
+    Get or initialize the embedding model (singleton pattern).
+    
+    Returns:
+        SentenceTransformer: Loaded embedding model
+    """
     global _embed_model
     if _embed_model is None:
-        log_info("Loading embedding model...")
+        logger.info("Loading embedding model...")
         _embed_model = SentenceTransformer(EMBEDDING_MODEL, device="cpu")
-        log_success("Embedding model cached")
+        logger.info("Embedding model cached")
     return _embed_model
 
 
 def dense_embed_query(text: str):
+    """
+    Generate dense embedding for query text.
+    
+    Args:
+        text (str): Query text to embed
+        
+    Returns:
+        list: Dense embedding vector
+    """
     return get_embed_model().encode(f"query: {text}").tolist()
 
 
 def sparse_embed(text: str):
+    """
+    Generate sparse BM25-style embedding for text.
+    
+    Args:
+        text (str): Text to embed
+        
+    Returns:
+        models.SparseVector: Sparse vector representation
+    """
     tokens = re.findall(r"\b\w+\b", text.lower())
     counts = defaultdict(int)
     for t in tokens:
@@ -86,7 +108,14 @@ def sparse_embed(text: str):
 _llm = None
 _llm_lock = False
 
+
 def get_llm():
+    """
+    Get or initialize the LLM model (singleton pattern with thread safety).
+    
+    Returns:
+        Pipeline: Loaded LLM pipeline
+    """
     global _llm, _llm_lock
     if _llm is not None:
         return _llm
@@ -97,27 +126,31 @@ def get_llm():
         return _llm
     _llm_lock = True
     try:
-        log_info("Loading LLM model...")
+        logger.info("Loading LLM model...")
         _llm = pipeline(
             "text-generation",
             model="abhinand/tamil-llama-7b-instruct-v0.2",
             device_map="cuda:0",
             torch_dtype=torch.float16,
         )
-        log_success("LLM model cached")
+        logger.info("LLM model cached")
     finally:
         _llm_lock = False
     return _llm
 
 
 def check_qdrant_health() -> Dict:
+    """
+    Check Qdrant database health and connectivity.
+    
+    Returns:
+        dict: Health status with message, collection info, and any errors
+    """
     try:
         client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
 
-        # Ping server
         client.get_collections()
 
-        # Check collection
         try:
             collection_info = client.get_collection(COLLECTION_NAME)
             return {
@@ -143,34 +176,40 @@ def check_qdrant_health() -> Dict:
             "details": str(e),
             "action": "Ensure Qdrant server is running on port 6333"
         }
-        
+
+
 def normalize_author_name(name: str) -> str:
     """
-    Normalize author names by removing prefixes and common variations
+    Normalize author names by removing prefixes and common variations.
+    
     Examples:
         'மு.,கருணாநிதி' -> 'கருணாநிதி'
         'மு. கருணாநிதி' -> 'கருணாநிதி'
         'டாக்டர். பெரியார்' -> 'பெரியார்'
+    
+    Args:
+        name (str): Author name to normalize
+        
+    Returns:
+        str: Normalized author name
     """
     if not name:
         return ""
     
-    # Remove common prefixes
     prefixes_to_remove = [
-        r'மு\.,?\s*',           # மு., மு.
-        r'டாக்டர்\.?\s*',      # டாக்டர்.
-        r'திரு\.,?\s*',         # திரு., திரு
-        r'திருமதி\.?\s*',      # திருமதி.
-        r'Dr\.?\s*',           # Dr.
-        r'Mr\.?\s*',           # Mr.
-        r'Mrs\.?\s*',          # Mrs.
+        r'மு\.,?\s*',
+        r'டாக்டர்\.?\s*',
+        r'திரு\.,?\s*',
+        r'திருமதி\.?\s*',
+        r'Dr\.?\s*',
+        r'Mr\.?\s*',
+        r'Mrs\.?\s*',
     ]
     
     cleaned = name.strip()
     for prefix in prefixes_to_remove:
         cleaned = re.sub(prefix, '', cleaned, flags=re.IGNORECASE)
     
-    # Remove extra whitespace
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
     
     return cleaned
@@ -178,26 +217,27 @@ def normalize_author_name(name: str) -> str:
 
 def flexible_author_match(search_name: str, csv_name: str) -> bool:
     """
-    Flexible matching between search query and CSV author name
-    Returns True if they match
+    Flexible matching between search query and CSV author name.
+    
+    Args:
+        search_name (str): Name from search query
+        csv_name (str): Name from CSV
+        
+    Returns:
+        bool: True if names match
     """
-    # Normalize both names
     search_normalized = normalize_author_name(search_name).lower()
     csv_normalized = normalize_author_name(csv_name).lower()
     
-    # Exact match after normalization
     if search_normalized == csv_normalized:
         return True
     
-    # Check if search term is contained in CSV name
     if search_normalized in csv_normalized:
         return True
     
-    # Check if CSV name is contained in search term
     if csv_normalized in search_normalized:
         return True
     
-    # Handle special cases for common names
     special_cases = {
         'கலைஞர்': ['கருணாநிதி', 'மு.,கருணாநிதி', 'மு. கருணாநிதி'],
         'கருணாநிதி': ['கலைஞர்', 'மு.,கருணாநிதி', 'மு. கருணாநிதி'],
@@ -217,27 +257,37 @@ def flexible_author_match(search_name: str, csv_name: str) -> bool:
     
     return False
 
+
 class EnhancedAuthorQuerySystem:
     """
-    Robust author query system with improved CSV parsing and query detection
+    Robust author query system with improved CSV parsing and query detection.
+    Handles author lookups, topic searches, and issue counting.
     """
     
     def __init__(self, csv_path: str):
+        """
+        Initialize the author query system.
+        
+        Args:
+            csv_path (str): Path to CSV file containing author and article data
+        """
         self.csv_path = Path(csv_path)
         self.df = None
         self._load_csv()
     
     def _load_csv(self):
-        """Load CSV with multiple fallback strategies"""
+        """
+        Load CSV with multiple fallback strategies for robustness.
+        Tries different parsing approaches if standard loading fails.
+        """
         try:
             if not self.csv_path.exists():
-                log_error(f"CSV not found: {self.csv_path}")
+                logger.error(f"CSV not found: {self.csv_path}")
                 self.df = pd.DataFrame()
                 return
             
-            log_info(f"Loading CSV: {self.csv_path}")
+            logger.info(f"Loading CSV: {self.csv_path}")
             
-            # Try multiple parsing strategies
             strategies = [
                 ("Standard", {"encoding": "utf-8", "skipinitialspace": True}),
                 ("Skip bad lines", {"encoding": "utf-8", "on_bad_lines": "skip", "skipinitialspace": True}),
@@ -249,52 +299,48 @@ class EnhancedAuthorQuerySystem:
             for strategy_name, kwargs in strategies:
                 try:
                     self.df = pd.read_csv(self.csv_path, **kwargs)
-                    log_success(f"Loaded with: {strategy_name}")
+                    logger.info(f"Loaded with: {strategy_name}")
                     loaded = True
                     break
                 except Exception as e:
-                    log_error(f"{strategy_name} failed: {str(e)[:60]}")
+                    logger.warning(f"{strategy_name} failed: {str(e)[:60]}")
                     continue
             
             if not loaded or self.df is None or self.df.empty:
-                log_error("All loading strategies failed")
+                logger.error("All loading strategies failed")
                 self.df = pd.DataFrame()
                 return
             
-            # Clean column names
             self.df.columns = self.df.columns.str.strip()
-            log_info(f"Columns: {list(self.df.columns)}")
-            log_info(f"Rows: {len(self.df)}")
+            logger.info(f"Columns: {list(self.df.columns)}")
+            logger.info(f"Rows: {len(self.df)}")
             
-            # Check and fix column names
             self._fix_column_names()
             
-            # Clean data
             if 'ஆசிரியர்' in self.df.columns:
                 self.df['ஆசிரியர்'] = self.df['ஆசிரியர்'].fillna('').astype(str).str.strip()
                 before = len(self.df)
                 self.df = self.df[self.df['ஆசிரியர்'] != '']
-                log_success(f"Authors: {before} → {len(self.df)} rows")
+                logger.info(f"Authors: {before} to {len(self.df)} rows")
             else:
-                log_error("Missing 'ஆசிரியர்' column!")
+                logger.error("Missing 'ஆசிரியர்' column")
                 return
             
             if 'தலைப்பு' in self.df.columns:
                 self.df['தலைப்பு'] = self.df['தலைப்பு'].fillna('').astype(str).str.strip()
             
-            # Show sample
             if len(self.df) > 0:
                 sample = self.df.iloc[0]
-                log_info(f"Sample: {sample.get('ஆசிரியர்', 'N/A')[:30]}")
+                logger.info(f"Sample: {sample.get('ஆசிரியர்', 'N/A')[:30]}")
             
         except Exception as e:
-            log_error(f"CSV error: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"CSV error: {e}", exc_info=True)
             self.df = pd.DataFrame()
     
     def _fix_column_names(self):
-        """Map alternate column names"""
+        """
+        Map alternate column names to standard Tamil names.
+        """
         mappings = {
             'author': 'ஆசிரியர்',
             'Author': 'ஆசிரியர்',
@@ -306,20 +352,26 @@ class EnhancedAuthorQuerySystem:
         for old, new in mappings.items():
             if old in self.df.columns and new not in self.df.columns:
                 self.df.rename(columns={old: new}, inplace=True)
-                log_success(f"Renamed '{old}' → '{new}'")
+                logger.info(f"Renamed '{old}' to '{new}'")
     
     def detect_query_type(self, question: str) -> str:
-        """Enhanced query type detection"""
+        """
+        Detect the type of query based on keywords and patterns.
+        
+        Args:
+            question (str): User's question
+            
+        Returns:
+            str: One of 'list_all_authors', 'author_topics', 'topic_author', or 'none'
+        """
         q = question.lower()
         
-        # Known authors
         known_authors = [
             'கலைஞர்', 'கருணாநிதி', 'பெரியார்', 'அண்ணா', 'அண்ணாதுரை',
             'நக்கீரன்', 'பாரதிதாசன்', 'புதுமைப்பித்தன்', 'அகிலன்', 'கண்ணதாசன்'
         ]
         has_author = any(author in q for author in known_authors)
         
-        # List all authors (highest priority if no specific author)
         list_patterns = [
             'எழுத்தாளர்கள் யார்', 'ஆசிரியர்கள் யார்',
             'எழுத்தாளர்களின் பட்டியல்', 'எழுத்தாளர்கள் பட்டியல்',
@@ -331,7 +383,6 @@ class EnhancedAuthorQuerySystem:
         if any(p in q for p in list_patterns) and not has_author:
             return 'list_all_authors'
         
-        # What did author X write? (author_topics)
         author_action_patterns = [
             'என்ன எழுதினார்', 'எழுதிய தலைப்பு', 'எழுதியது',
             'எந்த தலைப்பு', 'பற்றி எழுதினார்', 'எழுதியவற்றை',
@@ -342,7 +393,6 @@ class EnhancedAuthorQuerySystem:
         if has_author or any(p in q for p in author_action_patterns):
             return 'author_topics'
         
-        # Who wrote about topic X? (topic_author)
         topic_patterns = [
             'யார் எழுதினார்', 'எழுதியவர் யார்', 'ஆசிரியர் யார்',
             'என்ற நூலை எழுதியவர்', 'என்ற கட்டுரை',
@@ -355,11 +405,19 @@ class EnhancedAuthorQuerySystem:
         return 'none'
     
     def extract_entity(self, question: str, query_type: str) -> str:
-        """Extract author name or topic with improved recognition"""
+        """
+        Extract author name or topic from question based on query type.
+        
+        Args:
+            question (str): User's question
+            query_type (str): Type of query ('author_topics' or 'topic_author')
+            
+        Returns:
+            str: Extracted entity (author name or topic)
+        """
         q = question.strip()
         
         if query_type == 'author_topics':
-            # Known author patterns (including variations)
             known_authors = {
                 'கலைஞர்': 'கருணாநிதி',
                 'கருணாநிதி': 'கருணாநிதி',
@@ -373,12 +431,10 @@ class EnhancedAuthorQuerySystem:
                 'கண்ணதாசன்': 'கண்ணதாசன்',
             }
             
-            # Check for known authors first
             for pattern, canonical in known_authors.items():
                 if pattern in q:
                     return canonical
             
-            # Extract from patterns like "கலைஞர் கருணாநிதி எழுதியவற்றை"
             patterns = [
                 r'(கலைஞர்\s*கருணாநிதி)',
                 r'(மு\.,?\s*கருணாநிதி)',
@@ -390,10 +446,8 @@ class EnhancedAuthorQuerySystem:
                 match = re.search(pattern, q, re.IGNORECASE)
                 if match:
                     extracted = match.group(1).strip()
-                    # Normalize the extracted name
                     return normalize_author_name(extracted)
             
-            # Remove noise words
             noise = [
                 'என்ன எழுதினார்', 'எழுதியது', 'எழுதிய', 'தலைப்பு',
                 'பற்றி', 'இதழில்', 'பொன்னி', 'குறிப்பிடுக', 'என்ன',
@@ -403,14 +457,12 @@ class EnhancedAuthorQuerySystem:
             for word in noise:
                 q = re.sub(word, '', q, flags=re.IGNORECASE)
             
-            # Extract remaining Tamil words
             words = re.findall(r'[\u0B80-\u0BFF]+', q)
             words = [normalize_author_name(w) for w in words if len(w) > 2]
             
             return ' '.join(words) if words else ''
         
         elif query_type == 'topic_author':
-            # Remove question markers
             noise = [
                 'யார் எழுதினார்', 'எழுதியவர் யார்', 'ஆசிரியர் யார்',
                 'என்ற நூலை', 'எழுதியவர்', 'பற்றி', 'இதழில்',
@@ -420,7 +472,6 @@ class EnhancedAuthorQuerySystem:
             for word in noise:
                 q = re.sub(word, '', q, flags=re.IGNORECASE)
             
-            # Extract topic
             words = re.findall(r'[\u0B80-\u0BFF]+|[a-zA-Z]+', q)
             words = [w for w in words if len(w) > 2]
             
@@ -429,7 +480,12 @@ class EnhancedAuthorQuerySystem:
         return ''
     
     def list_all_authors(self) -> Dict:
-        """List all unique authors"""
+        """
+        List all unique authors with article counts.
+        
+        Returns:
+            dict: Result dictionary with success status, total counts, and author list
+        """
         if self.df is None or self.df.empty:
             return {
                 "type": "list_all_authors",
@@ -462,7 +518,15 @@ class EnhancedAuthorQuerySystem:
         }
     
     def get_topics_by_author(self, author_name: str) -> Dict:
-        """Get topics by author with enhanced flexible matching"""
+        """
+        Get all articles/topics by a specific author.
+        
+        Args:
+            author_name (str): Author name to search for
+            
+        Returns:
+            dict: Result dictionary with articles, count, and matched author name
+        """
         if self.df is None or self.df.empty:
             return {
                 "type": "author_topics",
@@ -471,7 +535,6 @@ class EnhancedAuthorQuerySystem:
                 "articles": []
             }
         
-        # Use flexible matching
         matches = self.df[
             self.df['ஆசிரியர்'].apply(lambda x: flexible_author_match(author_name, str(x)))
         ]
@@ -492,7 +555,6 @@ class EnhancedAuthorQuerySystem:
                 "author": row.get('ஆசிரியர்', '')
             }
             
-            # Optional fields
             for col in ['ஆண்டு', 'இதழ்', 'ச.எ.', 'வ.எ.']:
                 if col in row and pd.notna(row[col]):
                     try:
@@ -512,7 +574,15 @@ class EnhancedAuthorQuerySystem:
         }
     
     def get_author_by_topic(self, topic: str) -> Dict:
-        """Find who wrote about topic"""
+        """
+        Find authors who wrote about a specific topic.
+        
+        Args:
+            topic (str): Topic to search for
+            
+        Returns:
+            dict: Result dictionary with articles and author information
+        """
         if self.df is None or self.df.empty:
             return {
                 "type": "topic_author",
@@ -558,10 +628,19 @@ class EnhancedAuthorQuerySystem:
             "articles": articles
         }
 
+
 def format_author_list(result: Dict) -> str:
-    """Format list of all authors - simplified without decorative lines"""
+    """
+    Format list of all authors for display.
+    
+    Args:
+        result (dict): Result from list_all_authors()
+        
+    Returns:
+        str: Formatted Tamil text
+    """
     if not result['success']:
-        return f"❌ {result['message']}"
+        return f"Error: {result['message']}"
     
     lines = [
         f"பொன்னி இதழில் எழுதிய எழுத்தாளர்கள்",
@@ -578,9 +657,17 @@ def format_author_list(result: Dict) -> str:
 
 
 def format_author_topics(result: Dict) -> str:
-    """Format topics by author - simplified without decorative lines"""
+    """
+    Format topics by author for display.
+    
+    Args:
+        result (dict): Result from get_topics_by_author()
+        
+    Returns:
+        str: Formatted Tamil text
+    """
     if not result['success']:
-        return f"❌ {result['message']}"
+        return f"Error: {result['message']}"
     
     lines = [
         f"எழுத்தாளர்: {result.get('matched_author', result['author'])}",
@@ -588,7 +675,6 @@ def format_author_topics(result: Dict) -> str:
         ""
     ]
     
-    # Group by year if available
     by_year = {}
     for article in result['articles']:
         year = article.get('ஆண்டு', 'Unknown')
@@ -615,9 +701,17 @@ def format_author_topics(result: Dict) -> str:
 
 
 def format_topic_authors(result: Dict) -> str:
-    """Format authors by topic - simplified without decorative lines"""
+    """
+    Format authors by topic for display.
+    
+    Args:
+        result (dict): Result from get_author_by_topic()
+        
+    Returns:
+        str: Formatted Tamil text
+    """
     if not result['success']:
-        return f"❌ {result['message']}"
+        return f"Error: {result['message']}"
     
     lines = [
         f"தலைப்பு: '{result['topic']}' பற்றிய கட்டுரைகள்",
@@ -640,8 +734,17 @@ def format_topic_authors(result: Dict) -> str:
     
     return '\n'.join(lines)
 
+
 def detect_issue_count_query(question: str) -> bool:
-    """Detect if user is asking about issue count"""
+    """
+    Detect if user is asking about issue count.
+    
+    Args:
+        question (str): User's question
+        
+    Returns:
+        bool: True if asking about issue count
+    """
     q = question.lower()
     
     patterns = [
@@ -662,7 +765,15 @@ def detect_issue_count_query(question: str) -> bool:
 
 
 def get_issue_count(csv_path: str) -> Dict:
-    """Get unique issue count from CSV"""
+    """
+    Get unique issue count from CSV with article statistics.
+    
+    Args:
+        csv_path (str): Path to CSV file
+        
+    Returns:
+        dict: Issue count information with detailed statistics
+    """
     try:
         csv_path = Path(csv_path)
         
@@ -674,9 +785,8 @@ def get_issue_count(csv_path: str) -> Dict:
                 "issues": []
             }
         
-        log_info(f"Loading CSV for issue count: {csv_path}")
+        logger.info(f"Loading CSV for issue count: {csv_path}")
         
-        # Try loading CSV with multiple strategies
         df = None
         strategies = [
             {"encoding": "utf-8", "skipinitialspace": True},
@@ -699,10 +809,8 @@ def get_issue_count(csv_path: str) -> Dict:
                 "issues": []
             }
         
-        # Clean column names
         df.columns = df.columns.str.strip()
         
-        # Check for issue column
         issue_col = None
         for col in ['இதழ்', 'issue', 'Issue', 'doc_issue']:
             if col in df.columns:
@@ -717,20 +825,17 @@ def get_issue_count(csv_path: str) -> Dict:
                 "issues": []
             }
         
-        # Get unique issues
         df[issue_col] = df[issue_col].fillna('').astype(str).str.strip()
         df_filtered = df[df[issue_col] != '']
         
         unique_issues = df_filtered[issue_col].unique()
         issue_counts = df_filtered[issue_col].value_counts()
         
-        # Sort issues
         try:
             sorted_issues = sorted(unique_issues, key=lambda x: int(x) if x.isdigit() else x)
         except:
             sorted_issues = sorted(unique_issues)
         
-        # Create detailed issue list
         issues_list = []
         for issue in sorted_issues:
             article_count = int(issue_counts[issue])
@@ -747,9 +852,7 @@ def get_issue_count(csv_path: str) -> Dict:
         }
         
     except Exception as e:
-        log_error(f"Error getting issue count: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Error getting issue count: {e}", exc_info=True)
         return {
             "success": False,
             "message": f"பிழை: {str(e)}",
@@ -759,9 +862,17 @@ def get_issue_count(csv_path: str) -> Dict:
 
 
 def format_issue_count(result: Dict) -> str:
-    """Format issue count result for display"""
+    """
+    Format issue count result for display.
+    
+    Args:
+        result (dict): Result from get_issue_count()
+        
+    Returns:
+        str: Formatted Tamil text with statistics
+    """
     if not result['success']:
-        return f"❌ {result['message']}"
+        return f"Error: {result['message']}"
     
     lines = [
         "பொன்னி இதழ்கள் விவரம்",
@@ -770,21 +881,17 @@ def format_issue_count(result: Dict) -> str:
         ""
     ]
     
-    # Group issues for better display
     issues = result['issues']
     
     if len(issues) <= 20:
-        # Display all if less than 20
         lines.append("இதழ் எண் | கட்டுரைகள்")
         lines.append("-" * 30)
         for issue_info in issues:
             lines.append(f"{issue_info['issue_number']:>8} | {issue_info['article_count']} கட்டுரைகள்")
     else:
-        # Display summary for large counts
         lines.append("இதழ் விவரங்கள்:")
         lines.append("")
         
-        # First 5
         lines.append("முதல் 5 இதழ்கள்:")
         for issue_info in issues[:5]:
             lines.append(f"  • இதழ் {issue_info['issue_number']}: {issue_info['article_count']} கட்டுரைகள்")
@@ -793,14 +900,12 @@ def format_issue_count(result: Dict) -> str:
         lines.append(f"... (மேலும் {len(issues) - 10} இதழ்கள்)")
         lines.append("")
         
-        # Last 5
         lines.append("கடைசி 5 இதழ்கள்:")
         for issue_info in issues[-5:]:
             lines.append(f"  • இதழ் {issue_info['issue_number']}: {issue_info['article_count']} கட்டுரைகள்")
     
     lines.append("")
     
-    # Statistics
     if result['issues']:
         article_counts = [i['article_count'] for i in result['issues']]
         lines.append("புள்ளிவிவரம்:")
@@ -812,21 +917,28 @@ def format_issue_count(result: Dict) -> str:
 
 
 def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
-    """Enhanced handler for author queries and issue count queries"""
-    # Check for issue count query first
+    """
+    Handle author-related queries and issue count queries.
+    
+    Args:
+        question (str): User's question
+        csv_path (str): Path to CSV file
+        
+    Returns:
+        tuple: (was_handled, response_text)
+    """
     if detect_issue_count_query(question):
-        log_info("Detected issue count query")
+        logger.info("Detected issue count query")
         result = get_issue_count(csv_path)
         return True, format_issue_count(result)
     
-    # Original author query handling
     system = EnhancedAuthorQuerySystem(csv_path)
     
     if system.df is None or system.df.empty:
         return False, ""
     
     query_type = system.detect_query_type(question)
-    log_info(f"Query type: {query_type}")
+    logger.info(f"Query type: {query_type}")
     
     if query_type == 'none':
         return False, ""
@@ -837,33 +949,51 @@ def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
     
     elif query_type == 'author_topics':
         entity = system.extract_entity(question, 'author_topics')
-        log_info(f"Extracted author: '{entity}'")
+        logger.info(f"Extracted author: '{entity}'")
         
         if not entity:
-            return True, "⚠ எழுத்தாளர் பெயரை தெளிவாக குறிப்பிடவும்"
+            return True, "Warning: எழுத்தாளர் பெயரை தெளிவாக குறிப்பிடவும்"
         
         result = system.get_topics_by_author(entity)
         return True, format_author_topics(result)
     
     elif query_type == 'topic_author':
         entity = system.extract_entity(question, 'topic_author')
-        log_info(f"Extracted topic: '{entity}'")
+        logger.info(f"Extracted topic: '{entity}'")
         
         if not entity:
-            return True, "⚠ தலைப்பை தெளிவாக குறிப்பிடவும்"
+            return True, "Warning: தலைப்பை தெளிவாக குறிப்பிடவும்"
         
         result = system.get_author_by_topic(entity)
         return True, format_topic_authors(result)
     
     return False, ""
 
+
 def is_author_question(question: str) -> bool:
+    """
+    Check if question is about authors.
+    
+    Args:
+        question (str): User's question
+        
+    Returns:
+        bool: True if author-related question
+    """
     keywords = ["author", "authors", "list", "எழுத்தாளர்", "எழுத்தாளர்கள்", "பட்டியல்", "யார்"]
     return any(k in question.lower() for k in keywords)
 
 
 def fetch_all_authors(client: QdrantClient) -> List[str]:
-    """Uses passed client instead of creating new one"""
+    """
+    Fetch all unique authors from Qdrant database.
+    
+    Args:
+        client (QdrantClient): Qdrant client instance
+        
+    Returns:
+        list: Sorted list of unique author names
+    """
     points, _ = client.scroll(collection_name=COLLECTION_NAME, limit=10000, with_payload=True)
     authors = set()
     for p in points:
@@ -876,6 +1006,15 @@ def fetch_all_authors(client: QdrantClient) -> List[str]:
 
 
 def format_authors_tamil(authors: List[str]) -> str:
+    """
+    Format author list in Tamil.
+    
+    Args:
+        authors (list): List of author names
+        
+    Returns:
+        str: Formatted Tamil text
+    """
     if not authors:
         return "எழுத்தாளர் தகவல்கள் கிடைக்கவில்லை."
     lines = ["பொன்னி இதழில் எழுதிய எழுத்தாளர்கள்:\n"]
@@ -885,10 +1024,30 @@ def format_authors_tamil(authors: List[str]) -> str:
 
 
 class HybridQdrantSearch:
+    """
+    Hybrid search combining dense and sparse vectors for optimal results.
+    """
+    
     def __init__(self, client: QdrantClient):
+        """
+        Initialize hybrid search system.
+        
+        Args:
+            client (QdrantClient): Qdrant client instance
+        """
         self.client = client
 
     def search(self, query: str, limit: int = 30):
+        """
+        Perform hybrid search using dense and sparse vectors.
+        
+        Args:
+            query (str): Search query
+            limit (int): Maximum number of results
+            
+        Returns:
+            list: Search results
+        """
         response = self.client.query_points(
             collection_name=COLLECTION_NAME,
             prefetch=[
@@ -913,7 +1072,18 @@ class HybridQdrantSearch:
 
 
 def retrieve_all_chunks_for_document(client: QdrantClient, doc_id: str, doc_issue: str, volume: str) -> List[Dict]:
-    """Uses passed client instead of creating new one"""
+    """
+    Retrieve all chunks for a specific document.
+    
+    Args:
+        client (QdrantClient): Qdrant client instance
+        doc_id (str): Document ID
+        doc_issue (str): Document issue number
+        volume (str): Volume identifier
+        
+    Returns:
+        list: List of document chunks
+    """
     all_chunks = []
     offset = None
     while True:
@@ -938,6 +1108,16 @@ def retrieve_all_chunks_for_document(client: QdrantClient, doc_id: str, doc_issu
 
 
 def merge_consecutive_chunks(client: QdrantClient, points) -> List[Dict]:
+    """
+    Merge consecutive chunks from the same document.
+    
+    Args:
+        client (QdrantClient): Qdrant client instance
+        points: Search result points
+        
+    Returns:
+        list: List of merged documents with full content
+    """
     seen_docs = set()
     merged_docs = []
     
@@ -996,6 +1176,16 @@ def merge_consecutive_chunks(client: QdrantClient, points) -> List[Dict]:
 
 
 def extract_key_facts(docs: List[Dict], question: str) -> List[Dict]:
+    """
+    Extract key facts from documents relevant to question.
+    
+    Args:
+        docs (list): List of document dictionaries
+        question (str): User's question
+        
+    Returns:
+        list: List of relevant facts with scores
+    """
     facts = []
     q_keywords = set(re.findall(r'[\u0B80-\u0BFF]{2,}', question.lower()))
     
@@ -1065,11 +1255,20 @@ TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இத�
 
 
 def generate_llm_answer(question: str, context: str, max_words: int = 500) -> str:
-    """Generate a detailed answer using LLM (200-500 words)"""
+    """
+    Generate detailed answer using LLM (200-500 words).
+    
+    Args:
+        question (str): User's question
+        context (str): Context from retrieved documents
+        max_words (int): Maximum word count for answer
+        
+    Returns:
+        str: Generated answer text
+    """
     try:
         llm = get_llm()
         
-        # Prepare prompt
         prompt = f"""{TAMIL_ANSWER_SYSTEM_PROMPT}
 
 கேள்வி: {question}
@@ -1079,8 +1278,7 @@ def generate_llm_answer(question: str, context: str, max_words: int = 500) -> st
 
 விரிவான பதில் (200-500 சொற்கள்):"""
         
-        # Generate response
-        log_info("Generating LLM answer...")
+        logger.info("Generating LLM answer...")
         outputs = llm(
             prompt,
             max_new_tokens=800,
@@ -1093,25 +1291,31 @@ def generate_llm_answer(question: str, context: str, max_words: int = 500) -> st
         
         generated_text = outputs[0]['generated_text']
         
-        # Extract only the answer part
         answer = generated_text.split("விரிவான பதில் (200-500 சொற்கள்):")[-1].strip()
         
-        # Clean up
         answer = re.sub(r'\s+', ' ', answer).strip()
         
-        # Count words
         word_count = len(re.findall(r'[\u0B80-\u0BFF]+|\w+', answer))
-        log_success(f"Generated answer: {word_count} words")
+        logger.info(f"Generated answer: {word_count} words")
         
         return answer
         
     except Exception as e:
-        log_error(f"LLM generation failed: {e}")
+        logger.error(f"LLM generation failed: {e}")
         return ""
 
 
 def generate_extractive_answer(facts: List[Dict], question: str) -> str:
-    """Fallback extractive answer if LLM fails"""
+    """
+    Generate fallback extractive answer if LLM fails.
+    
+    Args:
+        facts (list): List of extracted facts
+        question (str): User's question
+        
+    Returns:
+        str: Extractive answer
+    """
     if not facts:
         return ""
     
@@ -1134,6 +1338,16 @@ def generate_extractive_answer(facts: List[Dict], question: str) -> str:
 
 
 def format_sources(merged_docs: List[Dict], limit: int = 10) -> List[Dict]:
+    """
+    Format source documents for display.
+    
+    Args:
+        merged_docs (list): List of merged documents
+        limit (int): Maximum number of sources to return
+        
+    Returns:
+        list: Formatted source dictionaries
+    """
     sources = []
     seen_hashes = set()
     
@@ -1161,18 +1375,28 @@ def format_sources(merged_docs: List[Dict], limit: int = 10) -> List[Dict]:
 
 
 def format_answer_output(answer: str, sources: List[Dict]) -> str:
+    """
+    Format complete answer with sources for display.
+    
+    Args:
+        answer (str): Answer text
+        sources (list): List of source documents
+        
+    Returns:
+        str: Formatted output string
+    """
     lines = []
     
-    lines.append("📝 பதில்:")
+    lines.append("பதில்:")
     lines.append(answer)
     lines.append("")
     
     if sources:
-        lines.append(f"\n📚 ஆதாரங்கள் ({len(sources)} ஆவணங்கள்):")
+        lines.append(f"\nஆதாரங்கள் ({len(sources)} ஆவணங்கள்):")
         lines.append("")
         
         for idx, source in enumerate(sources, 1):
-            lines.append(f"📄 ஆதாரம் {idx}")
+            lines.append(f"ஆதாரம் {idx}")
             
             header_parts = [f"இதழ்: {source['doc_issue']}", f"மலர்: {source['volume']}"]
             if source['heading']:
@@ -1187,13 +1411,20 @@ def format_answer_output(answer: str, sources: List[Dict]) -> str:
     return '\n'.join(lines)
 
 
-import threading
-from typing import Optional
-
-# Global client with thread-safe initialization
 _qdrant_client: Optional[QdrantClient] = None
 _client_lock = threading.Lock()
+
+
 def get_qdrant_client() -> QdrantClient:
+    """
+    Get or initialize Qdrant client (singleton pattern with thread safety).
+    
+    Returns:
+        QdrantClient: Connected Qdrant client instance
+        
+    Raises:
+        Exception: If connection to Qdrant fails
+    """
     global _qdrant_client
 
     if _qdrant_client is not None:
@@ -1204,7 +1435,7 @@ def get_qdrant_client() -> QdrantClient:
             return _qdrant_client
 
         try:
-            log_info("Connecting to Qdrant SERVER...")
+            logger.info("Connecting to Qdrant SERVER...")
 
             _qdrant_client = QdrantClient(
                 host=QDRANT_HOST,
@@ -1214,24 +1445,33 @@ def get_qdrant_client() -> QdrantClient:
             )
 
             collection_info = _qdrant_client.get_collection(COLLECTION_NAME)
-            log_success(f"Connected: {collection_info.points_count} points")
+            logger.info(f"Connected: {collection_info.points_count} points")
 
             return _qdrant_client
 
         except Exception as e:
-            log_error(f"Failed to connect to Qdrant server: {e}")
+            logger.error(f"Failed to connect to Qdrant server: {e}")
             raise
+
 
 def ask_question(question: str, top_k: int = 10, return_formatted: bool = False, use_llm: bool = True) -> Dict:
     """
-    Enhanced ask_question with database health check and read-only support
+    Main question answering function with database health check and hybrid search.
+    
+    Args:
+        question (str): User's question
+        top_k (int): Number of source documents to return
+        return_formatted (bool): If True, return formatted string instead of dict
+        use_llm (bool): If True, use LLM for answer generation
+        
+    Returns:
+        dict or str: Answer dictionary or formatted string
     """
-    # Check database health first
     health_status = check_qdrant_health()
     
     if not health_status["healthy"]:
         error_message = f"""
-❌ Database Error: {health_status['message']}
+Database Error: {health_status['message']}
 
 Details: {health_status.get('details', 'No additional details')}
 Action: {health_status.get('action', 'Contact administrator')}
@@ -1246,16 +1486,15 @@ Error Type: {health_status['error']}
             "error": health_status
         }
     
-    log_success("Database is healthy - proceeding with query")
+    logger.info("Database is healthy - proceeding with query")
     
-    # Check CSV-based queries
     if CSV_PATH.exists():
         try:
-            log_info("Checking author query...")
+            logger.info("Checking author query...")
             is_handled, response = handle_author_query(question, str(CSV_PATH))
             
             if is_handled:
-                log_success("Handled as CSV author query")
+                logger.info("Handled as CSV author query")
                 if return_formatted:
                     return response
                 return {
@@ -1264,9 +1503,10 @@ Error Type: {health_status['error']}
                     "query_type": "author_csv"
                 }
         except Exception as e:
-            log_error(f"CSV query error: {e}")
+            logger.error(f"CSV query error: {e}")
+            
     try:
-        client = get_qdrant_client()  
+        client = get_qdrant_client()
 
         if is_author_question(question):
             authors = fetch_all_authors(client)
@@ -1275,7 +1515,7 @@ Error Type: {health_status['error']}
                 return format_answer_output(answer, [])
             return {"answer": answer, "sources": []}
 
-        log_info(f"Searching: {question[:60]}...")
+        logger.info(f"Searching: {question[:60]}...")
         
         searcher = HybridQdrantSearch(client)
         results = searcher.search(question, limit=50)
@@ -1286,7 +1526,7 @@ Error Type: {health_status['error']}
                 return format_answer_output(answer, [])
             return {"answer": answer, "sources": []}
 
-        log_success(f"Found {len(results)} chunks")
+        logger.info(f"Found {len(results)} chunks")
 
         merged_docs = merge_consecutive_chunks(client, results)
         
@@ -1296,32 +1536,29 @@ Error Type: {health_status['error']}
                 return format_answer_output(answer, [])
             return {"answer": answer, "sources": []}
         
-        log_success(f"Merged into {len(merged_docs)} documents")
+        logger.info(f"Merged into {len(merged_docs)} documents")
 
-        # Prepare context for LLM
         context_parts = []
         for idx, doc in enumerate(merged_docs[:5], 1):
             context_parts.append(f"ஆவணம் {idx}: {doc['content'][:800]}")
         
         context = "\n\n".join(context_parts)
         
-        # Try LLM generation first
         answer = ""
         if use_llm:
             answer = generate_llm_answer(question, context)
         
-        # Fallback to extractive if LLM fails
         if not answer or len(answer) < 100:
-            log_error("LLM failed, using extractive answer")
+            logger.warning("LLM failed, using extractive answer")
             facts = extract_key_facts(merged_docs, question)
-            log_success(f"Extracted {len(facts)} facts")
+            logger.info(f"Extracted {len(facts)} facts")
             answer = generate_extractive_answer(facts, question)
         
         if not answer or len(answer) < 50:
             answer = "கேள்விக்கான தகவல்கள் ஆதாரங்களில் உள்ளன."
 
         sources = format_sources(merged_docs, limit=top_k)
-        log_success(f"Ready with {len(sources)} sources")
+        logger.info(f"Ready with {len(sources)} sources")
 
         if return_formatted:
             return format_answer_output(answer, sources)
@@ -1333,18 +1570,21 @@ Error Type: {health_status['error']}
         
     except Exception as e:
         error_msg = f"Query error: {str(e)}"
-        log_error(error_msg)
+        logger.error(error_msg)
         if return_formatted:
-            return f"❌ {error_msg}"
+            return f"Error: {error_msg}"
         return {"answer": error_msg, "sources": [], "error": str(e)}
 
 
 def preload_models():
-    print("=" * 60)
-    print("PRELOADING MODELS")
-    print("=" * 60)
+    """
+    Preload embedding and LLM models for faster first query.
+    """
+    logger.info("=" * 60)
+    logger.info("PRELOADING MODELS")
+    logger.info("=" * 60)
     _ = get_embed_model()
     _ = get_llm()
-    print("=" * 60)
-    log_success("MODELS READY")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("MODELS READY")
+    logger.info("=" * 60)

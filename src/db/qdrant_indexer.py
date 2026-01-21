@@ -1,6 +1,7 @@
 """
-FIXED qdrant_index.py
-Replace your entire file with this
+Qdrant Index Module for Tamil Document Processing.
+Handles document chunking, embedding generation, and indexing to Qdrant vector database.
+Supports both intro documents and author metadata with hybrid search (dense + sparse vectors).
 """
 
 import json
@@ -27,10 +28,8 @@ from src.config.config import (
 
 BASE_DIR = Path(__file__).resolve().parent
 
-# Qdrant storage will be created in the same directory as this file
 QDRANT_PATH = str(BASE_DIR / "qdrant_data")
 
-# Collection name derived from python file name
 COLLECTION_NAME = Path(__file__).stem
 
 logging.basicConfig(level=logging.INFO)
@@ -40,18 +39,43 @@ s3 = boto3.client("s3")
 
 dense_model = SentenceTransformer(EMBEDDING_MODEL)
 
+
 def dense_embed_doc(text: str) -> List[float]:
-    """Dense embedding for DOCUMENTS (indexing)"""
+    """
+    Generate dense embedding for documents during indexing.
+    
+    Args:
+        text (str): Document text to embed
+        
+    Returns:
+        list: Normalized dense embedding vector
+    """
     return dense_model.encode(f"passage: {text}", normalize_embeddings=True).tolist()
 
 
 def dense_embed_query(text: str) -> List[float]:
-    """Dense embedding for SEARCH QUERIES"""
+    """
+    Generate dense embedding for search queries.
+    
+    Args:
+        text (str): Query text to embed
+        
+    Returns:
+        list: Normalized dense embedding vector
+    """
     return dense_model.encode(f"query: {text}", normalize_embeddings=True).tolist()
 
 
 def sparse_embed(text: str) -> models.SparseVector:
-    """BM25-style sparse embedding"""
+    """
+    Generate BM25-style sparse embedding for text.
+    
+    Args:
+        text (str): Text to embed
+        
+    Returns:
+        models.SparseVector: Sparse vector with token indices and frequencies
+    """
     tokens = re.findall(r"\b\w+\b", text.lower())
     counts = Counter(tokens)
 
@@ -69,11 +93,18 @@ def sparse_embed(text: str) -> models.SparseVector:
 def split_into_sentences(text: str) -> List[str]:
     """
     Split text into sentences respecting Tamil and English punctuation.
+    
+    Handles Tamil (।) and English (.!?) sentence terminators.
+    Only returns substantial sentences (minimum 10 characters).
+    
+    Args:
+        text (str): Text to split into sentences
+        
+    Returns:
+        list: List of sentences with punctuation
     """
-    # Split by Tamil (।) and English (.!?) punctuation
     sentences = re.split(r'([।.!?]+)', text)
     
-    # Recombine sentences with their punctuation
     result = []
     i = 0
     while i < len(sentences):
@@ -83,14 +114,12 @@ def split_into_sentences(text: str) -> List[str]:
             i += 1
             continue
         
-        # Check if next item is punctuation
         if i + 1 < len(sentences) and re.match(r'^[।.!?]+$', sentences[i + 1]):
             sentence += sentences[i + 1]
             i += 2
         else:
             i += 1
         
-        # Only add substantial sentences (min 10 chars)
         if len(sentence) > 10:
             result.append(sentence.strip())
     
@@ -99,26 +128,24 @@ def split_into_sentences(text: str) -> List[str]:
 
 def chunk_text(text: str, size: int) -> List[str]:
     """
-    FIXED: Chunk text by SENTENCES, not characters.
-    Ensures no incomplete sentences.
+    Chunk text by sentences to ensure complete sentences in each chunk.
+    
+    Uses word-based chunking with target and maximum word counts.
+    Ensures chunks start and end on sentence boundaries.
     
     Args:
-        text: Text to chunk
-        size: Target CHARACTER size (converted to ~words internally)
+        text (str): Text to chunk
+        size (int): Target character size (converted to words internally)
         
     Returns:
-        List of chunks with complete sentences
+        list: List of text chunks with complete sentences
     """
     if not text or not text.strip():
         return []
     
-    # Convert character size to approximate word target
-    # Average Tamil word ~= 6 chars, English ~= 5 chars
-    # So CHUNK_SIZE=1000 chars ≈ 170 words
     target_words = size // 6
-    max_words = int(target_words * 1.5)  # Allow 50% overflow
+    max_words = int(target_words * 1.5)
     
-    # Split into sentences
     sentences = split_into_sentences(text)
     
     if not sentences:
@@ -129,10 +156,8 @@ def chunk_text(text: str, size: int) -> List[str]:
     current_word_count = 0
     
     for sentence in sentences:
-        # Count words in sentence (Tamil + English)
         words = len(re.findall(r'[\u0B80-\u0BFF]+|\w+', sentence))
         
-        # If single sentence is huge, take it as-is
         if words > max_words:
             if current_chunk:
                 chunks.append(' '.join(current_chunk))
@@ -141,23 +166,19 @@ def chunk_text(text: str, size: int) -> List[str]:
             chunks.append(sentence)
             continue
         
-        # If adding would exceed max, save current chunk
         if current_word_count + words > max_words and current_chunk:
             chunks.append(' '.join(current_chunk))
             current_chunk = []
             current_word_count = 0
         
-        # Add sentence to current chunk
         current_chunk.append(sentence)
         current_word_count += words
         
-        # If reached target, consider new chunk
         if current_word_count >= target_words:
             chunks.append(' '.join(current_chunk))
             current_chunk = []
             current_word_count = 0
     
-    # Add remaining chunk if substantial (min 30 words)
     if current_chunk:
         chunk_text = ' '.join(current_chunk)
         words_in_chunk = len(re.findall(r'[\u0B80-\u0BFF]+|\w+', chunk_text))
@@ -169,26 +190,30 @@ def chunk_text(text: str, size: int) -> List[str]:
 
 def validate_chunk(chunk: str) -> bool:
     """
-    Validate chunk quality.
+    Validate chunk quality before indexing.
     
-    Returns True if:
-    - Starts with proper character (not punctuation)
-    - Has minimum 30 words
-    - Contains Tamil characters
+    Checks:
+    - Minimum length (50 characters)
+    - Starts with letter (not punctuation)
+    - Minimum 30 words
+    - Contains Tamil characters (minimum 20)
+    
+    Args:
+        chunk (str): Text chunk to validate
+        
+    Returns:
+        bool: True if chunk meets quality standards
     """
     if not chunk or len(chunk) < 50:
         return False
     
-    # Must start with letter
     if not re.match(r'^[a-zA-Zஅ-ஹ]', chunk.strip()):
         return False
     
-    # Count words
     words = len(re.findall(r'[\u0B80-\u0BFF]+|\w+', chunk))
     if words < 30:
         return False
     
-    # Must have Tamil content
     tamil_chars = len(re.findall(r'[\u0B80-\u0BFF]', chunk))
     if tamil_chars < 20:
         return False
@@ -197,6 +222,17 @@ def validate_chunk(chunk: str) -> bool:
 
 
 def list_s3_json_files(bucket: str, prefix: str, suffix: str) -> List[str]:
+    """
+    List all JSON files in S3 bucket with given prefix and suffix.
+    
+    Args:
+        bucket (str): S3 bucket name
+        prefix (str): S3 key prefix to filter
+        suffix (str): File suffix to filter (e.g., '.json')
+        
+    Returns:
+        list: List of S3 keys matching criteria
+    """
     keys = []
     paginator = s3.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
@@ -204,12 +240,22 @@ def list_s3_json_files(bucket: str, prefix: str, suffix: str) -> List[str]:
             key = obj["Key"]
             if key.endswith(suffix):
                 keys.append(key)
-                logger.debug(f"[S3 FOUND] {key}") 
+                logger.debug(f"Found: {key}") 
     return keys
 
 
 def extract_volume_from_s3_key(s3_key: str) -> str:
-    """Extract volume name like vol_1, vol_2 from S3 path"""
+    """
+    Extract volume identifier from S3 key path.
+    
+    Looks for path segments like 'vol_1', 'vol_2', etc.
+    
+    Args:
+        s3_key (str): S3 object key
+        
+    Returns:
+        str: Volume identifier or 'unknown' if not found
+    """
     for part in s3_key.split("/"):
         if part.lower().startswith("vol_"):
             return part
@@ -217,10 +263,31 @@ def extract_volume_from_s3_key(s3_key: str) -> str:
 
 
 def is_author_file(s3_key: str) -> bool:
+    """
+    Check if S3 key points to an authors.json file.
+    
+    Args:
+        s3_key (str): S3 object key
+        
+    Returns:
+        bool: True if file is authors.json
+    """
     return s3_key.lower().endswith("authors.json")
 
 
 def load_documents_from_s3() -> List[Dict]:
+    """
+    Load and process intro documents from S3.
+    
+    Performs:
+    - Downloads JSON files from S3
+    - Chunks text into manageable pieces
+    - Validates chunk quality
+    - Creates document dictionaries with metadata
+    
+    Returns:
+        list: List of document dictionaries ready for indexing
+    """
     documents = []
     chunk_stats = {
         'total': 0,
@@ -233,13 +300,13 @@ def load_documents_from_s3() -> List[Dict]:
     logger.info(f"Found {len(keys)} JSON files in S3")
 
     for key in keys:
-        logger.info(f"[PROCESSING] {key}")
+        logger.info(f"Processing: {key}")
         try:
             obj = s3.get_object(Bucket=S3_BUCKET, Key=key)
             data = json.loads(obj["Body"].read().decode("utf-8"))
             
             if not isinstance(data, dict):
-                logger.info(f"[SKIP] Not an intro JSON: {key}")
+                logger.info(f"Skipping non-intro JSON: {key}")
                 continue
             
             intro_items = data.get("intro", [])
@@ -253,7 +320,6 @@ def load_documents_from_s3() -> List[Dict]:
                 if not text:
                     continue
 
-                # Use improved chunking
                 chunks = chunk_text(text, CHUNK_SIZE)
                 
                 logger.info(f"  doc_id={item.get('doc_id')}: {len(chunks)} chunks")
@@ -261,7 +327,6 @@ def load_documents_from_s3() -> List[Dict]:
                 for idx, chunk in enumerate(chunks):
                     chunk_stats['total'] += 1
                     
-                    # Validate chunk
                     if not validate_chunk(chunk):
                         chunk_stats['invalid'] += 1
                         logger.debug(f"    Skipped invalid chunk {idx}")
@@ -292,7 +357,6 @@ def load_documents_from_s3() -> List[Dict]:
         except Exception as e:
             logger.error(f"Failed to process {key}: {e}")
 
-    # Log statistics
     if chunk_stats['word_counts']:
         logger.info(f"\n{'='*60}")
         logger.info("CHUNK STATISTICS")
@@ -300,15 +364,24 @@ def load_documents_from_s3() -> List[Dict]:
         logger.info(f"Total chunks: {chunk_stats['total']}")
         logger.info(f"Valid chunks: {chunk_stats['valid']}")
         logger.info(f"Invalid chunks: {chunk_stats['invalid']}")
-        logger.info(f"Words → min={min(chunk_stats['word_counts'])}, "
+        logger.info(f"Words -> min={min(chunk_stats['word_counts'])}, "
                    f"max={max(chunk_stats['word_counts'])}, "
                    f"avg={sum(chunk_stats['word_counts'])//len(chunk_stats['word_counts'])}")
 
-    logger.info(f"✓ Prepared {len(documents)} valid chunks")
+    logger.info(f"Prepared {len(documents)} valid chunks")
     return documents
 
 
 def load_authors_from_s3() -> List[Dict]:
+    """
+    Load author metadata from S3 authors.json files.
+    
+    Extracts author information and creates document dictionaries
+    with associated metadata (doc_id, issue, volume).
+    
+    Returns:
+        list: List of author document dictionaries ready for indexing
+    """
     documents = []
 
     keys = list_s3_json_files(S3_BUCKET, S3_PREFIX, S3_SUFFIX)
@@ -318,7 +391,7 @@ def load_authors_from_s3() -> List[Dict]:
         if not is_author_file(key):
             continue
         
-        logger.info(f"[AUTHORS FILE] {key}")
+        logger.info(f"Processing authors file: {key}")
         
         try:
             obj = s3.get_object(Bucket=S3_BUCKET, Key=key)
@@ -356,20 +429,28 @@ def load_authors_from_s3() -> List[Dict]:
         except Exception as e:
             logger.error(f"Failed to process {key}: {e}")
 
-    logger.info(f"✓ Prepared {len(documents)} authors")
+    logger.info(f"Prepared {len(documents)} authors")
     return documents
 
 
 def main():
+    """
+    Main indexing function.
+    
+    Performs:
+    1. Connects to Qdrant database
+    2. Resets collection if exists
+    3. Creates new collection with hybrid search support
+    4. Indexes intro documents with chunking and validation
+    5. Indexes author metadata
+    6. Logs statistics and completion status
+    """
     client = QdrantClient(host="localhost", port=6333)
 
-
-    # Reset collection
     if client.collection_exists(COLLECTION_NAME):
         client.delete_collection(COLLECTION_NAME)
-        logger.info(f"✓ Deleted existing collection")
+        logger.info(f"Deleted existing collection")
 
-    # Create collection with hybrid search
     client.create_collection(
         collection_name=COLLECTION_NAME,
         vectors_config={
@@ -385,17 +466,16 @@ def main():
         }
     )
 
-    logger.info(f"✓ Created collection: {COLLECTION_NAME}")
+    logger.info(f"Created collection: {COLLECTION_NAME}")
 
-    # Index intro documents
-    logger.info(f"\n{'─'*60}")
+    logger.info(f"\n{'-'*60}")
     logger.info("INDEXING INTRO DOCUMENTS")
-    logger.info(f"{'─'*60}")
+    logger.info(f"{'-'*60}")
     
     documents = load_documents_from_s3()
     
     if not documents:
-        logger.warning("⚠ No documents found!")
+        logger.warning("No documents found")
         return
 
     points = []
@@ -438,10 +518,9 @@ def main():
         indexed += len(points)
         logger.info(f"  Indexed {indexed}/{len(documents)}")
 
-    # Index authors
-    logger.info(f"\n{'─'*60}")
+    logger.info(f"\n{'-'*60}")
     logger.info("INDEXING AUTHORS")
-    logger.info(f"{'─'*60}")
+    logger.info(f"{'-'*60}")
     
     author_documents = load_authors_from_s3()
     
@@ -485,7 +564,6 @@ def main():
         indexed_authors += len(points)
         logger.info(f"  Indexed {indexed_authors}/{len(author_documents)} authors")
 
-    # Summary
     info = client.get_collection(COLLECTION_NAME)
     
     logger.info(f"\n{'='*60}")
@@ -494,7 +572,7 @@ def main():
     logger.info(f"Total points: {info.points_count}")
     logger.info(f"  Intro chunks: {indexed}")
     logger.info(f"  Authors: {indexed_authors}")
-    logger.info(f"✓ Database ready at: {QDRANT_PATH}")
+    logger.info(f"Database ready at: {QDRANT_PATH}")
 
 
 if __name__ == "__main__":

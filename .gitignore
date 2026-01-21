@@ -9,4 +9,4 @@ qdrant_data/
 *.json
 *.log
 .env
-.nvidia-container-toolkit.deb
+./

@@ -1,3 +1,7 @@
+"""
+DOCX Text Extraction Script for Tamil Document Processing.
+Extracts text from DOCX files in S3 and uploads the extracted text to a specified output location.
+"""
 import time
 import re
 import logging
@@ -5,15 +9,12 @@ import sys
 from pathlib import Path
 import docx2txt
 
-# Add project root to Python path
 project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.config.config import BUCKET_NAME, INPUT_PREFIX, EXTRACTED_OUTPUT
 from src.data_extraction.s3_utils import list_files, read_bytes, upload_text
 
-
-# Configure logging - Console only
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -25,7 +26,15 @@ logger = logging.getLogger(__name__)
 
 
 def normalize_key(key: str) -> str:
-    """Normalize S3 key by converting to lowercase and replacing spaces."""
+    """
+    Normalize S3 key by converting to lowercase and replacing spaces with underscores.
+    
+    Args:
+        key (str): S3 key to normalize
+        
+    Returns:
+        str: Normalized S3 key
+    """
     key = key.lower().strip()
     key = re.sub(r"\s+", "_", key)
     key = key.replace("_.", ".")
@@ -33,9 +42,14 @@ def normalize_key(key: str) -> str:
 
 
 def process_all_docx_files():
-    """Process all DOCX files from S3 and extract text content."""
+    """
+    Process all DOCX files from S3 and extract text content.
+    Skips files that have already been processed and uploads extracted text to S3.
+    
+    Raises:
+        Exception: If critical S3 operations fail
+    """
     try:
-        # List all files
         logger.info("Starting DOCX file processing")
         docx_files = list_files(BUCKET_NAME, INPUT_PREFIX, suffix=".docx")
         existing_txt_files = set(
@@ -45,7 +59,7 @@ def process_all_docx_files():
 
         logger.info(f"Found {len(docx_files)} .docx files")
         logger.info(f"Found {len(existing_txt_files)} extracted .txt files")
-        print("=" * 80)
+        logger.info("=" * 80)
 
     except Exception as e:
         logger.error(f"Failed to list files from S3: {e}", exc_info=True)
@@ -59,7 +73,6 @@ def process_all_docx_files():
     for idx, key in enumerate(docx_files, 1):
         docx_file = key.split("/")[-1]
 
-        # Preserve folder structure safely
         relative_path = key.replace(INPUT_PREFIX, "", 1)
 
         txt_relative_path = re.sub(
@@ -91,16 +104,14 @@ def process_all_docx_files():
             logger.error(f"[{idx}/{len(docx_files)}] Error processing {docx_file}: {e}", exc_info=True)
             failed += 1
 
-
     total_time = time.time() - start_all
     
-    # Summary
-    print("=" * 80)
+    logger.info("=" * 80)
     logger.info(f"Processing complete - Processed: {processed}, Skipped: {skipped}, Failed: {failed}")
     logger.info(f"Total processing time: {total_time:.2f}s")
     if docx_files:
         logger.info(f"Average time per file: {total_time/len(docx_files):.2f}s")
-    print("=" * 80)
+    logger.info("=" * 80)
 
 
 if __name__ == "__main__":
