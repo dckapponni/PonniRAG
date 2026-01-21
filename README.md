@@ -3,8 +3,7 @@
 **Ponni RAG** is an intelligent Retrieval-Augmented Generation system designed for Tamil literary documents. It uses a hybrid search approach that combines semantic vector search and keyword-based retrieval to deliver accurate, context-aware results from large collections of Tamil PDF and DOCX files. The system extracts and indexes individual literary articles while preserving author and structural metadata. Integrated Large Language Models (LLMs) generate responses grounded strictly in the Ponni dataset. Additionally, the system provides an option to view the original PDF content of each Ponni article volume directly.
 
 ## Architecture Diagram:
-![solution flow](/PonniRAG/image.png)
-
+![solution flow](assets/image.png)
 ## Table of Contents
 - [Features](#features)
 - [Project Structure](#project-structure)
