@@ -6,13 +6,10 @@ import re
 import logging
 from text_processing import normalize_text
 
-# Get logger
 logger = logging.getLogger('TamilDocProcessor.doc_utils')
 
-# Approximate lines per page
 LINES_PER_PAGE = 50
 
-# Common section types that are NOT authors
 SECTION_TYPES = {
     'கார்ட்டூன்', 'தலையங்கம்', 'விமரிசனம்', 'கடிதங்கள்',
     'சிறுவர் அரங்கம்', 'பொதுமேடை', 'கலையுலகம்',
@@ -20,7 +17,6 @@ SECTION_TYPES = {
     ',,', '...'
 }
 
-# Common section header patterns (titles without authors)
 SECTION_HEADERS = {
     'காலமும் கருத்தும்', 'கருத்தும் காலமும்', 'பொது மேடை',
     'வளரும் இலக்கியம்', 'உங்களுக்குத் தெரியுமா?',
@@ -31,22 +27,21 @@ SECTION_HEADERS = {
 def extract_doc_info(lines):
     """
     Extract document ID and issue number from the document.
-    Searches both header and footer areas.
+    Searches both header and footer areas for மலர் and இதழ் markers.
     
     Args:
         lines (list): List of text lines from document
         
     Returns:
-        tuple: (doc_id, doc_issue) as strings
+        tuple: (doc_id, doc_issue) as strings, or ("NA", "NA") if not found
     """
     logger.debug("Extracting document info")
     doc_id = "NA"
     doc_issue = "NA"
     
-    # Search first 3 pages and last page
     search_areas = [
-        range(0, min(LINES_PER_PAGE * 3, len(lines))),  # First 3 pages
-        range(max(0, len(lines) - LINES_PER_PAGE), len(lines))  # Last page
+        range(0, min(LINES_PER_PAGE * 3, len(lines))),
+        range(max(0, len(lines) - LINES_PER_PAGE), len(lines))
     ]
     
     try:
@@ -60,23 +55,18 @@ def extract_doc_info(lines):
                 if not line_stripped:
                     continue
                 
-                # Pattern for மலர்
                 if doc_id == "NA":
-                    # Match: "மலர் 4", "மலர்:5", "மலர்  4]"
                     match = re.search(r'மலர்\s*[:—-]?\s*(\d{1,3})', line_stripped)
                     if match:
                         doc_id = match.group(1)
                         logger.debug(f"Found மலர் at line {i}: ID={doc_id}")
                 
-                # Pattern for இதழ்
                 if doc_issue == "NA":
-                    # Match: "இதழ் 1", "[இதழ் 4", "இதழ்:2"
                     match = re.search(r'இதழ்\s*[:—-]?\s*(\d{1,3})', line_stripped)
                     if match:
                         doc_issue = match.group(1)
                         logger.debug(f"Found இதழ் at line {i}: Issue={doc_issue}")
                 
-                # Early exit if both found
                 if doc_id != "NA" and doc_issue != "NA":
                     logger.info(f"Successfully extracted: மலர்={doc_id}, இதழ்={doc_issue}")
                     return (doc_id, doc_issue)
@@ -106,11 +96,9 @@ def is_section_type(text):
     
     text_clean = text.strip()
     
-    # Check exact matches
     if text_clean in SECTION_TYPES:
         return True
     
-    # Check if it's just ellipsis or dots
     if re.match(r'^[.\s…]+$', text_clean):
         return True
     
@@ -132,12 +120,9 @@ def is_section_header(text):
     
     text_clean = text.strip()
     
-    # Check exact matches
     if text_clean in SECTION_HEADERS:
         return True
     
-    # Check patterns for section headers
-    # Usually start with specific words
     section_starters = ['காலமும்', 'கருத்தும்', 'வளரும்', 'உங்களுக்கு', 'சொல்லாராய்ச்சி']
     if any(text_clean.startswith(word) for word in section_starters):
         return True
@@ -148,7 +133,7 @@ def is_section_header(text):
 def is_valid_author_name(text):
     """
     Validate if text could be an author name.
-    More strict validation to avoid false positives.
+    Applies strict validation to avoid false positives including section types and headers.
     
     Args:
         text (str): Text fragment to check
@@ -161,44 +146,35 @@ def is_valid_author_name(text):
     
     text_clean = text.strip()
     
-    # Must not be a section type
     if is_section_type(text_clean):
         logger.debug(f"Rejected (section type): '{text_clean}'")
         return False
     
-    # Must not be a section header
     if is_section_header(text_clean):
         logger.debug(f"Rejected (section header): '{text_clean}'")
         return False
     
-    # Skip if only punctuation/dots/spaces/ellipsis
     if re.match(r'^[.\s…,]+$', text_clean):
         return False
     
-    # Skip if just numbers or date patterns
     if re.match(r'^\d+[,\-]?\s*\d*[ம்]?$', text_clean):
         return False
     
-    # Skip if too long (likely a title)
     if len(text_clean) > 40:
         logger.debug(f"Rejected (too long): '{text_clean}'")
         return False
     
-    # Must contain Tamil characters
     if not re.search(r'[\u0B80-\u0BFF]', text_clean):
         return False
     
-    # Check punctuation density
     dot_count = text_clean.count('.')
     comma_count = text_clean.count(',')
     ellipsis_count = text_clean.count('…')
     
-    # Too much punctuation = not a name
     if dot_count > 3 or comma_count > 2 or ellipsis_count > 0:
         logger.debug(f"Rejected (too much punctuation): '{text_clean}'")
         return False
     
-    # Check for English words (usually section types)
     if re.search(r'[a-zA-Z]{3,}', text_clean):
         logger.debug(f"Rejected (contains English): '{text_clean}'")
         return False
@@ -208,7 +184,7 @@ def is_valid_author_name(text):
 
 def parse_toc_line_robust(line):
     """
-    ROBUST: Parse TOC line handling multiple formats and edge cases.
+    Parse TOC line handling multiple formats and edge cases.
     
     Handles:
     - Ellipsis (…) as placeholder for no author
@@ -230,11 +206,9 @@ def parse_toc_line_robust(line):
         if not line or len(line) < 3:
             return None
         
-        # Skip pure ellipsis lines
         if re.match(r'^[.\s…]+$', line):
             return None
         
-        # Find page number at end (1-3 digits)
         page_match = re.search(r'[.\s…]*(\d{1,3})\s*$', line)
         
         if not page_match:
@@ -242,46 +216,36 @@ def parse_toc_line_robust(line):
         
         page_no = page_match.group(1)
         
-        # Get content before page number
         content_before_page = line_original[:page_match.start()]
         
-        # Remove trailing dots, spaces, ellipsis
         content_before_page = re.sub(r'[.\s…]+$', '', content_before_page)
         
         if not content_before_page.strip():
             return None
         
-        # Split by multiple spaces or tabs
-        # Try progressively looser splits
         parts = None
         
-        # Strategy 1: 4+ spaces (very extreme spacing)
         parts_extreme = re.split(r'(?:\s{4,}|\t+)', content_before_page)
         if len(parts_extreme) >= 2:
             parts = parts_extreme
             logger.debug(f"Using 4+ space split: {len(parts)} parts")
         
-        # Strategy 2: 3+ spaces
         if not parts or len(parts) < 2:
             parts_very_wide = re.split(r'(?:\s{3,}|\t+)', content_before_page)
             if len(parts_very_wide) >= 2:
                 parts = parts_very_wide
                 logger.debug(f"Using 3+ space split: {len(parts)} parts")
         
-        # Strategy 3: 2+ spaces
         if not parts or len(parts) < 2:
             parts_wide = re.split(r'(?:\s{2,}|\t+)', content_before_page)
             if len(parts_wide) >= 2:
                 parts = parts_wide
                 logger.debug(f"Using 2+ space split: {len(parts)} parts")
         
-        # Strategy 4: Single space (careful parsing)
         if not parts or len(parts) < 2:
             words = content_before_page.split()
             if len(words) >= 3:
-                # Check if last word looks like author
                 if is_valid_author_name(words[-1]) and not is_section_type(words[-1]):
-                    # Check for initial before last word
                     if len(words) >= 2 and re.match(r'^[\u0B80-\u0BFF]\.$', words[-2]):
                         parts = [' '.join(words[:-2]), ' '.join(words[-2:])]
                         logger.debug(f"Single-space split with initial: {parts[-1]}")
@@ -296,7 +260,6 @@ def parse_toc_line_robust(line):
         if not parts:
             parts = [content_before_page]
         
-        # Clean segments
         segments = []
         for part in parts:
             cleaned = part.strip()
@@ -310,26 +273,20 @@ def parse_toc_line_robust(line):
         if len(segments) == 0:
             return None
         
-        # Single segment = title only (no author)
         if len(segments) == 1:
             title = segments[0]
-            # Check if this is a section header
             if is_section_header(title):
                 logger.debug(f"Title is section header: '{title}' (no author expected)")
             return {'title': title, 'author': None, 'page': page_no}
         
-        # Multiple segments - analyze for author
-        # Last segment is potential author
         potential_author = segments[-1]
         title_parts = segments[:-1]
         
-        # Check if potential author is actually an author
         if is_valid_author_name(potential_author) and not is_section_type(potential_author):
             title = ' '.join(title_parts).strip()
-            logger.info(f"✓ Parsed - Title: '{title[:35]}...', Author: '{potential_author}', Page: {page_no}")
+            logger.info(f"Parsed - Title: '{title[:35]}...', Author: '{potential_author}', Page: {page_no}")
             return {'title': title, 'author': potential_author, 'page': page_no}
         else:
-            # Not a valid author - treat everything as title
             title = ' '.join(segments).strip()
             if is_section_type(potential_author):
                 logger.debug(f"Last segment is section type '{potential_author}', treating as title-only")
@@ -353,33 +310,27 @@ def find_toc_boundaries(lines):
     toc_start = -1
     toc_end = -1
     
-    # Find TOC start - look for பொருளடக்கம் (with or without parentheses)
     for i, line in enumerate(lines):
         line_stripped = line.strip()
         
-        # Match: "பொருளடக்கம்", "(பொருளடக்கம்)", "பொருளடக்கம்)", etc.
         if 'பொருளடக்கம்' in line_stripped:
             toc_start = i + 1
             logger.debug(f"Found பொருளடக்கம் at line {i}")
             
-            # Look for end marker
             for j in range(i + 1, min(i + 100, len(lines))):
                 check_line = lines[j].strip()
                 
-                # End markers
                 if 'ஆகியோரின்' in check_line or 'எழுத்தோவியங்கள்' in check_line:
                     toc_end = j
                     logger.info(f"Found end marker at line {j}")
                     break
                 
-                # Alternative end: "மலர்" or "விலை" (start of next section)
-                if j > i + 5:  # At least 5 lines into TOC
+                if j > i + 5:
                     if re.match(r'^மலர்\s+\d+', check_line) or re.match(r'^விலை\s+\d+', check_line):
                         toc_end = j
                         logger.info(f"Found section boundary at line {j}")
                         break
             
-            # If no end marker found, use line limit (40 lines max)
             if toc_end == -1:
                 toc_end = min(i + 41, len(lines))
                 logger.info(f"No end marker, using 40-line limit: lines {toc_start} to {toc_end}")
@@ -391,7 +342,7 @@ def find_toc_boundaries(lines):
 
 def extract_authors_from_toc(lines):
     """
-    ROBUST: Extract authors from TOC with comprehensive format handling.
+    Extract authors from TOC with comprehensive format handling.
     
     Args:
         lines (list): List of text lines from document
@@ -409,14 +360,12 @@ def extract_authors_from_toc(lines):
         authors_normalized = []
         title_author_pairs = []
         
-        # Find TOC boundaries
         toc_start, toc_end = find_toc_boundaries(lines)
         
         if toc_start == -1:
             logger.warning("பொருளடக்கம் not found in document")
             return (doc_id, doc_issue, [], [], [])
         
-        # Parse TOC entries
         logger.debug(f"Parsing TOC lines {toc_start} to {toc_end}")
         
         for k in range(toc_start, toc_end):
@@ -426,19 +375,15 @@ def extract_authors_from_toc(lines):
             line_content = lines[k]
             line_stripped = line_content.strip()
             
-            # Skip empty lines
             if not line_stripped:
                 continue
             
-            # Skip end marker line
             if 'ஆகியோரின்' in line_stripped:
                 continue
             
-            # Skip pure ellipsis lines
             if re.match(r'^[.\s…]+$', line_stripped):
                 continue
             
-            # Parse TOC line
             entry = parse_toc_line_robust(line_content)
             
             if entry and entry['author']:
@@ -451,14 +396,14 @@ def extract_authors_from_toc(lines):
                     authors_set.add(author_norm)
                     authors_original.append(author)
                     authors_normalized.append(author_norm)
-                    logger.info(f"✓ Author: '{author}' (from: '{title[:30]}...')")
+                    logger.info(f"Author: '{author}' (from: '{title[:30]}...')")
                 
                 title_author_pairs.append((title, author))
             else:
                 if entry:
                     logger.debug(f"No author: '{entry['title'][:40]}...'")
         
-        logger.info(f"=== EXTRACTED {len(authors_original)} UNIQUE AUTHORS ===")
+        logger.info(f"EXTRACTED {len(authors_original)} UNIQUE AUTHORS")
         
         return (doc_id, doc_issue, authors_original, authors_normalized, title_author_pairs)
         
@@ -468,21 +413,47 @@ def extract_authors_from_toc(lines):
 
 
 def count_words(text):
-    """Count words in text."""
+    """
+    Count words in text.
+    
+    Args:
+        text (str): Text to count words in
+        
+    Returns:
+        int: Number of words
+    """
     if not text:
         return 0
     return len([word for word in text.split() if word.strip()])
 
 
 def count_content_lines(text):
-    """Count non-empty lines in text."""
+    """
+    Count non-empty lines in text.
+    
+    Args:
+        text (str): Text to count lines in
+        
+    Returns:
+        int: Number of non-empty lines
+    """
     if not text:
         return 0
     return len([line for line in text.split('\n') if line.strip()])
 
 
 def get_shared_authors(doc_id, doc_issue, all_files_authors):
-    """Retrieve shared authors for a document."""
+    """
+    Retrieve shared authors for a document from the shared authors dictionary.
+    
+    Args:
+        doc_id (str): Document ID
+        doc_issue (str): Document issue number
+        all_files_authors (dict): Dictionary mapping (doc_id, doc_issue) to authors
+        
+    Returns:
+        tuple: (authors_original, authors_normalized) or ([], []) if not found
+    """
     try:
         key = (doc_id, doc_issue)
         authors = all_files_authors.get(key, ([], []))
@@ -498,7 +469,16 @@ def get_shared_authors(doc_id, doc_issue, all_files_authors):
 
 
 def extract_authors_alternative(lines):
-    """Extract authors by detecting names after blank lines."""
+    """
+    Extract authors by detecting names after blank lines.
+    Alternative method when TOC parsing fails.
+    
+    Args:
+        lines (list): List of text lines from document
+        
+    Returns:
+        tuple: (authors_original, authors_normalized)
+    """
     logger.debug("Using alternative author extraction")
     authors_original = []
     authors_normalized = []

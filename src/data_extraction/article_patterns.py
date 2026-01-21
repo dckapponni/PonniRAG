@@ -22,6 +22,18 @@ def extract_pattern_a_forward(lines, start_idx, end_idx, authors_normalized,
                                authors_original, processed_lines, intro_keywords):
     """
     Extract articles following Pattern A: HEADING → AUTHOR → CONTENT (forward scan).
+    
+    Args:
+        lines (list): List of text lines from document
+        start_idx (int): Starting index for extraction
+        end_idx (int): Ending index for extraction
+        authors_normalized (list): List of normalized author names
+        authors_original (list): List of original author names
+        processed_lines (list): Boolean list tracking which lines have been processed
+        intro_keywords (list): List of introduction keywords to detect section boundaries
+        
+    Returns:
+        list: List of extracted article dictionaries containing heading, author, content, and indices
     """
     logger.info("")
     logger.info("=" * 80)
@@ -43,14 +55,12 @@ def extract_pattern_a_forward(lines, start_idx, end_idx, authors_normalized,
                 i += 1
                 continue
             
-            # Check if current line is an author
             matched_author = extract_author_from_line(line, authors_normalized, authors_original)
             
             if matched_author:
                 author_idx = i
                 logger.debug(f"Pattern A: Found author '{matched_author}' at line {author_idx}")
                 
-                # Look backward for heading (within 3 lines)
                 heading = None
                 heading_idx = -1
                 
@@ -70,7 +80,6 @@ def extract_pattern_a_forward(lines, start_idx, end_idx, authors_normalized,
                     i += 1
                     continue
                 
-                # Find content start
                 content_start = author_idx + 1
                 while content_start < end_idx and not lines[content_start].strip() and (content_start - author_idx) <= 3:
                     content_start += 1
@@ -80,7 +89,6 @@ def extract_pattern_a_forward(lines, start_idx, end_idx, authors_normalized,
                     i += 1
                     continue
                 
-                # Extract content
                 content_lines = []
                 j = content_start
                 
@@ -91,14 +99,12 @@ def extract_pattern_a_forward(lines, start_idx, end_idx, authors_normalized,
                     current_line = lines[j]
                     stripped = current_line.strip()
                     
-                    # Stop at next author
                     if stripped:
                         next_author = extract_author_from_line(current_line, authors_normalized, authors_original)
                         if next_author:
                             logger.debug(f"Pattern A: Stopped at next author at line {j}")
                             break
                     
-                    # Stop at intro keyword
                     if stripped:
                         found_intro = False
                         for keyword in intro_keywords:
@@ -110,7 +116,6 @@ def extract_pattern_a_forward(lines, start_idx, end_idx, authors_normalized,
                         if found_intro:
                             break
                     
-                    # Stop at 4+ consecutive blanks
                     if not stripped:
                         blank_count = count_consecutive_blanks(lines, j)
                         if blank_count >= 4:
@@ -119,13 +124,11 @@ def extract_pattern_a_forward(lines, start_idx, end_idx, authors_normalized,
                     content_lines.append(current_line.rstrip())
                     j += 1
                 
-                # Remove trailing blank lines
                 while content_lines and not content_lines[-1].strip():
                     content_lines.pop()
                 
                 content = '\n'.join(content_lines)
                 
-                # Validate content length
                 if content.strip() and count_content_lines(content) >= 4:
                     for k in range(heading_idx, j):
                         if k < len(lines):
@@ -139,7 +142,7 @@ def extract_pattern_a_forward(lines, start_idx, end_idx, authors_normalized,
                         "end_idx": j
                     })
                     
-                    logger.info(f"✅ Pattern A: Extracted '{heading}' by {matched_author} ({count_content_lines(content)} lines)")
+                    logger.info(f"Pattern A: Extracted '{heading}' by {matched_author} ({count_content_lines(content)} lines)")
                     i = j
                     continue
             
@@ -158,6 +161,18 @@ def extract_pattern_b_forward(lines, start_idx, end_idx, authors_normalized,
                                authors_original, processed_lines, intro_keywords):
     """
     Extract articles following Pattern B: AUTHOR → HEADING → CONTENT (forward scan).
+    
+    Args:
+        lines (list): List of text lines from document
+        start_idx (int): Starting index for extraction
+        end_idx (int): Ending index for extraction
+        authors_normalized (list): List of normalized author names
+        authors_original (list): List of original author names
+        processed_lines (list): Boolean list tracking which lines have been processed
+        intro_keywords (list): List of introduction keywords to detect section boundaries
+        
+    Returns:
+        list: List of extracted article dictionaries containing heading, author, content, and indices
     """
     logger.info("")
     logger.info("=" * 80)
@@ -179,14 +194,12 @@ def extract_pattern_b_forward(lines, start_idx, end_idx, authors_normalized,
                 i += 1
                 continue
             
-            # Check if current line is an author
             matched_author = extract_author_from_line(line, authors_normalized, authors_original)
             
             if matched_author:
                 author_idx = i
                 logger.debug(f"Pattern B: Found author '{matched_author}' at line {author_idx}")
                 
-                # Look forward for heading (within 2 lines)
                 heading = None
                 heading_idx = -1
                 
@@ -206,7 +219,6 @@ def extract_pattern_b_forward(lines, start_idx, end_idx, authors_normalized,
                     i += 1
                     continue
                 
-                # Find content start
                 content_start = heading_idx + 1
                 while content_start < end_idx and not lines[content_start].strip() and (content_start - heading_idx) <= 3:
                     content_start += 1
@@ -216,7 +228,6 @@ def extract_pattern_b_forward(lines, start_idx, end_idx, authors_normalized,
                     i += 1
                     continue
                 
-                # Extract content
                 content_lines = []
                 j = content_start
                 
@@ -227,14 +238,12 @@ def extract_pattern_b_forward(lines, start_idx, end_idx, authors_normalized,
                     current_line = lines[j]
                     stripped = current_line.strip()
                     
-                    # Stop at next author
                     if stripped:
                         next_author = extract_author_from_line(current_line, authors_normalized, authors_original)
                         if next_author:
                             logger.debug(f"Pattern B: Stopped at next author at line {j}")
                             break
                     
-                    # Stop at intro keyword
                     if stripped:
                         found_intro = False
                         for keyword in intro_keywords:
@@ -246,7 +255,6 @@ def extract_pattern_b_forward(lines, start_idx, end_idx, authors_normalized,
                         if found_intro:
                             break
                     
-                    # Stop at 4+ consecutive blanks
                     if not stripped:
                         blank_count = count_consecutive_blanks(lines, j)
                         if blank_count >= 4:
@@ -255,13 +263,11 @@ def extract_pattern_b_forward(lines, start_idx, end_idx, authors_normalized,
                     content_lines.append(current_line.rstrip())
                     j += 1
                 
-                # Remove trailing blank lines
                 while content_lines and not content_lines[-1].strip():
                     content_lines.pop()
                 
                 content = '\n'.join(content_lines)
                 
-                # Validate content length
                 if content.strip() and count_content_lines(content) >= 4:
                     for k in range(author_idx, j):
                         if k < len(lines):
@@ -275,7 +281,7 @@ def extract_pattern_b_forward(lines, start_idx, end_idx, authors_normalized,
                         "end_idx": j
                     })
                     
-                    logger.info(f"✅ Pattern B: Extracted '{heading}' by {matched_author} ({count_content_lines(content)} lines)")
+                    logger.info(f"Pattern B: Extracted '{heading}' by {matched_author} ({count_content_lines(content)} lines)")
                     i = j
                     continue
             
@@ -292,19 +298,24 @@ def extract_pattern_b_forward(lines, start_idx, end_idx, authors_normalized,
 
 def find_author_in_content_end(content_lines, authors_normalized, authors_original):
     """
-    ✅ ENHANCED: Check if author name appears in the last few lines of content.
-    Now with MUCH better matching for Tamil poems.
+    Check if author name appears in the last few lines of content with enhanced matching for Tamil poems.
+    
+    Args:
+        content_lines (list): List of content lines to check
+        authors_normalized (list): List of normalized author names
+        authors_original (list): List of original author names
+        
+    Returns:
+        tuple: (author_name or None, modified_content_lines)
     """
     if not content_lines:
         return (None, content_lines)
     
-    # Check last 20 lines (increased for longer poems)
     check_lines = min(20, len(content_lines))
     
-    logger.debug(f"🔍 Pattern C: Checking last {check_lines} lines for embedded author")
+    logger.debug(f"Pattern C: Checking last {check_lines} lines for embedded author")
     logger.debug(f"   Total content lines: {len(content_lines)}")
     
-    # Show the last few lines for debugging
     if len(content_lines) >= 5:
         logger.debug(f"   Last 5 lines preview:")
         for i in range(max(0, len(content_lines) - 5), len(content_lines)):
@@ -317,90 +328,88 @@ def find_author_in_content_end(content_lines, authors_normalized, authors_origin
         if not line_stripped:
             continue
         
-        # Strategy 1: Dash-prefixed author (MOST COMMON in poems)
-        # Matches: "— நாரா நாச்சியப்பன்", "- த. அ. சுந்தரராசன்", "-சி . து. கன்னிசாமி"
         if line_stripped.startswith('—') or line_stripped.startswith('-') or line_stripped.startswith('–'):
-            # Handle multiple dash types and spaces
             clean_line = line_stripped.lstrip('—-– \u2014\u2013\u2012').strip()
-            logger.debug(f"   📌 Found dash line at index {i}: '{line_stripped}' → cleaned: '{clean_line}'")
+            logger.debug(f"   Found dash line at index {i}: '{line_stripped}' -> cleaned: '{clean_line}'")
             
             for idx, author_orig in enumerate(authors_original):
-                # Exact match
                 if clean_line == author_orig:
-                    logger.info(f"✓✓ EXACT MATCH: '{author_orig}'")
+                    logger.info(f"EXACT MATCH: '{author_orig}'")
                     modified_content = content_lines[:i]
                     while modified_content and not modified_content[-1].strip():
                         modified_content.pop()
                     return (author_orig, modified_content)
                 
-                # Partial match (author contains line or line contains author)
                 if author_orig in clean_line or clean_line in author_orig:
-                    logger.info(f"✓✓ PARTIAL MATCH: '{author_orig}' ~ '{clean_line}'")
+                    logger.info(f"PARTIAL MATCH: '{author_orig}' ~ '{clean_line}'")
                     modified_content = content_lines[:i]
                     while modified_content and not modified_content[-1].strip():
                         modified_content.pop()
                     return (author_orig, modified_content)
                 
-                # Fuzzy match with spaces normalized (e.g., "சி . து. கன்னிசாமி" vs "சி. து. கன்னிசாமி")
                 clean_no_space = clean_line.replace(' ', '')
                 author_no_space = author_orig.replace(' ', '')
                 if clean_no_space == author_no_space or clean_no_space in author_no_space or author_no_space in clean_no_space:
-                    logger.info(f"✓✓ SPACE-NORMALIZED MATCH: '{author_orig}' ~ '{clean_line}'")
+                    logger.info(f"SPACE-NORMALIZED MATCH: '{author_orig}' ~ '{clean_line}'")
                     modified_content = content_lines[:i]
                     while modified_content and not modified_content[-1].strip():
                         modified_content.pop()
                     return (author_orig, modified_content)
         
-        # Strategy 2: Exact author match (no dash)
         for author_orig in authors_original:
             if line_stripped == author_orig:
-                logger.info(f"✓✓ EXACT STANDALONE: '{author_orig}'")
+                logger.info(f"EXACT STANDALONE: '{author_orig}'")
                 modified_content = content_lines[:i]
                 while modified_content and not modified_content[-1].strip():
                     modified_content.pop()
                 return (author_orig, modified_content)
         
-        # Strategy 3: Author name appears in line (fuzzy)
         for author_orig in authors_original:
             if author_orig in line_stripped:
-                logger.info(f"✓✓ FUZZY MATCH: '{author_orig}' in '{line_stripped[:50]}...'")
+                logger.info(f"FUZZY MATCH: '{author_orig}' in '{line_stripped[:50]}...'")
                 modified_content = content_lines[:i]
                 while modified_content and not modified_content[-1].strip():
                     modified_content.pop()
                 return (author_orig, modified_content)
         
-        # Strategy 4: Very short lines that might be authors (5-35 chars)
         if 5 <= len(line_stripped) <= 35:
-            # Skip if it looks like regular content
             skip_words = ['என்று', 'என்ற', 'என்பது', 'போன்ற', 'என்றால்', 
                          'என்னும்', 'என்ற', 'என்கிறார்', 'என்கிறது']
             if any(word in line_stripped for word in skip_words):
                 continue
             
             for author_orig in authors_original:
-                # Check if line matches part of author name
                 if line_stripped in author_orig or author_orig in line_stripped:
-                    # Must match at least 40% of the author name
                     match_ratio = len(line_stripped) / len(author_orig)
                     if match_ratio > 0.4:
-                        logger.info(f"✓✓ SHORT LINE MATCH: '{author_orig}' ~ '{line_stripped}'")
+                        logger.info(f"SHORT LINE MATCH: '{author_orig}' ~ '{line_stripped}'")
                         modified_content = content_lines[:i]
                         while modified_content and not modified_content[-1].strip():
                             modified_content.pop()
                         return (author_orig, modified_content)
     
-    logger.debug(f"✗ No embedded author found")
+    logger.debug(f"No embedded author found")
     return (None, content_lines)
 
 
 def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized, 
                                authors_original, processed_lines, intro_keywords):
     """
-    ✅ COMPLETELY FIXED Pattern C - now extracts poems properly!
-    
-    Two scenarios:
+    Extract articles following Pattern C with two scenarios:
     1. STANDALONE: HEADING → CONTENT → AUTHOR (reverse scan)
-    2. EMBEDDED: HEADING → CONTENT (author at end - COMMON IN POEMS)
+    2. EMBEDDED: HEADING → CONTENT (author at end - common in poems)
+    
+    Args:
+        lines (list): List of text lines from document
+        start_idx (int): Starting index for extraction
+        end_idx (int): Ending index for extraction
+        authors_normalized (list): List of normalized author names
+        authors_original (list): List of original author names
+        processed_lines (list): Boolean list tracking which lines have been processed
+        intro_keywords (list): List of introduction keywords to detect section boundaries
+        
+    Returns:
+        list: List of extracted article dictionaries containing heading, author, content, and indices
     """
     logger.info("")
     logger.info("=" * 80)
@@ -429,14 +438,12 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
                 i += 1
                 continue
             
-            # ========== SCENARIO 1: STANDALONE AUTHOR ==========
             matched_author = extract_author_from_line(line, authors_normalized, authors_original)
             
             if matched_author:
                 author_idx = i
-                logger.debug(f"📍 Standalone: Found '{matched_author}' at {author_idx}")
+                logger.debug(f"Standalone: Found '{matched_author}' at {author_idx}")
                 
-                # Look backward for content and heading
                 heading_search_start = author_idx - 1
                 while heading_search_start >= start_idx and not lines[heading_search_start].strip():
                     heading_search_start -= 1
@@ -449,7 +456,6 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
                 heading = None
                 heading_idx = -1
                 
-                # Search backward for heading
                 j = content_end_idx
                 while j >= start_idx:
                     if processed_lines[j]:
@@ -460,7 +466,6 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
                         j -= 1
                         continue
                     
-                    # Stop at previous author or intro
                     prev_author = extract_author_from_line(lines[j], authors_normalized, authors_original)
                     if prev_author:
                         break
@@ -473,9 +478,7 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
                     if is_intro:
                         break
                     
-                    # Check if potential heading (relaxed: up to 50 chars)
                     if len(current_line) <= 50:
-                        # Count blanks
                         ba = sum(1 for k in range(j-1, max(j-4, start_idx-1), -1) 
                                 if k >= start_idx and not lines[k].strip())
                         bb = sum(1 for k in range(j+1, min(j+4, len(lines))) 
@@ -484,19 +487,17 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
                         if ba >= 1 or bb >= 1:
                             heading = current_line
                             heading_idx = j
-                            logger.debug(f"   ✓ Heading: '{heading}' at {heading_idx}")
+                            logger.debug(f"   Heading: '{heading}' at {heading_idx}")
                             break
                     
                     j -= 1
                 
                 if heading:
-                    # Extract content between heading and author
                     content_lines = []
                     for k in range(heading_idx + 1, content_end_idx + 1):
                         if k < len(lines) and not processed_lines[k]:
                             content_lines.append(lines[k].rstrip())
                     
-                    # Clean
                     while content_lines and not content_lines[-1].strip():
                         content_lines.pop()
                     while content_lines and not content_lines[0].strip():
@@ -504,7 +505,7 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
                     
                     content = '\n'.join(content_lines)
                     
-                    if content.strip() and count_content_lines(content) >= 2:  # Very relaxed
+                    if content.strip() and count_content_lines(content) >= 2:
                         for k in range(heading_idx, author_idx + 1):
                             if k < len(lines):
                                 processed_lines[k] = True
@@ -518,14 +519,11 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
                         })
                         
                         standalone_author_found += 1
-                        logger.info(f"✅ STANDALONE: '{heading}' by {matched_author}")
+                        logger.info(f"STANDALONE: '{heading}' by {matched_author}")
                         i = author_idx + 1
                         continue
             
-            # ========== SCENARIO 2: EMBEDDED AUTHOR (POEMS) ==========
-            # More relaxed heading detection for poems
-            if len(line) <= 60 and len(line) >= 3:  # Relaxed length check
-                # Skip obvious content lines
+            if len(line) <= 60 and len(line) >= 3:
                 skip_words = ['என்று', 'என்ற', 'என்பது', 'என்றால்', 'என்னும்']
                 if any(word in line for word in skip_words):
                     i += 1
@@ -534,9 +532,8 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
                 heading_idx = i
                 heading_candidates_checked += 1
                 
-                logger.debug(f"🔍 Checking heading candidate at {i}: '{line[:50]}...'")
+                logger.debug(f"Checking heading candidate at {i}: '{line[:50]}...'")
                 
-                # Count blanks (relaxed)
                 ba = sum(1 for k in range(heading_idx-1, max(heading_idx-3, start_idx-1), -1) 
                         if k >= start_idx and not lines[k].strip())
                 bb = sum(1 for k in range(heading_idx+1, min(heading_idx+4, len(lines))) 
@@ -544,12 +541,10 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
                 
                 logger.debug(f"   Blanks: above={ba}, below={bb}")
                 
-                # Very relaxed: just needs SOME separation OR be at start
                 if ba >= 1 or bb >= 1 or heading_idx == start_idx:
                     heading = line
                     content_start_idx = heading_idx + bb + 1
                     
-                    # Extract content
                     content_lines = []
                     j = content_start_idx
                     
@@ -560,20 +555,17 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
                         current_line = lines[j]
                         stripped = current_line.strip()
                         
-                        # Stop at standalone author
                         if stripped:
                             next_author = extract_author_from_line(current_line, authors_normalized, authors_original)
                             if next_author:
                                 break
                         
-                        # Stop at next clear heading (needs strong separation)
                         if stripped and len(stripped) <= 60:
                             next_ba = sum(1 for k in range(j-1, max(j-3, start_idx-1), -1) 
                                          if k >= start_idx and not lines[k].strip())
-                            if next_ba >= 2:  # Strong separation
+                            if next_ba >= 2:
                                 break
                         
-                        # Stop at intro keyword
                         if stripped:
                             found_intro = False
                             for keyword in intro_keywords:
@@ -585,23 +577,20 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
                                     content_lines.pop()
                                 break
                         
-                        # Stop at many blank lines
                         if not stripped:
                             blank_count = count_consecutive_blanks(lines, j)
-                            if blank_count >= 4:  # Reduced from 5
+                            if blank_count >= 4:
                                 break
                         
                         content_lines.append(current_line.rstrip())
                         j += 1
                     
-                    # Clean trailing blanks
                     while content_lines and not content_lines[-1].strip():
                         content_lines.pop()
                     
-                    if len(content_lines) >= 3:  # Must have some content
+                    if len(content_lines) >= 3:
                         logger.debug(f"   Content has {len(content_lines)} lines, checking for embedded author...")
                         
-                        # Check for embedded author
                         embedded_author, modified_content = find_author_in_content_end(
                             content_lines, authors_normalized, authors_original
                         )
@@ -623,11 +612,11 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
                                 })
                                 
                                 embedded_author_found += 1
-                                logger.info(f"✅ EMBEDDED: '{heading[:40]}...' by {embedded_author}")
+                                logger.info(f"EMBEDDED: '{heading[:40]}...' by {embedded_author}")
                                 i = j
                                 continue
                         else:
-                            logger.debug(f"   ✗ No embedded author found for '{heading[:40]}...'")
+                            logger.debug(f"   No embedded author found for '{heading[:40]}...'")
             
             i += 1
         
@@ -650,12 +639,22 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
 def extract_articles_main(lines, start_idx, end_idx, authors_normalized, 
                           authors_original, intro_keywords):
     """
-    Main extraction function with CORRECT order.
-    PRIORITY: Pattern C → Pattern A → Pattern B → Intro/Remaining
+    Main extraction function with correct priority order:
+    Pattern C → Pattern A → Pattern B → Intro/Remaining
+    
+    Args:
+        lines (list): List of text lines from document
+        start_idx (int): Starting index for extraction
+        end_idx (int): Ending index for extraction
+        authors_normalized (list): List of normalized author names
+        authors_original (list): List of original author names
+        intro_keywords (list): List of introduction keywords to detect section boundaries
+        
+    Returns:
+        list: List of all extracted articles from all patterns
     """
     logger = logging.getLogger('TamilDocProcessor')
     
-    # Track which lines are already processed
     processed_lines = [False] * len(lines)
     all_articles = []
     
@@ -666,11 +665,8 @@ def extract_articles_main(lines, start_idx, end_idx, authors_normalized,
     logger.info(f"Authors available: {len(authors_original)}")
     logger.info("=" * 80)
     
-    # ============================================================
-    # STEP 1: Extract Pattern C FIRST (poems with embedded authors)
-    # ============================================================
     logger.info("")
-    logger.info("🎯 STEP 1: Running Pattern C (poems and embedded authors)")
+    logger.info("STEP 1: Running Pattern C (poems and embedded authors)")
     
     pattern_c_articles = extract_pattern_c_reverse(
         lines, start_idx, end_idx,
@@ -679,13 +675,10 @@ def extract_articles_main(lines, start_idx, end_idx, authors_normalized,
     )
     
     all_articles.extend(pattern_c_articles)
-    logger.info(f"✓ Pattern C extracted: {len(pattern_c_articles)} articles")
+    logger.info(f"Pattern C extracted: {len(pattern_c_articles)} articles")
     
-    # ============================================================
-    # STEP 2: Extract Pattern A (heading → author → content)
-    # ============================================================
     logger.info("")
-    logger.info("🎯 STEP 2: Running Pattern A (heading → author → content)")
+    logger.info("STEP 2: Running Pattern A (heading -> author -> content)")
     
     pattern_a_articles = extract_pattern_a_forward(
         lines, start_idx, end_idx,
@@ -694,13 +687,10 @@ def extract_articles_main(lines, start_idx, end_idx, authors_normalized,
     )
     
     all_articles.extend(pattern_a_articles)
-    logger.info(f"✓ Pattern A extracted: {len(pattern_a_articles)} articles")
+    logger.info(f"Pattern A extracted: {len(pattern_a_articles)} articles")
     
-    # ============================================================
-    # STEP 3: Extract Pattern B (author → heading → content)
-    # ============================================================
     logger.info("")
-    logger.info("🎯 STEP 3: Running Pattern B (author → heading → content)")
+    logger.info("STEP 3: Running Pattern B (author -> heading -> content)")
     
     pattern_b_articles = extract_pattern_b_forward(
         lines, start_idx, end_idx,
@@ -709,11 +699,8 @@ def extract_articles_main(lines, start_idx, end_idx, authors_normalized,
     )
     
     all_articles.extend(pattern_b_articles)
-    logger.info(f"✓ Pattern B extracted: {len(pattern_b_articles)} articles")
+    logger.info(f"Pattern B extracted: {len(pattern_b_articles)} articles")
     
-    # ============================================================
-    # SUMMARY
-    # ============================================================
     logger.info("")
     logger.info("=" * 80)
     logger.info("EXTRACTION SUMMARY")

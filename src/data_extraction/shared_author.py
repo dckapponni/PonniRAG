@@ -5,10 +5,8 @@ Handles shared author extraction and author-ahead checking from S3 files.
 import logging
 from pathlib import Path
 
-# Import S3 utilities
 from s3_utils import list_files, read_text_from_s3
 
-# Get logger
 logger = logging.getLogger('TamilDocProcessor.shared_author')
 
 
@@ -18,16 +16,15 @@ def check_author_ahead(lines, current_idx, authors_normalized, authors_original,
     
     Args:
         lines (list): List of text lines
-        current_idx (int): Current line index
-        authors_normalized (list): List of normalized author names
+        current_idx (int): Current line index to start searching from
+        authors_normalized (list): List of normalized author names for matching
         authors_original (list): List of original author names
-        lookback (int): Number of lines to look ahead
+        lookback (int): Number of lines to look ahead (default: 3)
         
     Returns:
         int or None: Index of author line if found, None otherwise
     """
     try:
-        # Import here to avoid circular dependency
         from text_processing import extract_author_from_line
         
         for i in range(current_idx, min(current_idx + lookback + 1, len(lines))):
@@ -66,14 +63,12 @@ def build_shared_authors_dict_s3(bucket, input_prefix):
     """
     logger.info(f"Building shared authors dictionary from S3: s3://{bucket}/{input_prefix}")
     
-    # Import here to avoid circular dependency
     from doc_utils import extract_doc_info
     from text_processing import normalize_text
     
     shared_authors = {}
     
     try:
-        # List all .txt files in S3
         logger.debug("Listing TXT files from S3 bucket")
         txt_files = list_files(bucket, input_prefix, suffix='.txt')
         
@@ -90,20 +85,17 @@ def build_shared_authors_dict_s3(bucket, input_prefix):
             try:
                 logger.debug(f"[{idx}/{len(txt_files)}] Processing: {txt_key}")
                 
-                # Read file from S3
                 content = read_text_from_s3(bucket, txt_key)
                 lines = content.splitlines()
                 
                 logger.debug(f"Read {len(lines)} lines from {txt_key}")
                 
-                # Extract document info
                 doc_id, doc_issue = extract_doc_info(lines)
                 
                 if doc_id == "NA" or doc_issue == "NA":
                     logger.debug(f"Skipping {txt_key}: missing doc_id or doc_issue")
                     continue
                 
-                # Find author section
                 start_idx = -1
                 end_idx = -1
                 
@@ -126,7 +118,6 @@ def build_shared_authors_dict_s3(bucket, input_prefix):
                             
                         author_name = lines[i].strip()
                         if author_name and len(author_name) > 2:
-                            # Skip lines that are just numbers or dots
                             import re
                             if not re.match(r'^[\d.\s…]+$', author_name):
                                 authors_original.append(author_name)
@@ -148,10 +139,9 @@ def build_shared_authors_dict_s3(bucket, input_prefix):
                 logger.warning(f"Error processing {txt_key}: {e}", exc_info=True)
                 error_count += 1
         
-        logger.info(f"✅ Shared authors dictionary built: {len(shared_authors)} documents processed")
+        logger.info(f"Shared authors dictionary built: {len(shared_authors)} documents processed")
         logger.info(f"   Success: {processed_count}, Errors: {error_count}")
         
-        # Log sample entries
         if shared_authors:
             sample_keys = list(shared_authors.keys())[:3]
             for key in sample_keys:
@@ -168,7 +158,9 @@ def build_shared_authors_dict_s3(bucket, input_prefix):
 def build_shared_authors_dict_local(input_dir):
     """
     Build a dictionary mapping document IDs to their authors across all local files.
-    [DEPRECATED - Use S3 version]
+    
+    Note:
+        This function is deprecated. Use build_shared_authors_dict_s3 for S3-based processing.
     
     Args:
         input_dir (Path): Input directory containing TXT files
@@ -178,14 +170,12 @@ def build_shared_authors_dict_local(input_dir):
     """
     logger.warning("build_shared_authors_dict_local is deprecated. Use build_shared_authors_dict_s3")
     
-    # Import here to avoid circular dependency
     from doc_utils import extract_doc_info
     from text_processing import normalize_text
     
     shared_authors = {}
     
     try:
-        # List all .txt files
         logger.debug("Listing TXT files from local directory")
         txt_files = list(input_dir.rglob("*.txt"))
         
@@ -196,16 +186,13 @@ def build_shared_authors_dict_local(input_dir):
         
         for txt_file in txt_files:
             try:
-                # Read file
                 logger.debug(f"Reading file: {txt_file}")
                 with open(txt_file, 'r', encoding='utf-8') as f:
                     content = f.read()
                 lines = content.splitlines()
                 
-                # Extract document info
                 doc_id, doc_issue = extract_doc_info(lines)
                 
-                # Find author section
                 start_idx = -1
                 end_idx = -1
                 
