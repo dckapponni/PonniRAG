@@ -1,6 +1,9 @@
 # Ponni RAG
 
+**Ponni RAG** is an intelligent Retrieval-Augmented Generation system designed for Tamil literary documents. It uses a hybrid search approach that combines semantic vector search and keyword-based retrieval to deliver accurate, context-aware results from large collections of Tamil PDF and DOCX files. The system extracts and indexes individual literary articles while preserving author and structural metadata. Integrated Large Language Models (LLMs) generate responses grounded strictly in the Ponni dataset. Additionally, the system provides an option to view the original PDF content of each Ponni article volume directly.
+
 ## Architecture Diagram:
+![solution flow](/PonniRAG/image.png)
 
 ## Table of Contents
 - [Features](#features)
@@ -27,7 +30,7 @@
 ## Project Structure
 
 ```
-└── /
+└── src
     ├── config
     │   └── config.py
     ├── data_extraction
@@ -62,12 +65,9 @@
     │   ├── test_text_extraction.py
     │   ├── test_text_processing.py
     │   └── test_text_processing_integration.py
-    ├── logs
-    ├── proof_readed_raw_data
     ├── Dockerfile
     └── requirements.txt
 ```
-
 ###  Project Index
 <details open>
     <summary><b><code>/</code></b></summary>
@@ -221,11 +221,31 @@
     </details>
 </details>
 
-----
-
 ## Document Storage and Processing Pipeline
+This module provides utility functions for managing document storage and processing using **AWS S3**.
 
+#### S3 Initialization
+- Initializes an authenticated S3 client using `boto3`
+- Fails fast if credentials are missing or invalid
 
+#### Document Discovery
+- Lists files in an S3 bucket/prefix with optional file-type filtering
+- Used to identify raw or processed documents
+
+#### Document Ingestion
+- Reads binary files (PDF, DOCX, etc.) from S3 as byte streams
+- Feeds documents into downstream processing (OCR/NLP)
+
+#### Processed Output Storage
+- Uploads extracted text as UTF-8 encoded `.txt` files
+- Uploads structured outputs (metadata, results) as formatted `.json`
+
+#### Data Retrieval
+- Reads stored text and JSON files from S3 for further use
+
+#### File Management
+- Checks file existence to avoid reprocessing
+- Deletes files for cleanup or lifecycle management
 
 ## Getting Started
 
@@ -298,12 +318,12 @@ streamlit run streamlit_app.py
 
 1. Build the Docker image:
 ```sh
-docker build -t 
+docker build -t <name>
 ```
 
 2. Run the application inside a Docker container:
 ```sh
-docker run -p 
+docker run -p <
 ```
 
 ---
