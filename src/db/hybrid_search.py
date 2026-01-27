@@ -106,37 +106,31 @@ def sparse_embed(text: str):
 
 
 _llm = None
-_llm_lock = False
-
+_llm_lock = threading.Lock()
 
 def get_llm():
-    """
-    Get or initialize the LLM model (singleton pattern with thread safety).
-    
-    Returns:
-        Pipeline: Loaded LLM pipeline
-    """
-    global _llm, _llm_lock
+    global _llm
     if _llm is not None:
         return _llm
-    if _llm_lock:
-        import time
-        while _llm_lock:
-            time.sleep(0.5)
-        return _llm
-    _llm_lock = True
-    try:
+
+    with _llm_lock:
+        if _llm is not None:
+            return _llm
+
         logger.info("Loading LLM model...")
+
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        dtype = torch.float16 if device.startswith("cuda") else torch.float32
+
         _llm = pipeline(
             "text-generation",
             model="abhinand/tamil-llama-7b-instruct-v0.2",
-            device_map="cuda:0",
-            torch_dtype=torch.float16,
+            device_map=device,
+            torch_dtype=dtype,
         )
+
         logger.info("LLM model cached")
-    finally:
-        _llm_lock = False
-    return _llm
+        return _llm
 
 
 def check_qdrant_health() -> Dict:
@@ -1588,3 +1582,14 @@ def preload_models():
     logger.info("=" * 60)
     logger.info("MODELS READY")
     logger.info("=" * 60)
+def warmup_models_background():
+    try:
+        logger.info("Starting background model warmup...")
+        get_embed_model()   # embedding model
+        get_llm()           # LLM model
+        logger.info("Background model warmup completed")
+    except Exception as e:
+        logger.error(f"Model warmup failed: {e}")
+
+# Start warmup thread on module load
+threading.Thread(target=warmup_models_background, daemon=True).start()
