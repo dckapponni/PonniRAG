@@ -1,29 +1,30 @@
 """
-Tamil Document Processing - Main Module
-Processes Tamil documents from S3 and extracts structured content including articles, intros, and authors.
+Tamil Document Processing - Main Module (S3 VERSION)
+CSV EXTRACTION FIRST - Pattern extraction as fallback
+NEW FORMAT: All content as articles with year and source_document
+INCLUDES: Duplicate prevention - skips already processed files
+CSV: Read from local file system
 """
 import sys
 import json
 import logging
-from collections import defaultdict
+import pandas as pd
+from io import StringIO
 from datetime import datetime
 from pathlib import Path
+import re
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+current_dir = Path(__file__).resolve().parent
+project_root = current_dir.parent  
+sys.path.insert(0, str(project_root))
 
 from config.config import (
-    BUCKET_NAME, 
-    REGION_NAME, 
-    EXTRACTED_OUTPUT, 
+    BUCKET_NAME,
+    INPUT_PREFIX,
+    EXTRACTED_OUTPUT,
     OUTPUT_PREFIX,
-)
-from s3_utils import (
-    list_files,
-    read_text_from_s3,
-    upload_json,
-    upload_text,
-    read_json_from_s3,
-    file_exists
+    CSV_PATH
 )
 from content_extraction import (
     count_consecutive_blanks,
@@ -43,18 +44,17 @@ from article_patterns import (
 )
 from shared_author import build_shared_authors_dict_s3
 from text_processing import normalize_text, get_intro_keywords
-
+from csv_fuzzy_matcher import extract_articles_from_csv
+from s3_utils import (
+    list_files,
+    read_text_from_s3,
+    upload_json,
+    file_exists
+)
+INPUT_PREFIX = EXTRACTED_OUTPUT
 
 def setup_logging(log_file='tamil_doc_processing.log'):
-    """
-    Setup comprehensive logging for S3 operations.
-    
-    Args:
-        log_file (str): Name of the log file
-        
-    Returns:
-        logging.Logger: Configured logger instance
-    """
+    """Setup comprehensive logging."""
     log_dir = Path('logs')
     log_dir.mkdir(exist_ok=True)
     
@@ -83,59 +83,137 @@ def setup_logging(log_file='tamil_doc_processing.log'):
     
     logger.info(f"Logging initialized. Log file: {log_path}")
     logger.info(f"S3 Bucket: {BUCKET_NAME}")
-    logger.info(f"Input extracted txt: {EXTRACTED_OUTPUT}")
+    logger.info(f"Input Prefix: {INPUT_PREFIX}")
     logger.info(f"Output Prefix: {OUTPUT_PREFIX}")
     return logger
 
 logger = setup_logging()
 
 
-def get_s3_folder_path(s3_key, base_prefix):
-    """
-    Extract folder path from S3 key relative to base prefix.
-    
-    Args:
-        s3_key (str): Full S3 key (e.g., "Raw_Proof_Read_Content/folder1/doc.txt")
-        base_prefix (str): Base prefix to remove (e.g., "Raw_Proof_Read_Content/")
-        
-    Returns:
-        str: Folder path (e.g., "folder1/")
-    """
+def extract_year_from_s3_key(s3_key):
+    """Extract year from S3 key path."""
     try:
-        if s3_key.startswith(base_prefix):
-            relative_path = s3_key[len(base_prefix):]
-        else:
-            relative_path = s3_key
-        
-        if '/' in relative_path:
-            folder_path = '/'.join(relative_path.split('/')[:-1]) + '/'
-        else:
-            folder_path = ''
-        
-        logger.debug(f"Extracted folder path: '{folder_path}' from key: '{s3_key}'")
-        return folder_path
-    except Exception as e:
-        logger.error(f"Error extracting folder path from {s3_key}: {e}")
-        return ''
+        year_match = re.search(r'(19|20)\d{2}', s3_key)
+        if year_match:
+            return year_match.group(0)
+    except:
+        pass
+    return "Unknown"
 
 
-def save_authors_to_s3_folder(bucket, output_prefix, folder_path, doc_id, doc_issue, authors_list):
+def is_file_already_processed(bucket, output_key):
     """
-    Save or update authors.json in S3 folder.
+    Check if a file has already been processed by checking if output exists in S3.
     
     Args:
         bucket (str): S3 bucket name
-        output_prefix (str): Base output prefix
-        folder_path (str): Relative folder path within output
-        doc_id (str): Document ID
-        doc_issue (str): Document issue
-        authors_list (list): List of author dictionaries or strings
+        output_key (str): Expected output JSON key
         
-    Raises:
-        Exception: If saving to S3 fails
+    Returns:
+        bool: True if file already processed, False otherwise
     """
     try:
-        authors_key = f"{output_prefix}{folder_path}authors.json"
+        if file_exists(bucket, output_key):
+            logger.debug(f"Output file already exists: s3://{bucket}/{output_key}")
+            return True
+        return False
+    except Exception as e:
+        logger.warning(f"Error checking if file exists: {e}")
+        return False
+
+
+def validate_processed_file(bucket, output_key):
+    """
+    Validate that the processed file contains valid data.
+    
+    Args:
+        bucket (str): S3 bucket name
+        output_key (str): Output JSON key to validate
+        
+    Returns:
+        bool: True if file is valid, False if corrupted/incomplete
+    """
+    try:
+        from s3_utils import read_json_from_s3
+        
+        data = read_json_from_s3(bucket, output_key)
+        
+        # Check if it has the expected structure
+        if not isinstance(data, dict):
+            logger.warning(f"Invalid structure in {output_key}: not a dictionary")
+            return False
+        
+        # Check if it has articles
+        if "articles" not in data:
+            logger.warning(f"Invalid structure in {output_key}: missing 'articles' key")
+            return False
+        
+        # Check if articles is a list
+        if not isinstance(data["articles"], list):
+            logger.warning(f"Invalid structure in {output_key}: 'articles' is not a list")
+            return False
+        
+        # Check if there's at least some content (allow empty for genuinely empty files)
+        article_count = len(data["articles"])
+        logger.debug(f"Validated {output_key}: {article_count} articles")
+        
+        return True
+        
+    except json.JSONDecodeError as e:
+        logger.warning(f"JSON decode error in {output_key}: {e}")
+        return False
+    except Exception as e:
+        logger.warning(f"Error validating {output_key}: {e}")
+        return False
+
+
+def load_csv_from_local(csv_path):
+    """
+    Load CSV file from local file system.
+    
+    Args:
+        csv_path (str or Path): Path to local CSV file
+        
+    Returns:
+        pd.DataFrame: Loaded CSV data
+        
+    Raises:
+        FileNotFoundError: If CSV file doesn't exist
+        Exception: For other errors
+    """
+    try:
+        csv_path = Path(csv_path)
+        
+        if not csv_path.exists():
+            raise FileNotFoundError(f"CSV file not found: {csv_path}")
+        
+        logger.info(f"Loading CSV from local file: {csv_path}")
+        
+        csv_df = pd.read_csv(csv_path, encoding='utf-8', on_bad_lines='skip')
+        
+        logger.info(f"✓ Loaded CSV successfully: {len(csv_df)} rows")
+        logger.debug(f"CSV columns: {list(csv_df.columns)}")
+        
+        return csv_df
+        
+    except FileNotFoundError as e:
+        logger.error(f"CSV file not found: {e}")
+        raise
+    except pd.errors.EmptyDataError as e:
+        logger.error(f"CSV file is empty: {e}")
+        raise
+    except pd.errors.ParserError as e:
+        logger.error(f"Error parsing CSV: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error loading CSV: {e}", exc_info=True)
+        raise
+
+
+def save_authors_to_s3(bucket, output_key_prefix, doc_id, doc_issue, authors_list):
+    """Save or update authors.json in S3."""
+    try:
+        authors_key = f"{output_key_prefix}authors.json"
         
         logger.debug(f"Preparing to save authors to: s3://{bucket}/{authors_key}")
         
@@ -143,25 +221,19 @@ def save_authors_to_s3_folder(bucket, output_prefix, folder_path, doc_id, doc_is
         if authors_list:
             if isinstance(authors_list[0], dict) and "author_name" in authors_list[0]:
                 author_names = [a["author_name"] for a in authors_list]
-                logger.debug(f"Extracted {len(author_names)} author names from dict format")
             elif isinstance(authors_list[0], str):
                 author_names = authors_list
-                logger.debug(f"Using {len(author_names)} author names from string format")
             else:
-                logger.warning(f"Unexpected authors_list format: {type(authors_list[0])}")
                 author_names = [str(a) for a in authors_list]
         
         existing_data = []
-        try:
-            if file_exists(bucket, authors_key):
-                logger.debug(f"Reading existing authors.json from S3")
+        if file_exists(bucket, authors_key):
+            try:
+                from s3_utils import read_json_from_s3
                 existing_data = read_json_from_s3(bucket, authors_key)
                 logger.debug(f"Loaded {len(existing_data)} existing entries")
-            else:
-                logger.debug(f"No existing authors.json found at {authors_key}")
-        except Exception as e:
-            logger.debug(f"No existing authors.json or error reading: {e}")
-            existing_data = []
+            except Exception as e:
+                logger.debug(f"No existing authors.json or error reading: {e}")
         
         doc_exists = False
         for entry in existing_data:
@@ -180,37 +252,71 @@ def save_authors_to_s3_folder(bucket, output_prefix, folder_path, doc_id, doc_is
             existing_data.append(new_entry)
             logger.info(f"Added authors for {doc_id} (Issue: {doc_issue}): {len(author_names)} authors")
         
-        logger.debug(f"Uploading authors.json with {len(existing_data)} total entries")
-        try:
-            upload_json(bucket, authors_key, existing_data)
-            logger.info(f"Successfully saved authors.json to {authors_key}")
-        except Exception as upload_err:
-            logger.error(f"Failed to upload authors.json: {upload_err}")
-           
+        upload_json(bucket, authors_key, existing_data)
+        logger.info(f"Successfully saved authors.json to S3")
         
     except Exception as e:
-        logger.error(f"Error saving authors to S3 folder: {e}", exc_info=True)
+        logger.error(f"Error saving authors to S3: {e}", exc_info=True)
         raise
 
 
-def parse_tamil_document(lines, shared_authors_dict):
+def parse_tamil_document_csv_first(lines, shared_authors_dict, csv_df, s3_key):
     """
-    Parse Tamil document with Pattern C running before intro extraction.
-    
-    Args:
-        lines (list): List of text lines from document
-        shared_authors_dict (dict): Dictionary of shared authors across documents
-        
-    Returns:
-        dict: Parsed content including intro, articles, authors_list, doc_id, and doc_issue
-        
-    Raises:
-        Exception: If critical parsing error occurs
+    Parse Tamil document with CSV FIRST approach.
+    Only use pattern extraction if CSV fails.
+    NEW: Returns articles only (no separate intro)
     """
     try:
+        logger.info("=" * 80)
+        logger.info("STEP 1: ATTEMPTING CSV-BASED EXTRACTION")
+        logger.info("=" * 80)
+        
+        # Extract year and source document from S3 key
+        year = extract_year_from_s3_key(s3_key)
+        source_document = s3_key.split('/')[-1]  # Get filename from S3 key
+        
+        # Create a pseudo Path object for CSV extraction
+        class S3Path:
+            def __init__(self, key):
+                self.name = key.split('/')[-1]
+        
+        file_path = S3Path(s3_key)
+        
+        # TRY CSV EXTRACTION FIRST
+        csv_result = extract_articles_from_csv(lines, csv_df, file_path)
+        
+        if csv_result and len(csv_result['articles']) > 0:
+            logger.info("=" * 80)
+            logger.info(f"✓ CSV EXTRACTION SUCCESS: {len(csv_result['articles'])} articles")
+            logger.info("=" * 80)
+            
+            # Add year and source_document to each article
+            for article in csv_result['articles']:
+                article['source_document'] = source_document
+                if 'year' not in article or article['year'] == "Unknown":
+                    article['year'] = year
+            
+            return csv_result
+        
+        # CSV FAILED - FALLBACK TO PATTERN EXTRACTION
+        logger.warning("=" * 80)
+        logger.warning("✗ CSV EXTRACTION FAILED - FALLING BACK TO PATTERN EXTRACTION")
+        logger.warning("=" * 80)
+        
+        # Extract doc info for pattern extraction
         doc_id, doc_issue = extract_doc_info(lines)
         logger.info(f"Processing document: {doc_id}, Issue: {doc_issue}")
 
+        if doc_id == "NA" and doc_issue == "NA":
+            logger.error("Cannot extract மலர்/இதழ் - Both methods failed")
+            return {
+                "articles": [],
+                "authors_list": [],
+                "doc_id": "NA",
+                "doc_issue": "NA"
+            }
+
+        # NORMAL PATTERN-BASED PROCESSING
         authors_original = []
         authors_normalized = []
         start_idx = end_idx = -1
@@ -227,7 +333,6 @@ def parse_tamil_document(lines, shared_authors_dict):
             for i in range(start_idx + 1, end_idx):
                 name = lines[i].strip()
                 if name and not name.isdigit() and len(name) > 2:
-                    import re
                     if not re.match(r'^[\d.\s…]+$', name):
                         authors_original.append(name)
                         authors_normalized.append(normalize_text(name))
@@ -255,8 +360,6 @@ def parse_tamil_document(lines, shared_authors_dict):
                     logger.info(f"METHOD 4: Extracted {len(authors_original)} authors")
 
         logger.info(f"Final author count: {len(authors_original)} authors")
-        if authors_original:
-            logger.debug(f"Authors: {', '.join(authors_original[:5])}")
 
         parse_start_idx = end_idx + 1 if end_idx != -1 else (start_idx + 26 if start_idx != -1 else 0)
         processed_lines = [False] * len(lines)
@@ -269,10 +372,10 @@ def parse_tamil_document(lines, shared_authors_dict):
                 processed_lines[i] = True
 
         intro_keywords = get_intro_keywords()
-        intro = []
         articles = []
         article_no = 1
 
+        # PATTERN A
         logger.info("=" * 80)
         logger.info("PHASE 1: Running Pattern A")
         logger.info("=" * 80)
@@ -288,15 +391,15 @@ def parse_tamil_document(lines, shared_authors_dict):
                 "doc_id": doc_id,
                 "doc_issue": doc_issue,
                 "article_no": article_no,
-                "article_heading": article["heading"],
-                "article_author_name": article["author"],
-                "article_content": article["content"]
+                "author_name": article["author"],
+                "title": article["heading"],
+                "content": article["content"],
+                "year": year,
+                "source_document": source_document
             })
-            logger.info(f"Pattern A article {article_no}: '{article['heading'][:40]}...'")
             article_no += 1
 
-        logger.info(f"Pattern A extracted: {len(pattern_a_articles)} articles")
-
+        # PATTERN B
         logger.info("=" * 80)
         logger.info("PHASE 2: Running Pattern B")
         logger.info("=" * 80)
@@ -312,15 +415,15 @@ def parse_tamil_document(lines, shared_authors_dict):
                 "doc_id": doc_id,
                 "doc_issue": doc_issue,
                 "article_no": article_no,
-                "article_heading": article["heading"],
-                "article_author_name": article["author"],
-                "article_content": article["content"]
+                "author_name": article["author"],
+                "title": article["heading"],
+                "content": article["content"],
+                "year": year,
+                "source_document": source_document
             })
-            logger.info(f"Pattern B article {article_no}: '{article['heading'][:40]}...'")
             article_no += 1
 
-        logger.info(f"Pattern B extracted: {len(pattern_b_articles)} articles")
-
+        # PATTERN C
         logger.info("=" * 80)
         logger.info("PHASE 3: Running Pattern C")
         logger.info("=" * 80)
@@ -336,21 +439,20 @@ def parse_tamil_document(lines, shared_authors_dict):
                 "doc_id": doc_id,
                 "doc_issue": doc_issue,
                 "article_no": article_no,
-                "article_heading": article["heading"],
-                "article_author_name": article["author"],
-                "article_content": article["content"]
+                "author_name": article["author"],
+                "title": article["heading"],
+                "content": article["content"],
+                "year": year,
+                "source_document": source_document
             })
-            logger.info(f"Pattern C poem {article_no}: '{article['heading'][:40]}...'")
             article_no += 1
 
-        logger.info(f"Pattern C extracted: {len(pattern_c_articles)} poems")
-
+        # INTRO EXTRACTION
         logger.info("=" * 80)
-        logger.info("PHASE 4: Extracting intro sections")
+        logger.info("PHASE 4: Extracting intro sections (as articles)")
         logger.info("=" * 80)
         
         i = parse_start_idx
-        intro_count = 0
         
         while i < len(lines):
             if processed_lines[i]:
@@ -367,41 +469,25 @@ def parse_tamil_document(lines, shared_authors_dict):
 
             if matched_keyword:
                 try:
-                    extraction_start = i
-                    
                     content, end_idx_content, has_author = extract_intro_content_phase1(
                         lines, i, processed_lines,
                         authors_normalized, authors_original, intro_keywords
                     )
 
-                    extraction_successful = False
-
                     if content.strip() and count_content_lines(content) >= 4:
-                        if has_author:
-                            articles.append({
-                                "doc_id": doc_id,
-                                "doc_issue": doc_issue,
-                                "article_no": article_no,
-                                "article_heading": matched_keyword,
-                                "article_author_name": has_author,
-                                "article_content": content
-                            })
-                            logger.info(f"Phase 4 article {article_no}: '{matched_keyword}'")
-                            article_no += 1
-                            extraction_successful = True
-                        else:
-                            intro.append({
-                                "doc_id": doc_id,
-                                "doc_issue": doc_issue,
-                                "heading": matched_keyword,
-                                "content": content
-                            })
-                            intro_count += 1
-                            logger.info(f"Phase 4 intro: '{matched_keyword}'")
-                            extraction_successful = True
+                        articles.append({
+                            "doc_id": doc_id,
+                            "doc_issue": doc_issue,
+                            "article_no": article_no,
+                            "author_name": has_author if has_author else "NA",
+                            "title": matched_keyword,
+                            "content": content,
+                            "year": year,
+                            "source_document": source_document
+                        })
+                        article_no += 1
 
-                    if extraction_successful:
-                        for j in range(extraction_start, end_idx_content):
+                        for j in range(i, end_idx_content):
                             if j < len(lines):
                                 processed_lines[j] = True
                         i = end_idx_content
@@ -414,8 +500,7 @@ def parse_tamil_document(lines, shared_authors_dict):
             else:
                 i += 1
 
-        logger.info(f"Phase 4 complete: {intro_count} intro sections")
-
+        # REMAINING CONTENT
         logger.info("=" * 80)
         logger.info("PHASE 5: Extracting remaining content")
         logger.info("=" * 80)
@@ -428,14 +513,14 @@ def parse_tamil_document(lines, shared_authors_dict):
                     "doc_id": doc_id,
                     "doc_issue": doc_issue,
                     "article_no": article_no,
-                    "article_heading": article["heading"],
-                    "article_author_name": article["author"],
-                    "article_content": article["content"]
+                    "author_name": article["author"],
+                    "title": article["heading"],
+                    "content": article["content"],
+                    "year": year,
+                    "source_document": source_document
                 })
                 article_no += 1
                 
-            logger.info(f"Phase 5 complete: {len(remaining)} remaining articles")
-            
         except Exception as e:
             logger.error(f"Error extracting remaining content: {e}")
 
@@ -444,10 +529,9 @@ def parse_tamil_document(lines, shared_authors_dict):
             for a in authors_original
         ]
 
-        logger.info(f"Document parsing complete: {len(intro)} intro, {len(articles)} articles")
+        logger.info(f"Pattern extraction complete: {len(articles)} total articles")
         
         return {
-            "intro": intro,
             "articles": articles,
             "authors_list": authors_list,
             "doc_id": doc_id,
@@ -455,87 +539,124 @@ def parse_tamil_document(lines, shared_authors_dict):
         }
         
     except Exception as e:
-        logger.error(f"Critical error in parse_tamil_document: {e}", exc_info=True)
+        logger.error(f"Critical error in parse_tamil_document_csv_first: {e}", exc_info=True)
         raise
 
 
-def process_s3_files():
+def process_s3_files(force_reprocess=False):
     """
-    Process all TXT files from S3 and save results back to S3.
-    Configuration is read from config.py.
+    Process all TXT files from S3 - CSV FIRST approach.
     
-    Raises:
-        Exception: If critical processing error occurs
+    Args:
+        force_reprocess (bool): If True, reprocess all files even if already processed.
+                               If False (default), skip already processed files.
     """
     try:
         logger.info("=" * 80)
-        logger.info("Tamil Document Processing - S3 MODE WITH AUTHORS STORAGE")
+        logger.info("Tamil Document Processing - S3 CSV FIRST MODE")
         logger.info(f"S3 Bucket: {BUCKET_NAME}")
-        logger.info(f"EXTRACTED OUTPUT: {EXTRACTED_OUTPUT}")
+        logger.info(f"Input Prefix: {INPUT_PREFIX}")
         logger.info(f"Output Prefix: {OUTPUT_PREFIX}")
+        logger.info(f"CSV Path (Local): {CSV_PATH}")
+        logger.info(f"Force Reprocess: {force_reprocess}")
         logger.info("=" * 80)
         
+        # Load CSV from LOCAL file system
+        logger.info("Loading CSV file from local file system...")
+        try:
+            csv_df = load_csv_from_local(CSV_PATH)
+        except FileNotFoundError:
+            logger.error(f"✗ CSV file not found at: {CSV_PATH}")
+            logger.error("Please check the CSV_PATH in config.py")
+            return
+        except Exception as e:
+            logger.error(f"✗ Error loading CSV from local file: {e}")
+            logger.error("CSV is required for this mode. Exiting.")
+            return
+        
+        # List TXT files from S3
         logger.info("Listing TXT files from S3...")
-        txt_files = list_files(BUCKET_NAME, EXTRACTED_OUTPUT, suffix='.txt')
+        txt_files = list_files(BUCKET_NAME, INPUT_PREFIX, suffix='.txt')
         
         if not txt_files:
             logger.warning("No TXT files found in S3")
             return
 
-        logger.info(f"Found {len(txt_files)} TXT files in S3")
+        logger.info(f"Found {len(txt_files)} TXT files")
 
-        logger.info("Building shared authors dictionary from S3...")
-        shared_authors_dict = build_shared_authors_dict_s3(BUCKET_NAME, EXTRACTED_OUTPUT)
+        # Build shared authors (for fallback)
+        logger.info("Building shared authors dictionary (for fallback)...")
+        shared_authors_dict = build_shared_authors_dict_s3(BUCKET_NAME, INPUT_PREFIX)
         logger.info(f"Shared authors dictionary built with {len(shared_authors_dict)} document groups")
         
-        processed = failed = 0
+        processed = failed = csv_success = pattern_fallback = skipped = 0
 
         for idx, txt_key in enumerate(txt_files, 1):
-            folder_path = get_s3_folder_path(txt_key, EXTRACTED_OUTPUT)
-            file_name = txt_key.split('/')[-1]
-            file_stem = file_name.rsplit('.', 1)[0]
-            
-            output_json_key = f"{OUTPUT_PREFIX}{folder_path}{file_stem}.json"
+            # Determine output key
+            relative_key = txt_key[len(INPUT_PREFIX):]  # Remove input prefix
+            output_key = f"{OUTPUT_PREFIX}{relative_key.rsplit('.', 1)[0]}.json"
 
             logger.info("")
             logger.info("=" * 80)
             logger.info(f"[{idx}/{len(txt_files)}] Processing: {txt_key}")
-            logger.info(f"Output path: {output_json_key}")
+            logger.info(f"Output key: {output_key}")
             logger.info("=" * 80)
 
             try:
-                logger.debug(f"Reading file from S3: s3://{BUCKET_NAME}/{txt_key}")
+                # CHECK IF ALREADY PROCESSED
+                if not force_reprocess:
+                    if is_file_already_processed(BUCKET_NAME, output_key):
+                        # Validate the existing file
+                        if validate_processed_file(BUCKET_NAME, output_key):
+                            logger.info(f"⏭️  SKIPPED: File already processed and validated")
+                            logger.info(f"   Existing output: s3://{BUCKET_NAME}/{output_key}")
+                            logger.info(f"   Use --force flag to reprocess")
+                            skipped += 1
+                            continue
+                        else:
+                            logger.warning(f"⚠️  Existing file is invalid/corrupted, reprocessing...")
+                
+                # Read TXT file from S3
                 text_content = read_text_from_s3(BUCKET_NAME, txt_key)
                 lines = text_content.splitlines()
-                logger.debug(f"Read {len(lines)} lines from file")
+                logger.debug(f"Read {len(lines)} lines from S3")
 
-                logger.info("Starting document parsing...")
-                result = parse_tamil_document(lines, shared_authors_dict)
+                logger.info("Starting document parsing (CSV FIRST)...")
+                result = parse_tamil_document_csv_first(lines, shared_authors_dict, csv_df, txt_key)
 
+                # Track which method was used
+                if result and len(result['articles']) > 0:
+                    first_article = result['articles'][0]
+                    if 'year' in first_article and first_article.get('year') != "Unknown":
+                        csv_success += 1
+                        logger.info("✓ METHOD: CSV EXTRACTION")
+                    else:
+                        pattern_fallback += 1
+                        logger.info("✓ METHOD: PATTERN EXTRACTION (CSV fallback)")
+
+                # Save main JSON to S3
                 output_data = {
-                    "intro": result["intro"],
                     "articles": result["articles"]
                 }
                 
-                logger.info(f"Uploading main JSON to S3: {output_json_key}")
-                upload_json(BUCKET_NAME, output_json_key, output_data)
-                logger.info(f"Main JSON uploaded successfully")
+                upload_json(BUCKET_NAME, output_key, output_data)
+                logger.info(f"Main JSON saved to S3 with {len(result['articles'])} articles")
 
-                logger.info(f"Saving authors to subfolder: {folder_path}")
-                save_authors_to_s3_folder(
+                # Save authors JSON to S3
+                output_key_prefix = output_key.rsplit('/', 1)[0] + '/' if '/' in output_key else ''
+                save_authors_to_s3(
                     BUCKET_NAME,
-                    OUTPUT_PREFIX,
-                    folder_path,
+                    output_key_prefix,
                     result["doc_id"],
                     result["doc_issue"],
                     result["authors_list"]
                 )
 
-                logger.info(f"SUCCESS: {len(result['articles'])} articles, {len(result['intro'])} intros, {len(result['authors_list'])} authors")
+                logger.info(f"✅ SUCCESS: {len(result['articles'])} total articles")
                 processed += 1
 
             except Exception as e:
-                logger.error(f"FAILED processing {txt_key}: {e}", exc_info=True)
+                logger.error(f"❌ FAILED processing {txt_key}: {e}", exc_info=True)
                 failed += 1
 
         logger.info("")
@@ -543,8 +664,14 @@ def process_s3_files():
         logger.info("PROCESSING SUMMARY:")
         logger.info(f"   Total files: {len(txt_files)}")
         logger.info(f"   Successfully processed: {processed}")
+        logger.info(f"   Skipped (already processed): {skipped}")
+        logger.info(f"   CSV Extraction used: {csv_success}")
+        logger.info(f"   Pattern Extraction used: {pattern_fallback}")
         logger.info(f"   Failed: {failed}")
-        logger.info(f"   Success rate: {(processed/len(txt_files)*100):.1f}%")
+        if len(txt_files) > 0:
+            logger.info(f"   Success rate: {(processed/len(txt_files)*100):.1f}%")
+        if processed > 0:
+            logger.info(f"   CSV success rate: {(csv_success/processed*100):.1f}%")
         logger.info("=" * 80)
         
     except Exception as e:
@@ -554,8 +681,17 @@ def process_s3_files():
 
 if __name__ == "__main__":
     try:
-        logger.info("Starting Tamil Document Processing from S3...")
-        process_s3_files()
+        # Check for command line argument to force reprocessing
+        force_reprocess = "--force" in sys.argv or "-f" in sys.argv
+        
+        if force_reprocess:
+            logger.info("⚠️  FORCE REPROCESS MODE ENABLED - Will reprocess all files")
+        else:
+            logger.info("📋 INCREMENTAL MODE - Will skip already processed files")
+            logger.info("   Use --force or -f flag to reprocess all files")
+        
+        logger.info("Starting Tamil Document Processing (S3 CSV FIRST MODE)...")
+        process_s3_files(force_reprocess=force_reprocess)
         logger.info("Processing completed successfully!")
     except KeyboardInterrupt:
         logger.warning("Processing interrupted by user")

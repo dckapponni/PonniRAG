@@ -3,11 +3,14 @@ from pathlib import Path
 BUCKET_NAME = "ponni-dev"
 REGION_NAME = "ap-south-1"
 
+
 INPUT_PREFIX = "Raw_Proof_Read_Content/"
 OUTPUT_PREFIX = "output_json/"
 EXTRACTED_OUTPUT= "extracted_text/"
 
 
+CONFIG_DIR = Path(__file__).resolve().parent
+CSV_PATH = CONFIG_DIR.parent / "data" / "summary.csv" 
 
 BASE_DIR = Path(__file__).resolve().parents[1]/"ui"
 QDRANT_PATH = str(BASE_DIR / "qdrant_storage")
@@ -24,6 +27,5 @@ BATCH_SIZE = 100
 S3_BUCKET = "ponni-dev"
 S3_PREFIX = "output_json/"
 S3_SUFFIX = ".json"
-
 
 

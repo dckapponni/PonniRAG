@@ -18,12 +18,13 @@ from qdrant_client import models
 from transformers import pipeline
 import pandas as pd
 
-BASE_DIR = Path(__file__).resolve().parent
+
 QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
 COLLECTION_NAME = "qdrant_indexer"
 EMBEDDING_MODEL = "intfloat/multilingual-e5-large"
-CSV_PATH = BASE_DIR / "summary.csv"
+BASE_DIR = Path(__file__).resolve().parent.parent
+CSV_PATH = BASE_DIR / "data" / "summary.csv"
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -119,19 +120,23 @@ def get_llm():
 
         logger.info("Loading LLM model...")
 
-        device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        dtype = torch.float16 if device.startswith("cuda") else torch.float32
-
-        _llm = pipeline(
-            "text-generation",
-            model="abhinand/tamil-llama-7b-instruct-v0.2",
-            device_map=device,
-            torch_dtype=dtype,
-        )
+        if torch.cuda.is_available():
+            _llm = pipeline(
+                "text-generation",
+                model="abhinand/tamil-llama-7b-instruct-v0.2",
+                device=0,                       # ✅ GPU
+                dtype=torch.float16,
+            )
+        else:
+            _llm = pipeline(
+                "text-generation",
+                model="abhinand/tamil-llama-7b-instruct-v0.2",
+                device_map="cpu",                   
+                dtype=torch.float32,
+            )
 
         logger.info("LLM model cached")
         return _llm
-
 
 def check_qdrant_health() -> Dict:
     """

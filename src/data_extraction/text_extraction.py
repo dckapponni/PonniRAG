@@ -1,6 +1,5 @@
 """
 DOCX Text Extraction Script for Tamil Document Processing.
-Extracts text from DOCX files in S3 and uploads the extracted text to a specified output location.
 """
 import time
 import re
@@ -41,6 +40,63 @@ def normalize_key(key: str) -> str:
     return key
 
 
+def extract_text_from_doc(file_bytes):
+    """
+    Try to extract text from .doc file using antiword or textract.
+    
+    Args:
+        file_bytes: BytesIO object containing the file
+        
+    Returns:
+        str: Extracted text or error message
+    """
+    try:
+        # Try using textract (install: pip install textract)
+        import textract
+        file_bytes.seek(0)
+        text = textract.process(file_bytes, extension='doc').decode('utf-8')
+        return text
+    except ImportError:
+        logger.warning("textract not installed. Cannot extract .doc files.")
+        return ""
+    except Exception as e:
+        logger.warning(f"Failed to extract .doc file: {e}")
+        return ""
+
+
+def extract_text_from_file(file_bytes, filename):
+    """
+    Extract text from file, handling both .doc and .docx formats.
+    
+    Args:
+        file_bytes: BytesIO object containing the file
+        filename: Original filename
+        
+    Returns:
+        str: Extracted text
+    """
+    # Try as DOCX first
+    try:
+        file_bytes.seek(0)
+        text = docx2txt.process(file_bytes)
+        return text
+    except Exception as docx_error:
+        logger.warning(f"Failed to extract as DOCX: {docx_error}")
+        
+        # Try as DOC (old format)
+        try:
+            file_bytes.seek(0)
+            text = extract_text_from_doc(file_bytes)
+            if text:
+                logger.info(f"Successfully extracted as .doc format")
+                return text
+        except Exception as doc_error:
+            logger.error(f"Failed to extract as DOC: {doc_error}")
+        
+        # Both failed
+        raise Exception(f"Could not extract text from {filename}. File may be corrupted.")
+
+
 def process_all_docx_files():
     """
     Process all DOCX files from S3 and extract text content.
@@ -68,6 +124,7 @@ def process_all_docx_files():
     processed = 0
     skipped = 0
     failed = 0
+    corrupted_files = []
     start_all = time.time()
 
     for idx, key in enumerate(docx_files, 1):
@@ -92,7 +149,9 @@ def process_all_docx_files():
             start = time.time()
 
             file_bytes = read_bytes(BUCKET_NAME, key)
-            text = docx2txt.process(file_bytes)
+            
+            # Use new extraction function that handles both formats
+            text = extract_text_from_file(file_bytes, docx_file)
 
             upload_text(BUCKET_NAME, output_key, text)
 
@@ -103,11 +162,16 @@ def process_all_docx_files():
         except Exception as e:
             logger.error(f"[{idx}/{len(docx_files)}] Error processing {docx_file}: {e}", exc_info=True)
             failed += 1
+            corrupted_files.append(docx_file)
 
     total_time = time.time() - start_all
     
     logger.info("=" * 80)
     logger.info(f"Processing complete - Processed: {processed}, Skipped: {skipped}, Failed: {failed}")
+    if corrupted_files:
+        logger.warning(f"Corrupted/failed files:")
+        for cf in corrupted_files:
+            logger.warning(f"  - {cf}")
     logger.info(f"Total processing time: {total_time:.2f}s")
     if docx_files:
         logger.info(f"Average time per file: {total_time/len(docx_files):.2f}s")
