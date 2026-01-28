@@ -5,7 +5,7 @@ Handles extraction of intro sections, remaining content, and keyword detection.
 import logging
 from text_processing import is_valid_heading, extract_author_from_line
 from doc_utils import count_content_lines 
-from shared_author import check_author_ahead
+from shared_author_local import check_author_ahead  # CHANGED FROM shared_author
 
 logger = logging.getLogger('TamilDocProcessor.content_extraction')
 
