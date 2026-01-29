@@ -1,7 +1,7 @@
 streamlit
-torch 
-torchvision 
-torchaudio --index-url https://download.pytorch.org/whl/cu118 
+torch
+torchvision
+torchaudio --index-url https://download.pytorch.org/whl/cu118
 boto3
 qdrant-client
 sentence-transformers
@@ -12,3 +12,6 @@ numpy
 docx2txt
 scikit-learn
 sentencepiece
+fastapi
+uvicorn[standard]
+pydantic

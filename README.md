@@ -12,6 +12,17 @@
   - [Prerequisites](#prerequisites)
   - [Installation](#installation)
   - [Usage](#usage)
+- [Docker Deployment](#docker-deployment)
+  - [Services Architecture](#services-architecture)
+  - [Quick Start with Docker Compose](#quick-start-with-docker-compose)
+  - [Docker Commands](#docker-commands)
+  - [Service Endpoints](#service-endpoints)
+- [React Frontend](#react-frontend)
+  - [Frontend Setup](#frontend-setup)
+  - [Frontend Features](#frontend-features)
+- [Mock Data Mode](#mock-data-mode)
+  - [Enabling Mock Mode](#enabling-mock-mode)
+  - [Mock Data Features](#mock-data-features)
 
 ---
 
@@ -29,43 +40,40 @@
 ## Project Structure
 
 ```
-└── src
-    ├── config
-    │   └── config.py
-    ├── data_extraction
-    │   ├── article_patterns.py
-    │   ├── article_seperation.py
-    │   ├── content_extraction.py
-    │   ├── doc_utils.py
-    │   ├── s3_utils.py
-    │   ├── shared_author.py
-    │   ├── text_extraction.py
-    │   └── text_processing.py
-    ├── db
-    │   ├── hybrid_search.py
-    │   ├── pdf_links.py
-    │   ├── qdrant_indexer.py
-    │   ├── streamlit_app.py
-    │   └── summary.csv
-    ├── tests
-    │   ├── conftest.py
-    │   ├── test_article_patterns.py
-    │   ├── test_article_seperation.py
-    │   ├── test_content_extraction.py
-    │   ├── test_content_extraction_integration.py
-    │   ├── test_doc_utils.py
-    │   ├── test_doc_utils_integration.py
-    │   ├── test_hybrid_search.py
-    │   ├── test_qdrant_indexer.py
-    │   ├── test_s3_utils.py
-    │   ├── test_shared_author.py
-    │   ├── test_shared_author_integration.py
-    │   ├── test_streamlit_app.py
-    │   ├── test_text_extraction.py
-    │   ├── test_text_processing.py
-    │   └── test_text_processing_integration.py
-    ├── Dockerfile
-    └── requirements.txt
+├── frontend/                    # React.js Frontend
+│   ├── src/
+│   │   ├── components/          # Navigation, ChatMessage, ChatInput
+│   │   ├── pages/               # Home, Library, Issues, PDFViewer, About
+│   │   ├── services/            # API client, translations
+│   │   └── styles/              # CSS styles
+│   ├── Dockerfile
+│   ├── nginx.conf
+│   └── package.json
+├── src/
+│   ├── config/
+│   │   └── config.py
+│   ├── data_extraction/
+│   │   ├── article_patterns.py
+│   │   ├── article_seperation.py
+│   │   ├── content_extraction.py
+│   │   ├── doc_utils.py
+│   │   ├── s3_utils.py
+│   │   ├── shared_author.py
+│   │   ├── text_extraction.py
+│   │   └── text_processing.py
+│   ├── db/
+│   │   ├── api.py               # FastAPI REST API
+│   │   ├── hybrid_search.py
+│   │   ├── mock_search.py       # Mock data for testing
+│   │   ├── pdf_links.py
+│   │   ├── qdrant_indexer.py
+│   │   ├── streamlit_app.py
+│   │   └── summary.csv
+│   └── tests/
+├── docker-compose.yml           # Multi-service orchestration
+├── Dockerfile                   # Streamlit container
+├── Dockerfile.api               # FastAPI container
+└── requirements.txt
 ```
 ###  Project Index
 <details open>
@@ -311,18 +319,253 @@ python -m db.qdrant_indexer
 cd src/db
 streamlit run streamlit_app.py
 ```
-`
 
-**Run with Docker:**
-
-1. Build the Docker image:
+**Run the FastAPI backend:**
 ```sh
-docker build -t <name>
+cd src/db
+uvicorn api:app --host 0.0.0.0 --port 8000
 ```
 
-2. Run the application inside a Docker container:
+**Run the React frontend:**
 ```sh
-docker run -p <
+cd frontend
+npm install
+npm start
+```
+
+---
+
+## Docker Deployment
+
+The application can be deployed using Docker Compose, which orchestrates four services: Qdrant (vector database), FastAPI (REST API), React (modern frontend), and Streamlit (legacy UI).
+
+### Services Architecture
+
+```
+┌───────────────────────────────────────────────────────────────────────────┐
+│                           Docker Compose                                   │
+├─────────────────┬─────────────────┬─────────────────┬─────────────────────┤
+│     Qdrant      │     FastAPI     │      React      │     Streamlit       │
+│   :6333/6334    │      :8000      │      :3000      │       :8501         │
+│  Vector Store   │    REST API     │   Frontend UI   │    Legacy UI        │
+└─────────────────┴─────────────────┴─────────────────┴─────────────────────┘
+```
+
+### Quick Start with Docker Compose
+
+1. **Configure environment variables:**
+```sh
+cp .env.docker.example .env.docker
+# Edit .env.docker with your AWS credentials
+```
+
+2. **Build and start all services:**
+```sh
+docker-compose up --build
+```
+
+3. **Run in detached mode (background):**
+```sh
+docker-compose up -d --build
+```
+
+### Docker Commands
+
+| Command | Description |
+|---------|-------------|
+| `docker-compose up --build` | Build and start all services |
+| `docker-compose up -d` | Start services in background |
+| `docker-compose logs -f` | View logs from all services |
+| `docker-compose logs -f api` | View logs from FastAPI only |
+| `docker-compose down` | Stop all services |
+| `docker-compose down -v` | Stop and remove volumes |
+| `docker-compose ps` | List running services |
+| `docker-compose restart api` | Restart a specific service |
+
+### Service Endpoints
+
+Once running, the services are available at:
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| React Frontend | http://localhost:3000 | Modern React.js interface |
+| Streamlit UI | http://localhost:8501 | Legacy Streamlit interface |
+| FastAPI Docs | http://localhost:8000/docs | Swagger API documentation |
+| FastAPI Health | http://localhost:8000/health | API health check endpoint |
+| Qdrant Dashboard | http://localhost:6333/dashboard | Vector database dashboard |
+| Qdrant API | http://localhost:6333 | Qdrant REST API |
+
+### API Endpoints
+
+The FastAPI service exposes the following endpoints:
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/health` | Health check |
+| `POST` | `/api/ask` | Ask a question (with LLM) |
+| `GET` | `/api/search?q=<query>` | Search the archive |
+| `GET` | `/api/authors` | List all authors |
+| `GET` | `/api/authors/{name}/articles` | Get articles by author |
+| `GET` | `/api/topics/search?topic=<topic>` | Search by topic |
+| `GET` | `/api/library/volumes` | List all volumes |
+| `GET` | `/api/library/volumes/{id}/issues` | Get issues for a volume |
+
+### Building Individual Images
+
+**Build Streamlit image:**
+```sh
+docker build -t ponni-streamlit -f Dockerfile .
+```
+
+**Build FastAPI image:**
+```sh
+docker build -t ponni-api -f Dockerfile.api .
+```
+
+**Build React frontend image:**
+```sh
+docker build -t ponni-frontend -f frontend/Dockerfile ./frontend
+```
+
+### GPU Support
+
+For NVIDIA GPU support, ensure you have the NVIDIA Container Toolkit installed and update the `docker-compose.yml` to include:
+
+```yaml
+services:
+  api:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+```
+
+---
+
+## React Frontend
+
+A modern React.js frontend is available as an alternative to the Streamlit UI. It provides the same features with a more responsive, production-ready interface.
+
+### Frontend Setup
+
+**Local Development:**
+
+```sh
+cd frontend
+npm install
+npm start
+```
+
+The React app will be available at http://localhost:3000
+
+**With Docker Compose:**
+
+```sh
+docker-compose up frontend
+```
+
+### Frontend Features
+
+| Feature | Description |
+|---------|-------------|
+| AI Search | Chat-based interface for querying the archive |
+| Digital Library | Browse volumes and issues with cover images |
+| PDF Viewer | Embedded PDF viewer for magazine issues |
+| Language Toggle | Switch between Tamil and English |
+| Responsive Design | Works on desktop and mobile devices |
+
+### Frontend Structure
+
+```
+frontend/
+├── src/
+│   ├── components/      # Navigation, ChatMessage, ChatInput
+│   ├── pages/           # Home, Library, Issues, PDFViewer, About
+│   ├── services/        # API client, translations
+│   └── styles/          # CSS matching Streamlit UI
+├── Dockerfile
+└── nginx.conf
+```
+
+### Service URLs (with Docker)
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| React Frontend | http://localhost:3000 | Modern React UI |
+| Streamlit | http://localhost:8501 | Legacy Streamlit UI |
+| FastAPI | http://localhost:8000 | REST API backend |
+| Qdrant | http://localhost:6333 | Vector database |
+
+---
+
+## Mock Data Mode
+
+Mock data mode allows you to test the application without requiring AWS S3 credentials or an indexed Qdrant database. It provides sample Tamil literary data from the Ponni magazine archive.
+
+### Enabling Mock Mode
+
+**For Streamlit:**
+```sh
+cd src/db
+USE_MOCK_DATA=true streamlit run streamlit_app.py
+```
+
+**For FastAPI:**
+```sh
+cd src/db
+USE_MOCK_DATA=true uvicorn api:app --host 0.0.0.0 --port 8000
+```
+
+**With Docker Compose:**
+
+Add the environment variable to `docker-compose.yml`:
+```yaml
+services:
+  api:
+    environment:
+      - USE_MOCK_DATA=true
+  streamlit:
+    environment:
+      - USE_MOCK_DATA=true
+```
+
+### Mock Data Features
+
+| Feature | Description |
+|---------|-------------|
+| Sample Sources | 8 Tamil literary articles with metadata |
+| Author Queries | Pre-defined responses for author-related questions |
+| Topic Search | Mock results for Dravidian movement, Bharathidasan, etc. |
+| Health Check | Returns healthy status without database connection |
+| Bilingual | Supports both Tamil and English queries |
+
+### Sample Mock Queries
+
+Try these queries in mock mode:
+
+| Tamil | English |
+|-------|---------|
+| பொன்னி இதழ் ஆசிரியர்கள் யார்? | Who are the authors in Ponni magazine? |
+| பாரதிதாசன் கட்டுரைகள் | Articles by Bharathidasan |
+| திராவிட இயக்கம் | Dravidian movement |
+| பொன்னி நிறுவனர் யார்? | Who founded Ponni magazine? |
+
+### Mock Mode Health Response
+
+```json
+{
+  "status": "healthy",
+  "database": {
+    "healthy": true,
+    "mock_mode": true,
+    "message": "Running in mock mode - no database connection required",
+    "points_count": 8
+  },
+  "api": "healthy"
+}
 ```
 
 ---
