@@ -1,7 +1,9 @@
 """
-Qdrant Index Module for Tamil Document Processing.
+Qdrant Index Module for Tamil Document Processing (Modified for new JSON format).
 Handles document chunking, embedding generation, and indexing to Qdrant vector database.
 Supports both intro documents and author metadata with hybrid search (dense + sparse vectors).
+
+Modified to work with JSON format where articles are in an "articles" array.
 """
 
 import json
@@ -277,10 +279,11 @@ def is_author_file(s3_key: str) -> bool:
 
 def load_documents_from_s3() -> List[Dict]:
     """
-    Load and process intro documents from S3.
+    Load and process article documents from S3.
     
     Performs:
     - Downloads JSON files from S3
+    - Extracts articles from "articles" array
     - Chunks text into manageable pieces
     - Validates chunk quality
     - Creates document dictionaries with metadata
@@ -300,29 +303,36 @@ def load_documents_from_s3() -> List[Dict]:
     logger.info(f"Found {len(keys)} JSON files in S3")
 
     for key in keys:
+        # Skip authors.json files
+        if is_author_file(key):
+            continue
+            
         logger.info(f"Processing: {key}")
         try:
             obj = s3.get_object(Bucket=S3_BUCKET, Key=key)
             data = json.loads(obj["Body"].read().decode("utf-8"))
             
-            if not isinstance(data, dict):
-                logger.info(f"Skipping non-intro JSON: {key}")
+            # Check if this is the new format with "articles" array
+            if not isinstance(data, dict) or "articles" not in data:
+                logger.info(f"Skipping non-articles JSON: {key}")
                 continue
             
-            intro_items = data.get("intro", [])
-            if not isinstance(intro_items, list):
+            articles = data.get("articles", [])
+            if not isinstance(articles, list):
+                logger.warning(f"'articles' is not a list in {key}")
                 continue
 
             volume = extract_volume_from_s3_key(key)
 
-            for item in intro_items:
-                text = item.get("content", "").strip()
-                if not text:
+            for article in articles:
+                # Get content from the article
+                content = article.get("content", "").strip()
+                if not content:
                     continue
 
-                chunks = chunk_text(text, CHUNK_SIZE)
+                chunks = chunk_text(content, CHUNK_SIZE)
                 
-                logger.info(f"  doc_id={item.get('doc_id')}: {len(chunks)} chunks")
+                logger.info(f"  doc_id={article.get('doc_id')}, article_no={article.get('article_no')}: {len(chunks)} chunks")
 
                 for idx, chunk in enumerate(chunks):
                     chunk_stats['total'] += 1
@@ -339,13 +349,17 @@ def load_documents_from_s3() -> List[Dict]:
                     documents.append({
                         "id": str(uuid.uuid5(
                             uuid.NAMESPACE_DNS,
-                            f"{key}-{item.get('doc_id')}-{idx}"
+                            f"{key}-{article.get('doc_id')}-{article.get('article_no')}-{idx}"
                         )),
                         "text": chunk,
                         "metadata": {
-                            "doc_id": item.get("doc_id"),
-                            "doc_issue": item.get("doc_issue"),
-                            "heading": item.get("heading", ""),
+                            "doc_id": article.get("doc_id"),
+                            "doc_issue": article.get("doc_issue"),
+                            "article_no": article.get("article_no"),
+                            "author_name": article.get("author_name", ""),
+                            "title": article.get("title", ""),
+                            "year": article.get("year", ""),
+                            "source_document": article.get("source_document", ""),
                             "source": "s3",
                             "s3_key": key,
                             "chunk_id": idx,
@@ -441,7 +455,7 @@ def main():
     1. Connects to Qdrant database
     2. Resets collection if exists
     3. Creates new collection with hybrid search support
-    4. Indexes intro documents with chunking and validation
+    4. Indexes article documents with chunking and validation
     5. Indexes author metadata
     6. Logs statistics and completion status
     """
@@ -450,7 +464,6 @@ def main():
     if client.collection_exists(COLLECTION_NAME):
         client.delete_collection(COLLECTION_NAME)
         logger.info(f"Deleted existing collection")
-
     client.create_collection(
         collection_name=COLLECTION_NAME,
         vectors_config={
@@ -469,7 +482,7 @@ def main():
     logger.info(f"Created collection: {COLLECTION_NAME}")
 
     logger.info(f"\n{'-'*60}")
-    logger.info("INDEXING INTRO DOCUMENTS")
+    logger.info("INDEXING ARTICLE DOCUMENTS")
     logger.info(f"{'-'*60}")
     
     documents = load_documents_from_s3()
@@ -492,7 +505,7 @@ def main():
                 payload={
                     "content": doc["text"],
                     "chunk_id": doc["metadata"]["chunk_id"],
-                    "type": "intro",
+                    "type": "article",
                     "metadata": doc["metadata"],
                 },
             )
@@ -570,7 +583,7 @@ def main():
     logger.info("INDEXING COMPLETE")
     logger.info(f"{'='*60}")
     logger.info(f"Total points: {info.points_count}")
-    logger.info(f"  Intro chunks: {indexed}")
+    logger.info(f"  Article chunks: {indexed}")
     logger.info(f"  Authors: {indexed_authors}")
     logger.info(f"Database ready at: {QDRANT_PATH}")
 

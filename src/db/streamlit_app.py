@@ -313,35 +313,43 @@ def render_home_page():
 
 
 def render_sources(msg_idx: int, sources: List):
-    """Render source citations for a message."""
+    """Render source citations for a message with correct field mapping."""
     with st.expander(f"{t('sources_title')} — {len(sources)}"):
         for idx, src in enumerate(sources, 1):
+            # Extract metadata based on source type
             if hasattr(src, 'payload') and src.payload:
+                # Direct from Qdrant
                 payload = src.payload
                 metadata = payload.get("metadata", {})
                 full_content = payload.get("content", "").strip()
-                doc_issue = metadata.get("doc_issue")
-                volume = metadata.get("volume")
-                heading = metadata.get("heading")
-                author = metadata.get("author")
+                
+                # CORRECT MAPPING for new JSON format:
+                malar = metadata.get("doc_id", "unknown")          # மலர் = doc_id
+                issue = metadata.get("doc_issue", "unknown")       # இதழ் = doc_issue  
+                heading = metadata.get("title", "")                # தலைப்பு = title
+                author = metadata.get("author_name", "")           # எழுத்தாளர் = author_name
             else:
-                doc_issue = src.get("doc_issue")
-                volume = src.get("volume")
-                heading = src.get("heading")
-                author = src.get("author")
+                # From formatted sources dict (hybrid_search.py format_sources)
                 full_content = src.get("content", "").strip()
+                malar = src.get("volume", "unknown")               # மலர்
+                issue = src.get("doc_issue", "unknown")            # இதழ்
+                heading = src.get("heading", "")                   # தலைப்பு
+                author = src.get("author_name", "")                # எழுத்தாளர்
             
+            # Build metadata display string
             meta_parts = []
-            if doc_issue:
-                meta_parts.append(f"{t('issue_label')}: {doc_issue}")
-            if volume:
-                meta_parts.append(f"{t('malar_label')}: {volume}")
+            if issue and issue != "unknown":
+                meta_parts.append(f"{t('issue_label')}: {issue}")  # இதழ்: 6
+            if malar and malar != "unknown":
+                meta_parts.append(f"{t('malar_label')}: {malar}")  # மலர்: 1
             if heading:
                 meta_parts.append(f"{t('title_label')}: {heading}")
             if author:
                 meta_parts.append(f"{t('author_label')}: {author}")
-            meta_str = " • ".join(meta_parts)
             
+            meta_str = " • ".join(meta_parts) if meta_parts else "மெட்டாடேட்டா கிடைக்கவில்லை"
+            
+            # Handle expandable content for long sources
             read_more_key = f"read_more_{msg_idx}_{idx}"
             if read_more_key not in st.session_state:
                 st.session_state[read_more_key] = False
@@ -349,14 +357,18 @@ def render_sources(msg_idx: int, sources: List):
             if len(full_content) > 300:
                 preview_content = full_content[:300] + "..."
                 display_content = full_content if st.session_state[read_more_key] else preview_content
+                
                 source_html = f"""
                 <div class="source-card">
-                    <div class="source-header"><span class="source-title">{t('sources_title')} {idx}</span></div>
+                    <div class="source-header">
+                        <span class="source-title">{t('sources_title')} {idx}</span>
+                    </div>
                     <div class="source-meta">{meta_str}</div>
                     <div class="source-preview">{display_content}</div>
                 </div>
                 """
                 st.markdown(source_html, unsafe_allow_html=True)
+                
                 button_label = t('show_less') if st.session_state[read_more_key] else t('read_more')
                 if st.button(button_label, key=f"btn_{read_more_key}"):
                     st.session_state[read_more_key] = not st.session_state[read_more_key]
@@ -364,13 +376,14 @@ def render_sources(msg_idx: int, sources: List):
             else:
                 source_html = f"""
                 <div class="source-card">
-                    <div class="source-header"><span class="source-title">{t('sources_title')} {idx}</span></div>
+                    <div class="source-header">
+                        <span class="source-title">{t('sources_title')} {idx}</span>
+                    </div>
                     <div class="source-meta">{meta_str}</div>
                     <div class="source-preview">{full_content}</div>
                 </div>
                 """
                 st.markdown(source_html, unsafe_allow_html=True)
-
 
 def handle_user_input():
     """Handle user input from chat interface."""
