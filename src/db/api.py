@@ -16,77 +16,14 @@ from pydantic import BaseModel, Field
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-# Check if mock mode is enabled
-USE_MOCK_DATA = os.getenv("USE_MOCK_DATA", "false").lower() in ("true", "1", "yes")
-
-if USE_MOCK_DATA:
-    from mock_search import mock_ask_question as ask_question, check_mock_health as check_qdrant_health
-    # Mock implementations for author system and issue count
-    CSV_PATH = Path(__file__).resolve().parent / "summary.csv"
-
-    class MockAuthorQuerySystem:
-        def __init__(self, csv_path):
-            pass
-
-        def list_all_authors(self):
-            return {
-                "success": True,
-                "total_authors": 5,
-                "total_articles": 25,
-                "authors": [
-                    {"name": "பாரதிதாசன்", "count": 8},
-                    {"name": "அரு. பெரியண்ணன்", "count": 6},
-                    {"name": "கண்ணதாசன்", "count": 5},
-                    {"name": "மு. கருணாநிதி", "count": 4},
-                    {"name": "ஈ.வெ.ரா. பெரியார்", "count": 2},
-                ]
-            }
-
-        def get_topics_by_author(self, author_name):
-            return {
-                "success": True,
-                "author": author_name,
-                "matched_author": author_name,
-                "count": 3,
-                "articles": [
-                    {"title": "திராவிட இயக்கம்", "year": 1947, "issue": "இதழ் 1"},
-                    {"title": "தமிழ் மொழியின் சிறப்பு", "year": 1948, "issue": "இதழ் 5"},
-                    {"title": "சமூக சீர்திருத்தம்", "year": 1949, "issue": "இதழ் 12"},
-                ]
-            }
-
-        def get_author_by_topic(self, topic):
-            return {
-                "success": True,
-                "topic": topic,
-                "count": 2,
-                "articles": [
-                    {"title": topic, "author": "பாரதிதாசன்", "year": 1948},
-                    {"title": f"{topic} - தொடர்ச்சி", "author": "அரு. பெரியண்ணன்", "year": 1949},
-                ]
-            }
-
-    EnhancedAuthorQuerySystem = MockAuthorQuerySystem
-
-    def get_issue_count(csv_path):
-        return {
-            "success": True,
-            "count": 106,
-            "total_articles": 850,
-            "issues": [
-                {"issue_number": "1", "article_count": 12},
-                {"issue_number": "2", "article_count": 15},
-                {"issue_number": "3", "article_count": 10},
-            ]
-        }
-else:
-    from hybrid_search import (
-        ask_question,
-        check_qdrant_health,
-        EnhancedAuthorQuerySystem,
-        get_issue_count,
-        CSV_PATH,
-    )
+# Import real hybrid_search module
+from hybrid_search import (
+    ask_question,
+    check_qdrant_health,
+    EnhancedAuthorQuerySystem,
+    get_issue_count,
+    CSV_PATH,
+)
 
 from pdf_links import PDF_LINKS
 

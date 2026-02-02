@@ -1,6 +1,33 @@
 import React from 'react';
 
 const About = ({ language }) => {
+  const imageStyles = {
+  
+    aboutImageFull: {
+      width: '100%',
+      margin: '20px 0',
+      textAlign: 'center',
+    },
+    aboutImageFullImg: {
+      width: '100%',
+      maxWidth: '100%',
+      height: 'auto',
+      display: 'block',
+    },
+    // Side by side images (images 2-3 and 4-5)
+    aboutImageSideBySide: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      gap: '20px',
+      margin: '20px 0',
+    },
+    aboutImageSideBySideImg: {
+      width: 'calc(50% - 10px)',
+      height: 'auto',
+      display: 'block',
+    },
+  };
+
   return (
     <div className="about-container">
       <h2 className="about-heading">பொன்னி களஞ்சியம்</h2>
@@ -11,10 +38,11 @@ const About = ({ language }) => {
         1900களில் வெளிவந்த இதழ்கள் சமூக மாற்றத்திற்கும் முன்னேற்றத்திற்கும் பெருந்துணையாக அமைந்துள்ளன என்பது வரலாற்று ரீதியான உண்மை. 1947 முதல் 1955 வரை இயங்கிய கலை இலக்கிய இதழ் 'பொன்னி'. பொன்னி இதழ் திரு. அரு. பெரியண்ணன் மற்றும் திரு. முருகு. சுப்பிரமணியம் ஆகியோரால் 1947ஆம் ஆண்டு பிப்ரவரி மாதம் தொடங்கப்பெற்றது. தொடங்கப்பட்ட முதல் வருடத்தில் மாதம் ஓர் இதழ் என வெளிவந்த பொன்னி 1948 முதல் மாதம் ஈரிதழாக வெளிவந்தது.
       </div>
 
-      <div className="about-image">
+      <div style={imageStyles.aboutImageFull}>
         <img
           src="/images/about1.png"
           alt="Ponni Magazine"
+          style={imageStyles.aboutImageFullImg}
           onError={(e) => {
             e.target.style.display = 'none';
           }}
@@ -29,10 +57,11 @@ const About = ({ language }) => {
         தமிழ் இலக்கிய உலகில் முக்கியமான கவிஞர் பாரதிதாசன் அவரின் 'குயில்' இதழ் அரசால் தடை செய்யப்பட்ட பிறகு பொன்னியில் எழுதினார். அவரின் கொள்கைகளையும் நடையையும் பின்பற்றி எழுதியவர்களை 'பாரதிதாசன் பரம்பரை கவிஞர்கள்' என்று அறிமுகப்படுத்தியது பொன்னி இதழ்.
       </div>
 
-      <div className="about-double-image">
+      <div style={imageStyles.aboutImageSideBySide}>
         <img
           src="/images/about2.png"
           alt="Ponni History 1"
+          style={imageStyles.aboutImageSideBySideImg}
           onError={(e) => {
             e.target.style.display = 'none';
           }}
@@ -40,6 +69,7 @@ const About = ({ language }) => {
         <img
           src="/images/about3.png"
           alt="Ponni History 2"
+          style={imageStyles.aboutImageSideBySideImg}
           onError={(e) => {
             e.target.style.display = 'none';
           }}
@@ -54,10 +84,11 @@ const About = ({ language }) => {
         கவிதைகள், சிறுகதைகள், தொடர்கதைகள், நொடிக் கதைகள், நாடகங்கள், பொதுக் கட்டுரைகள், ஆய்வுக் கட்டுரைகள், ஒப்பாய்வுக் கட்டுரைகள், தொடர் கட்டுரைகள், செய்திப் பாட்டு போன்ற இலக்கிய வகைமைகளில் பொன்னியில் படைப்புகள் வெளியாகியுள்ளன. இது மட்டுமன்றி அட்டைப்படக் குறிப்பு, மகளிர் அழகுக் குறிப்புகள், குழந்தை வளர்ப்புமுறை, பொன்னி வாழ்த்துகள், விகடங்கள், சிறுவர் அரங்கம் (சிறுவர் இலக்கியம்) போன்ற படைப்புகளும் இடம்பெற்றுள்ளன.
       </div>
 
-      <div className="about-double-image">
+      <div style={imageStyles.aboutImageSideBySide}>
         <img
           src="/images/about4.png"
           alt="Ponni History 3"
+          style={imageStyles.aboutImageSideBySideImg}
           onError={(e) => {
             e.target.style.display = 'none';
           }}
@@ -65,6 +96,7 @@ const About = ({ language }) => {
         <img
           src="/images/about5.png"
           alt="Ponni History 4"
+          style={imageStyles.aboutImageSideBySideImg}
           onError={(e) => {
             e.target.style.display = 'none';
           }}

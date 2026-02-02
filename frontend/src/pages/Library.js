@@ -4,9 +4,9 @@ import { getTranslation } from '../services/translations';
 
 // Volume data with years
 const volumes = [
-  { id: 1, year: '1947', image: 'Volume1.jpg' },
+  { id: 1, year: '1947', image: 'Volume1.png' },
   { id: 2, year: '1948', image: 'Volume2.jpg' },
-  { id: 3, year: '1949', image: 'Volume3.jpg' },
+  { id: 3, year: '1949', image: 'Volume3.png' },
   { id: 4, year: '1950', image: 'Volume4.jpg' },
   { id: 5, year: '1951', image: 'Volume5.jpg' },
   { id: 6, year: '1952', image: 'Volume6.jpg' },
