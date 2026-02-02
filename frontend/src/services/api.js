@@ -57,10 +57,6 @@ api.interceptors.response.use(
   }
 );
 
-// =============================================================================
-// Health & Status APIs
-// =============================================================================
-
 /**
  * Check API and database health
  * @returns {Promise<{status: string, database: object, api: string}>}
@@ -78,10 +74,6 @@ export const getApiInfo = async () => {
   const response = await api.get('/');
   return response.data;
 };
-
-// =============================================================================
-// Question Answering & Search APIs
-// =============================================================================
 
 /**
  * Ask a question and get AI-generated answer with sources
@@ -113,10 +105,6 @@ export const search = async (query, topK = 10, useLLM = false) => {
   return response.data;
 };
 
-// =============================================================================
-// Author APIs
-// =============================================================================
-
 /**
  * Get list of all authors with article counts
  * @returns {Promise<{success: boolean, total_authors: number, total_articles: number, authors: Array}>}
@@ -136,9 +124,6 @@ export const getAuthorArticles = async (authorName) => {
   return response.data;
 };
 
-// =============================================================================
-// Topic Search APIs
-// =============================================================================
 
 /**
  * Find articles about a specific topic
@@ -152,10 +137,6 @@ export const searchByTopic = async (topic) => {
   return response.data;
 };
 
-// =============================================================================
-// Issue Statistics APIs
-// =============================================================================
-
 /**
  * Get statistics about all issues
  * @returns {Promise<{success: boolean, count: number, total_articles: number, issues: Array}>}
@@ -164,10 +145,6 @@ export const getIssueStats = async () => {
   const response = await api.get('/api/issues/stats');
   return response.data;
 };
-
-// =============================================================================
-// Library APIs
-// =============================================================================
 
 /**
  * Get list of all volumes
@@ -198,10 +175,6 @@ export const getPDFLink = async (volumeId, issueId) => {
   const response = await api.get(`/api/library/volumes/${volumeId}/issues/${issueId}/pdf`);
   return response.data;
 };
-
-// =============================================================================
-// Helper Functions
-// =============================================================================
 
 /**
  * Test API connection
