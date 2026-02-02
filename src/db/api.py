@@ -34,10 +34,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# Pydantic Models for Request/Response
-# =============================================================================
-
 class QuestionRequest(BaseModel):
     """Request model for asking questions."""
     question: str = Field(..., min_length=1, description="The question to ask")
@@ -153,9 +149,6 @@ class PDFLinkResponse(BaseModel):
     found: bool
 
 
-# =============================================================================
-# Lifespan Context Manager
-# =============================================================================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -174,10 +167,6 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Ponni RAG API...")
 
 
-# =============================================================================
-# FastAPI Application
-# =============================================================================
-
 app = FastAPI(
     title="Ponni RAG API",
     description="REST API for the Ponni Tamil Literary Archive RAG System",
@@ -194,10 +183,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# =============================================================================
-# Health & Status Endpoints
-# =============================================================================
 
 @app.get("/health", response_model=HealthResponse, tags=["Health"])
 async def health_check():
@@ -225,11 +210,6 @@ async def root():
         "docs": "/docs",
         "health": "/health"
     }
-
-
-# =============================================================================
-# Question Answering Endpoints
-# =============================================================================
 
 @app.post("/api/ask", response_model=QuestionResponse, tags=["Search"])
 async def ask_question_endpoint(request: QuestionRequest):
@@ -296,10 +276,6 @@ async def search_endpoint(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# =============================================================================
-# Author Endpoints
-# =============================================================================
-
 @app.get("/api/authors", response_model=AuthorsListResponse, tags=["Authors"])
 async def list_authors():
     """
@@ -362,10 +338,6 @@ async def get_author_articles(author_name: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# =============================================================================
-# Topic Search Endpoints
-# =============================================================================
-
 @app.get("/api/topics/search", response_model=TopicSearchResponse, tags=["Topics"])
 async def search_by_topic(
     topic: str = Query(..., min_length=1, description="Topic to search for")
@@ -397,9 +369,6 @@ async def search_by_topic(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# =============================================================================
-# Issue Statistics Endpoints
-# =============================================================================
 
 @app.get("/api/issues/stats", response_model=IssueStatsResponse, tags=["Issues"])
 async def get_issue_statistics():
@@ -427,10 +396,6 @@ async def get_issue_statistics():
         logger.error(f"Error getting issue stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# =============================================================================
-# Library Endpoints
-# =============================================================================
 
 @app.get("/api/library/volumes", response_model=List[VolumeInfo], tags=["Library"])
 async def list_volumes():
@@ -529,11 +494,6 @@ async def get_pdf_link(volume_id: int, issue_id: int):
         embed_url=embed_url,
         found=True
     )
-
-
-# =============================================================================
-# Run Server
-# =============================================================================
 
 if __name__ == "__main__":
     import uvicorn
