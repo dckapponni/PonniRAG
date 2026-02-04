@@ -23,10 +23,10 @@ import streamlit as st
 import torch
 torch.set_grad_enabled(False)
 from qdrant_client import models
-from transformers import pipeline
 import pandas as pd
+import requests
+import json
 
-import torch
 
 USE_CUDA = torch.cuda.is_available()
 DEVICE = "cuda" if USE_CUDA else "cpu"
@@ -41,6 +41,8 @@ COLLECTION_NAME = "qdrant_indexer"
 EMBEDDING_MODEL = "intfloat/multilingual-e5-large"
 BASE_DIR = Path(__file__).resolve().parent.parent
 CSV_PATH = BASE_DIR / "data" / "summary.csv"
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434")
+OLLAMA_MODEL = "tamil-llama"
 
 # # Force CPU usage to avoid CUDA OOM
 # os.environ["CUDA_VISIBLE_DEVICES"] = ""
@@ -82,27 +84,6 @@ def get_embed_model():
     logger.info("✅ Embedding model loaded and cached")
     return model
 
-
-@st.cache_resource(show_spinner=False)  # ✅ No spinner during queries
-def get_llm():
-    """
-    Load and cache LLM model using Streamlit's cache_resource.
-    Uses CPU to avoid CUDA OOM errors.
-    Spinner is disabled - will only show during preload_models().
-    """
-    logger.info("🔄 Loading LLM model (this happens only once)...")
-    
-    # CRITICAL: Use CPU only to avoid CUDA OOM
-    llm = pipeline(
-        "text-generation",
-        model="abhinand/tamil-llama-7b-instruct-v0.2",
-        device_map="auto",  
-        torch_dtype=torch.float16 if USE_CUDA else torch.float32,
-        model_kwargs={"low_cpu_mem_usage": True}
-    )
-    
-    logger.info("✅ LLM model loaded and cached")
-    return llm
 
 
 @st.cache_resource(show_spinner=False)  # ✅ No spinner during queries
@@ -1059,13 +1040,7 @@ TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இத�
 
 
 def generate_llm_answer(question: str, context: str, max_words: int = 500) -> str:
-    """
-    Generate detailed answer using LLM (200-500 words).
-    Uses cached LLM model from Streamlit (loaded silently).
-    """
     try:
-        llm = get_llm()  # Gets cached model silently
-        
         prompt = f"""{TAMIL_ANSWER_SYSTEM_PROMPT}
 
 கேள்வி: {question}
@@ -1074,31 +1049,39 @@ def generate_llm_answer(question: str, context: str, max_words: int = 500) -> st
 {context}
 
 விரிவான பதில் (200-500 சொற்கள்):"""
-        
-        logger.info("Generating LLM answer...")
-        outputs = llm(
-            prompt,
-            max_new_tokens=800,
-            temperature=0.0,
-            top_p=0.9,
-            do_sample=False,
-            num_return_sequences=1,
-            pad_token_id=llm.tokenizer.eos_token_id,
-        )
-        
-        generated_text = outputs[0]['generated_text']
-        answer = generated_text.split("விரிவான பதில் (200-500 சொற்கள்):")[-1].strip()
-        answer = re.sub(r'\s+', ' ', answer).strip()
-        
-        word_count = len(re.findall(r'[\u0B80-\u0BFF]+|\w+', answer))
-        logger.info(f"Generated answer: {word_count} words")
-        
-        return answer
-        
-    except Exception as e:
-        logger.error(f"LLM generation failed: {e}")
-        return ""
 
+        payload = {
+            "model": OLLAMA_MODEL,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.0,
+                "top_p": 0.9,
+                "num_predict": 800
+            }
+        }
+
+        response = requests.post(
+            f"{OLLAMA_HOST}/api/generate",
+            json=payload,
+            timeout=300
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+        answer = data.get("response", "").strip()
+
+        answer = re.sub(r'\s+', ' ', answer)
+
+        word_count = len(re.findall(r'[\u0B80-\u0BFF]+|\w+', answer))
+        logger.info(f"Ollama answer generated: {word_count} words")
+
+        return answer
+
+    except Exception as e:
+        logger.error(f"Ollama generation failed: {e}")
+        return ""
 
 def generate_extractive_answer(facts: List[Dict], question: str) -> str:
     """Generate fallback extractive answer if LLM fails."""
@@ -1292,10 +1275,6 @@ Error Type: {health_status['error']}
             return f"Error: {error_msg}"
         return {"answer": error_msg, "sources": [], "error": str(e)}
 
-
-# ============================================================================
-# PRELOAD FUNCTION FOR STREAMLIT APP INITIALIZATION
-# ============================================================================
 
 def preload_models():
     """
