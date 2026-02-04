@@ -427,9 +427,9 @@ def render_library_page():
     st.markdown("<br>", unsafe_allow_html=True)
     
     volumes = [
-        {"id": 1, "desc": "1947", "image": "Volume1.jpg"},
+        {"id": 1, "desc": "1947", "image": "Volume1.png"},
         {"id": 2, "desc": "1948", "image": "Volume2.jpg"},
-        {"id": 3, "desc": "1949", "image": "Volume3.jpg"},
+        {"id": 3, "desc": "1949", "image": "Volume3.png"},
         {"id": 4, "desc": "1950", "image": "Volume4.jpg"},
         {"id": 5, "desc": "1951", "image": "Volume5.jpg"},
         {"id": 6, "desc": "1952", "image": "Volume6.jpg"},
