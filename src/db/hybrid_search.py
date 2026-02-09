@@ -1,17 +1,5 @@
-
-"""
-Hybrid Search Module for Tamil Document Processing - OPTIMIZED FOR STREAMLIT
-Provides vector and keyword-based search with LLM-powered answer generation.
-
-KEY FIXES:
-1. Uses @st.cache_resource for persistent model caching
-2. Loads models on CPU to avoid CUDA OOM
-3. Models persist across Streamlit reruns
-4. Silent loading during queries (spinners only on first load)
-5. Faster response times (< 5 seconds after initial load)
-"""
 from typing import List, Dict, Tuple, Optional
-from qdrant_client import QdrantClient
+from qdrant_client import QdrantClient,models
 from sentence_transformers import SentenceTransformer
 from collections import defaultdict
 import re
@@ -19,14 +7,20 @@ import os
 import logging
 from pathlib import Path
 import streamlit as st
-
+import pandas as pd
+import requests
+import json
 import torch
 torch.set_grad_enabled(False)
-from qdrant_client import models
-from transformers import pipeline
-import pandas as pd
 
 import torch
+
+USE_CUDA = torch.cuda.is_available()
+DEVICE = "cuda" if USE_CUDA else "cpu"
+
+if USE_CUDA:
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
 
 USE_CUDA = torch.cuda.is_available()
 DEVICE = "cuda" if USE_CUDA else "cpu"
@@ -41,10 +35,8 @@ COLLECTION_NAME = "qdrant_indexer"
 EMBEDDING_MODEL = "intfloat/multilingual-e5-large"
 BASE_DIR = Path(__file__).resolve().parent.parent
 CSV_PATH = BASE_DIR / "data" / "summary.csv"
-
-# # Force CPU usage to avoid CUDA OOM
-# os.environ["CUDA_VISIBLE_DEVICES"] = ""
-# os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434")
+OLLAMA_MODEL = "tamil-llama"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,7 +46,11 @@ logger = logging.getLogger(__name__)
 
 
 def verify_files():
-    """Verify existence of critical files (CSV)."""
+    """
+    Verify existence of critical files (CSV).
+    Checks if the summary CSV file exists and logs its size for diagnostic purposes.
+    Called automatically on module import.
+    """
     logger.info("Verifying critical files...")
     if CSV_PATH.exists():
         logger.info(f"CSV found: {CSV_PATH}")
@@ -66,50 +62,91 @@ def verify_files():
 verify_files()
 
 
-# ============================================================================
-# STREAMLIT-CACHED MODEL LOADERS (PERSISTENT ACROSS RERUNS)
-# ============================================================================
-
-@st.cache_resource(show_spinner=False)  # ✅ No spinner during queries
+@st.cache_resource(show_spinner=False) 
 def get_embed_model():
     """
     Load and cache embedding model using Streamlit's cache_resource.
     This ensures the model loads ONCE and persists across all reruns.
     Spinner is disabled - will only show during preload_models().
     """
-    logger.info("🔄 Loading embedding model (this happens only once)...")
+    logger.info("Loading embedding model (this happens only once)...")
     model = SentenceTransformer(EMBEDDING_MODEL, device="cpu")
-    logger.info("✅ Embedding model loaded and cached")
+    logger.info(" Embedding model loaded and cached")
     return model
+
+
+
+@st.cache_resource(show_spinner=False) 
+def get_qdrant_client() -> QdrantClient:
+    """
+    Get or initialize Qdrant client (singleton pattern with Streamlit caching).
+
+    Creates a connection to the Qdrant vector database server and caches the client
+    instance for the entire Streamlit session. Subsequent calls reuse the connection.
+
+    Returns:
+        QdrantClient: Cached Qdrant client instance connected to server.
+    """
+    logger.info(" Connecting to Qdrant SERVER...")
+    
+    client = QdrantClient(
+        host=QDRANT_HOST,
+        port=QDRANT_PORT,
+        prefer_grpc=False,
+        timeout=30.0
+    )
+    
+    collection_info = client.get_collection(COLLECTION_NAME)
+    logger.info(f" Connected: {collection_info.points_count} points")
+    
+    return client
 
 
 @st.cache_resource(show_spinner=False)  # ✅ No spinner during queries
 def get_llm():
     """
-    Load and cache LLM model using Streamlit's cache_resource.
-    Uses CPU to avoid CUDA OOM errors.
-    Spinner is disabled - will only show during preload_models().
+    Generate dense embedding for query text.
+
+    Creates a dense vector representation of query text using the cached E5 embedding
+    model. Prefixes text with "query:" for E5 model's query-aware encoding.
+
+    Args:
+        text (str): Query text to embed.
+
+    Returns:
+        list: Dense embedding vector as list of floats (1024 dimensions for E5-large).
+
+    Processing:
+        - Retrieves cached embedding model silently
+        - Prefixes text with "query:" for E5 model
+        - Generates embedding on CPU
     """
-    logger.info("🔄 Loading LLM model (this happens only once)...")
-    
-    # CRITICAL: Use CPU only to avoid CUDA OOM
-    llm = pipeline(
-        "text-generation",
-        model="abhinand/tamil-llama-7b-instruct-v0.2",
-        device_map="auto",  
-        torch_dtype=torch.float16 if USE_CUDA else torch.float32,
-        model_kwargs={"low_cpu_mem_usage": True}
-    )
-    
-    logger.info("✅ LLM model loaded and cached")
-    return llm
+    model = get_embed_model()  
+    return model.encode(f"query: {text}").tolist()
 
 
 @st.cache_resource(show_spinner=False)  # ✅ No spinner during queries
 def get_qdrant_client() -> QdrantClient:
     """
-    Get or initialize Qdrant client (singleton pattern with Streamlit caching).
-    Spinner is disabled - will only show during preload_models().
+    Generate sparse BM25-style embedding for text.
+
+    Creates a sparse vector representation using term frequency (similar to BM25).
+    Each unique token gets a hash-based index and frequency-based value.
+
+    Args:
+        text (str): Text to embed sparsely.
+
+    Returns:
+        models.SparseVector: Qdrant sparse vector with indices and values.
+            - indices: Hash-based token IDs (0 to 2^31)
+            - values: Term frequencies as floats
+
+    Processing:
+        1. Tokenizes text using word boundaries
+        2. Converts to lowercase
+        3. Counts term frequencies
+        4. Hashes tokens to indices (modulo 2^31)
+        5. Uses frequencies as values
     """
     logger.info("🔄 Connecting to Qdrant SERVER...")
     
@@ -149,14 +186,26 @@ def sparse_embed(text: str):
     return models.SparseVector(indices=indices, values=values)
 
 
-# ============================================================================
-# REST OF YOUR CODE (UNCHANGED)
-# ============================================================================
 
 def check_qdrant_health() -> Dict:
-    """Check Qdrant database health and connectivity."""
+    """
+    Check Qdrant database health and connectivity.
+
+    Verifies that the Qdrant server is running, accessible, and contains the required
+    collection with data.
+
+    Returns:
+        dict: Health status containing:
+            - healthy (bool): True if all checks pass
+            - collection (str): Collection name if successful
+            - points_count (int): Number of vectors if successful
+            - message (str): Status message
+            - error (str): Error type if failed ('collection_not_found', 'connection_failed')
+            - details (str): Detailed error message if failed
+            - action (str): Recommended action if failed
+    """
     try:
-        client = get_qdrant_client()  # Uses cached client silently
+        client = get_qdrant_client()  
         
         try:
             collection_info = client.get_collection(COLLECTION_NAME)
@@ -185,7 +234,19 @@ def check_qdrant_health() -> Dict:
 
 
 def normalize_author_name(name: str) -> str:
-    """Normalize author names by removing prefixes and common variations."""
+    """
+    Normalize author names by removing prefixes and common variations.
+
+    Strips common prefixes (titles, honorifics) from Tamil and English author names
+    to enable flexible matching.
+
+    Args:
+        name (str): Author name to normalize.
+
+    Returns:
+        str: Normalized name with prefixes removed and whitespace cleaned.
+            Returns empty string if input is None or empty.
+    """
     if not name:
         return ""
     
@@ -208,7 +269,19 @@ def normalize_author_name(name: str) -> str:
 
 
 def flexible_author_match(search_name: str, csv_name: str) -> bool:
-    """Flexible matching between search query and CSV author name."""
+    """
+    Flexible matching between search query and CSV author name.
+
+    Performs multi-level matching including exact match, substring match, and
+    special case aliases for common Tamil authors.
+
+    Args:
+        search_name (str): Author name from search query.
+        csv_name (str): Author name from CSV record.
+
+    Returns:
+        bool: True if names match (by any matching rule), False otherwise.
+    """
     search_normalized = normalize_author_name(search_name).lower()
     csv_normalized = normalize_author_name(csv_name).lower()
     
@@ -242,15 +315,31 @@ def flexible_author_match(search_name: str, csv_name: str) -> bool:
 
 
 class EnhancedAuthorQuerySystem:
-    """Robust author query system with improved CSV parsing and query detection."""
     
     def __init__(self, csv_path: str):
+        """
+        Initialize enhanced author query system with CSV data loading.
+
+        Creates an instance and loads the CSV file containing article metadata
+        using multiple fallback strategies for robustness.
+        """
         self.csv_path = Path(csv_path)
         self.df = None
         self._load_csv()
     
     def _load_csv(self):
-        """Load CSV with multiple fallback strategies for robustness."""
+        """     
+        Load CSV with multiple fallback strategies for robustness.
+
+        Attempts to load CSV file using progressively more permissive parsing strategies
+        until successful. Validates and cleans the loaded data.
+
+        Loading Strategies (tried in order):
+            1. Standard UTF-8 encoding
+            2. Skip bad lines
+            3. Python engine with error skip
+            4. Python engine without quoting
+        """
         try:
             if not self.csv_path.exists():
                 logger.error(f"CSV not found: {self.csv_path}")
@@ -309,7 +398,16 @@ class EnhancedAuthorQuerySystem:
             self.df = pd.DataFrame()
     
     def _fix_column_names(self):
-        """Map alternate column names to standard Tamil names."""
+        """
+        Map alternate column names to standard Tamil names.
+
+        Renames English or alternate column names to standard Tamil column names
+        for consistent access across different CSV formats.
+
+        Column Mappings:
+            - 'author', 'Author' → 'ஆசிரியர்'
+            - 'title', 'Title', 'heading' → 'தலைப்பு'
+        """
         mappings = {
             'author': 'ஆசிரியர்',
             'Author': 'ஆசிரியர்',
@@ -324,7 +422,22 @@ class EnhancedAuthorQuerySystem:
                 logger.info(f"Renamed '{old}' to '{new}'")
     
     def detect_query_type(self, question: str) -> str:
-        """Detect the type of query based on keywords and patterns."""
+        """
+        Detect the type of query based on keywords and patterns.
+
+        Analyzes the user's question to categorize it into one of four query types
+        for appropriate handling.
+
+        Args:
+            question (str): User's question text.
+
+        Returns:
+            str: Query type identifier:
+                - 'list_all_authors': List all authors in magazine
+                - 'author_topics': Get articles by specific author
+                - 'topic_author': Find author who wrote about topic
+                - 'none': Not an author/topic query
+        """
         q = question.lower()
         
         known_authors = [
@@ -338,7 +451,7 @@ class EnhancedAuthorQuerySystem:
             'எழுத்தாளர்களின் பட்டியல்', 'எழுத்தாளர்கள் பட்டியல்',
             'அனைத்து எழுத்தாளர்', 'எழுத்தாளர்கள் எல்லாம்',
             'list all authors', 'இதழில் எழுதிய ஆசிரியர்கள்',
-            'இதழில் எழுதிய எழுத்தாளர்கள்'
+            'இதழில் எழுதிய எழுத்தாளர்கள்','எழுத்தாளர்'
         ]
         
         if any(p in q for p in list_patterns) and not has_author:
@@ -356,7 +469,7 @@ class EnhancedAuthorQuerySystem:
         
         topic_patterns = [
             'யார் எழுதினார்', 'எழுதியவர் யார்', 'ஆசிரியர் யார்',
-            'என்ற நூலை எழுதியவர்', 'என்ற கட்டுரை',
+            'என்ற நூலை எழுதியவர்', 'என்ற கட்டுரை','கட்டுரை யார் எழுதினார்', 'தலைப்பு யார் எழுதினார்',
             'who wrote', 'author of'
         ]
         
@@ -366,7 +479,19 @@ class EnhancedAuthorQuerySystem:
         return 'none'
     
     def extract_entity(self, question: str, query_type: str) -> str:
-        """Extract author name or topic from question based on query type."""
+        """
+        Extract author name or topic from question based on query type.
+
+        Parses the user's question to extract the relevant entity (author name or topic)
+        using regex patterns and noise word removal.
+
+        Args:
+            question (str): User's question text.
+            query_type (str): Pre-detected query type ('author_topics' or 'topic_author').
+
+        Returns:
+            str: Extracted entity (author name or topic), or empty string if extraction fails.
+        """
         q = question.strip()
         
         if query_type == 'author_topics':
@@ -432,7 +557,20 @@ class EnhancedAuthorQuerySystem:
         return ''
     
     def list_all_authors(self) -> Dict:
-        """List all unique authors with article counts."""
+        """
+        List all unique authors with article counts.
+        Retrieves all unique author names from the CSV and counts how many articles
+        each author wrote.
+
+        Returns:
+            dict: Result containing:
+                - type (str): "list_all_authors"
+                - success (bool): True if successful
+                - total_authors (int): Number of unique authors
+                - total_articles (int): Total article count
+                - authors (list): List of dicts with 'name' and 'count'
+                - message (str): Error message if failed
+        """
         if self.df is None or self.df.empty:
             return {
                 "type": "list_all_authors",
@@ -465,7 +603,23 @@ class EnhancedAuthorQuerySystem:
         }
     
     def get_topics_by_author(self, author_name: str) -> Dict:
-        """Get all articles/topics by a specific author."""
+        """
+        Get all articles/topics by a specific author.
+        Searches CSV for all articles written by the specified author using flexible
+        name matching.
+        Args:
+
+            author_name (str): Author name to search for (allows variations/aliases).
+        Returns:
+            dict: Result containing:
+                - type (str): "author_topics"
+                - success (bool): True if author found
+                - author (str): Search author name
+                - matched_author (str): Actual CSV author name (if found)
+                - count (int): Number of articles
+                - articles (list): List of article dicts with title, author, metadata
+                - message (str): Error message if not found
+        """
         if self.df is None or self.df.empty:
             return {
                 "type": "author_topics",
@@ -513,7 +667,22 @@ class EnhancedAuthorQuerySystem:
         }
     
     def get_author_by_topic(self, topic: str) -> Dict:
-        """Find authors who wrote about a specific topic."""
+        """ 
+        Find authors who wrote about a specific topic.
+        Searches CSV for articles whose titles contain the specified topic/keyword.
+
+        Args:
+            topic (str): Topic or keyword to search in article titles.
+
+        Returns:
+            dict: Result containing:
+                - type (str): "topic_author"
+                - success (bool): True if topic found
+                - topic (str): Search topic
+                - count (int): Number of matching articles
+                - articles (list): List of article dicts with title, author, metadata
+                - message (str): Error message if not found
+        """
         if self.df is None or self.df.empty:
             return {
                 "type": "topic_author",
@@ -561,7 +730,19 @@ class EnhancedAuthorQuerySystem:
 
 
 def format_author_list(result: Dict) -> str:
-    """Format list of all authors for display."""
+    """ Format list of all authors for display.
+        Creates a formatted Tamil text output showing all authors and their article counts,
+        sorted by article count (most prolific first).
+
+        Args:
+            result (dict): Result from list_all_authors().
+
+        Returns:
+            str: Formatted multi-line Tamil text with:
+                - Header: "பொன்னி இதழில் எழுதிய எழுத்தாளர்கள்"
+                - Statistics: Total authors and articles
+                - Numbered list: Each author with article count
+    """
     if not result['success']:
         return f"Error: {result['message']}"
     
@@ -578,9 +759,26 @@ def format_author_list(result: Dict) -> str:
     
     return '\n'.join(lines)
 
-
 def format_author_topics(result: Dict) -> str:
-    """Format topics by author for display."""
+    """
+    Format topics by author for display.
+    
+    Organizes and formats articles written by a specific author, grouped by year,
+    for display in Tamil language.
+    
+    Args:
+        result (Dict): Dictionary containing author query results with keys:
+            - success (bool): Whether the query was successful
+            - message (str): Error message if unsuccessful
+            - matched_author (str): The matched author name
+            - author (str): Original author name queried
+            - count (int): Total number of articles
+            - articles (List[Dict]): List of article dictionaries
+    
+    Returns:
+        str: Formatted string containing author information and articles organized by year,
+             or error message if query failed.
+    """
     if not result['success']:
         return f"Error: {result['message']}"
     
@@ -616,7 +814,25 @@ def format_author_topics(result: Dict) -> str:
 
 
 def format_topic_authors(result: Dict) -> str:
-    """Format authors by topic for display."""
+    """
+    Format authors by topic for display.
+    
+    Organizes and formats articles related to a specific topic, showing all authors
+    who have written about that topic.
+    
+    Args:
+        result (Dict): Dictionary containing topic query results with keys:
+            - success (bool): Whether the query was successful
+            - message (str): Error message if unsuccessful
+            - topic (str): The topic that was queried
+            - count (int): Total number of articles found
+            - articles (List[Dict]): List of article dictionaries containing
+              title, author, year, and issue information
+    
+    Returns:
+        str: Formatted string containing topic information and all related articles
+             with their authors, or error message if query failed.
+    """
     if not result['success']:
         return f"Error: {result['message']}"
     
@@ -643,7 +859,18 @@ def format_topic_authors(result: Dict) -> str:
 
 
 def detect_issue_count_query(question: str) -> bool:
-    """Detect if user is asking about issue count."""
+    """
+    Detect if user is asking about issue count.
+    
+    Analyzes the user's question to determine if they are asking about the number
+    of issues or requesting an issue count/list.
+    
+    Args:
+        question (str): User's question in Tamil or English
+    
+    Returns:
+        bool: True if the question is about issue count, False otherwise
+    """
     q = question.lower()
     
     patterns = [
@@ -664,7 +891,23 @@ def detect_issue_count_query(question: str) -> bool:
 
 
 def get_issue_count(csv_path: str) -> Dict:
-    """Get unique issue count from CSV with article statistics."""
+    """
+    Get unique issue count from CSV with article statistics.
+    
+    Reads a CSV file and extracts unique issue numbers along with article counts
+    for each issue. Includes error handling for various CSV reading scenarios.
+    
+    Args:
+        csv_path (str): Path to the CSV file containing issue and article data
+    
+    Returns:
+        Dict: Dictionary containing:
+            - success (bool): Whether the operation was successful
+            - message (str): Error message if unsuccessful
+            - count (int): Number of unique issues
+            - total_articles (int): Total number of articles across all issues
+            - issues (List[Dict]): List of dictionaries with issue_number and article_count
+    """
     try:
         csv_path = Path(csv_path)
         
@@ -753,7 +996,25 @@ def get_issue_count(csv_path: str) -> Dict:
 
 
 def format_issue_count(result: Dict) -> str:
-    """Format issue count result for display."""
+    """
+    Format issue count result for display.
+    
+    Creates a formatted, readable display of issue statistics including total issues,
+    total articles, detailed issue listings, and statistical summaries.
+    
+    Args:
+        result (Dict): Dictionary containing issue count data with keys:
+            - success (bool): Whether the query was successful
+            - message (str): Error message if unsuccessful
+            - count (int): Total number of unique issues
+            - total_articles (int): Total number of articles
+            - issues (List[Dict]): List of issue information dictionaries
+    
+    Returns:
+        str: Formatted string with comprehensive issue statistics, either as a full list
+             (if 20 or fewer issues) or as a summary with first 5, last 5, and statistics
+             (if more than 20 issues).
+    """
     if not result['success']:
         return f"Error: {result['message']}"
     
@@ -800,7 +1061,21 @@ def format_issue_count(result: Dict) -> str:
 
 
 def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
-    """Handle author-related queries and issue count queries."""
+    """
+    Handle author-related queries and issue count queries.
+    
+    Main dispatcher function that routes different types of author and issue queries
+    to appropriate handlers and returns formatted results.
+    
+    Args:
+        question (str): User's question in Tamil or English
+        csv_path (str): Path to the CSV file containing article data
+    
+    Returns:
+        Tuple[bool, str]: A tuple containing:
+            - bool: True if query was handled, False otherwise
+            - str: Formatted response string or empty string if not handled
+    """
     if detect_issue_count_query(question):
         logger.info("Detected issue count query")
         result = get_issue_count(csv_path)
@@ -845,13 +1120,35 @@ def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
 
 
 def is_author_question(question: str) -> bool:
-    """Check if question is about authors."""
+    """
+    Check if question is about authors.
+    
+    Performs keyword matching to determine if the user's question is related
+    to authors or author listings.
+    
+    Args:
+        question (str): User's question in Tamil or English
+    
+    Returns:
+        bool: True if question contains author-related keywords, False otherwise
+    """
     keywords = ["author", "authors", "list", "எழுத்தாளர்", "எழுத்தாளர்கள்", "பட்டியல்", "யார்"]
     return any(k in question.lower() for k in keywords)
 
 
 def fetch_all_authors(client: QdrantClient) -> List[str]:
-    """Fetch all unique authors from Qdrant database."""
+    """
+    Fetch all unique authors from Qdrant database.
+    
+    Retrieves all points from the Qdrant collection and extracts unique author names
+    from the payload data.
+    
+    Args:
+        client (QdrantClient): Initialized Qdrant client instance
+    
+    Returns:
+        List[str]: Sorted list of unique author names
+    """
     points, _ = client.scroll(collection_name=COLLECTION_NAME, limit=10000, with_payload=True)
     authors = set()
     for p in points:
@@ -864,7 +1161,18 @@ def fetch_all_authors(client: QdrantClient) -> List[str]:
 
 
 def format_authors_tamil(authors: List[str]) -> str:
-    """Format author list in Tamil."""
+    """
+    Format author list in Tamil.
+    
+    Creates a formatted, bulleted list of authors with a Tamil header.
+    
+    Args:
+        authors (List[str]): List of author names
+    
+    Returns:
+        str: Formatted string with Tamil header and bulleted author list,
+             or a message indicating no authors found
+    """
     if not authors:
         return "எழுத்தாளர் தகவல்கள் கிடைக்கவில்லை."
     lines = ["பொன்னி இதழில் எழுதிய எழுத்தாளர்கள்:\n"]
@@ -874,13 +1182,43 @@ def format_authors_tamil(authors: List[str]) -> str:
 
 
 class HybridQdrantSearch:
-    """Hybrid search combining dense and sparse vectors for optimal results."""
+    """
+    Hybrid search combining dense and sparse vectors for optimal results.
+    
+    Implements a fusion-based search strategy that combines dense embeddings
+    (semantic search) with sparse embeddings (keyword-based search) using
+    Reciprocal Rank Fusion (RRF) for improved retrieval accuracy.
+    
+    Attributes:
+        client (QdrantClient): Initialized Qdrant client instance
+    
+    Methods:
+        search: Perform hybrid search with dense and sparse vector fusion
+    """
     
     def __init__(self, client: QdrantClient):
+        """
+        Initialize the HybridQdrantSearch.
+        
+        Args:
+            client (QdrantClient): Initialized Qdrant client instance
+        """
         self.client = client
 
     def search(self, query: str, limit: int = 30):
-        """Perform hybrid search using dense and sparse vectors."""
+        """
+        Perform hybrid search using dense and sparse vectors.
+        
+        Executes a two-stage search combining dense embeddings for semantic similarity
+        and sparse embeddings for keyword matching, then fuses results using RRF.
+        
+        Args:
+            query (str): Search query string in Tamil or English
+            limit (int, optional): Maximum number of results to return. Defaults to 30.
+        
+        Returns:
+            List[ScoredPoint]: List of scored points from Qdrant with fused relevance scores
+        """
         response = self.client.query_points(
             collection_name=COLLECTION_NAME,
             prefetch=[
@@ -905,7 +1243,22 @@ class HybridQdrantSearch:
 
 
 def retrieve_all_chunks_for_document(client: QdrantClient, doc_id: str, doc_issue: str, volume: str) -> List[Dict]:
-    """Retrieve all chunks for a specific document."""
+    """
+    Retrieve all chunks for a specific document.
+    
+    Fetches all text chunks belonging to a single document identified by its
+    doc_id, doc_issue, and volume from the Qdrant database.
+    
+    Args:
+        client (QdrantClient): Initialized Qdrant client instance
+        doc_id (str): Document identifier
+        doc_issue (str): Issue number containing the document
+        volume (str): Volume number containing the document
+    
+    Returns:
+        List[Dict]: List of all chunk points for the specified document
+
+    """
     all_chunks = []
     offset = None
     while True:
@@ -930,7 +1283,29 @@ def retrieve_all_chunks_for_document(client: QdrantClient, doc_id: str, doc_issu
 
 
 def merge_consecutive_chunks(client: QdrantClient, points) -> List[Dict]:
-    """Merge consecutive chunks from the same document."""
+    """
+    Merge consecutive chunks from the same document.
+    
+    Takes search results that may contain multiple chunks from the same document
+    and merges them into complete documents. Filters out very short documents
+    (less than 50 words) and sorts by relevance score.
+    
+    Args:
+        client (QdrantClient): Initialized Qdrant client instance
+        points: List of scored points from Qdrant search results
+    
+    Returns:
+        List[Dict]: List of merged document dictionaries containing:
+            - volume: Document volume number
+            - doc_id: Document identifier
+            - doc_issue: Issue number
+            - heading: Article title/heading
+            - author_name: Author of the article
+            - content: Complete merged content from all chunks
+            - word_count: Total word count
+            - chunk_count: Number of chunks merged
+            - score: Relevance score from search
+    """
     seen_docs = set()
     merged_docs = []
     
@@ -990,7 +1365,23 @@ def merge_consecutive_chunks(client: QdrantClient, points) -> List[Dict]:
 
 
 def extract_key_facts(docs: List[Dict], question: str) -> List[Dict]:
-    """Extract key facts from documents relevant to question."""
+    """
+    Extract key facts from documents relevant to question.
+    
+    Analyzes documents and extracts individual sentences that are highly relevant
+    to the user's question based on keyword matching and relevance scoring.
+    
+    Args:
+        docs (List[Dict]): List of document dictionaries with 'content' field
+        question (str): User's question in Tamil or English
+    
+    Returns:
+        List[Dict]: List of up to 20 most relevant facts, each containing:
+            - sentence: The extracted sentence
+            - score: Relevance score based on keyword matches
+            - source_issue: Issue number of the source document
+            - source_volume: Volume number of the source document
+    """
     facts = []
     q_keywords = set(re.findall(r'[\u0B80-\u0BFF]{2,}', question.lower()))
     
@@ -1060,12 +1451,20 @@ TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இத�
 
 def generate_llm_answer(question: str, context: str, max_words: int = 500) -> str:
     """
-    Generate detailed answer using LLM (200-500 words).
-    Uses cached LLM model from Streamlit (loaded silently).
+    Generate an LLM-based answer using Ollama.
+    
+    Sends the question and context to an Ollama language model to generate
+    a comprehensive answer in Tamil following specific formatting guidelines.
+    
+    Args:
+        question (str): User's question in Tamil or English
+        context (str): Relevant context extracted from documents
+        max_words (int, optional): Maximum word count for the answer. Defaults to 500.
+    
+    Returns:
+        str: Generated answer in Tamil (200-500 words), or empty string if generation fails
     """
     try:
-        llm = get_llm()  # Gets cached model silently
-        
         prompt = f"""{TAMIL_ANSWER_SYSTEM_PROMPT}
 
 கேள்வி: {question}
@@ -1074,34 +1473,55 @@ def generate_llm_answer(question: str, context: str, max_words: int = 500) -> st
 {context}
 
 விரிவான பதில் (200-500 சொற்கள்):"""
-        
-        logger.info("Generating LLM answer...")
-        outputs = llm(
-            prompt,
-            max_new_tokens=800,
-            temperature=0.0,
-            top_p=0.9,
-            do_sample=False,
-            num_return_sequences=1,
-            pad_token_id=llm.tokenizer.eos_token_id,
+
+        payload = {
+            "model": OLLAMA_MODEL,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.0,
+                "top_p": 0.9,
+                "num_predict": 800
+            }
+        }
+
+        response = requests.post(
+            f"{OLLAMA_HOST}/api/generate",
+            json=payload,
+            timeout=300
         )
-        
-        generated_text = outputs[0]['generated_text']
-        answer = generated_text.split("விரிவான பதில் (200-500 சொற்கள்):")[-1].strip()
-        answer = re.sub(r'\s+', ' ', answer).strip()
-        
+
+        response.raise_for_status()
+
+        data = response.json()
+        answer = data.get("response", "").strip()
+
+        answer = re.sub(r'\s+', ' ', answer)
+
         word_count = len(re.findall(r'[\u0B80-\u0BFF]+|\w+', answer))
-        logger.info(f"Generated answer: {word_count} words")
-        
+        logger.info(f"Ollama answer generated: {word_count} words")
+
         return answer
-        
+
     except Exception as e:
-        logger.error(f"LLM generation failed: {e}")
+        logger.error(f"Ollama generation failed: {e}")
         return ""
 
-
 def generate_extractive_answer(facts: List[Dict], question: str) -> str:
-    """Generate fallback extractive answer if LLM fails."""
+    """
+    Generate fallback extractive answer if LLM fails.
+    
+    Creates an answer by concatenating the most relevant extracted sentences
+    when LLM generation is unavailable or fails. Used as a backup strategy.
+    
+    Args:
+        facts (List[Dict]): List of extracted fact dictionaries with 'sentence' field
+        question (str): User's question (not currently used in logic)
+    
+    Returns:
+        str: Concatenated answer from top 5 relevant sentences, or empty string
+             if no suitable facts are available
+    """
     if not facts:
         return ""
     
@@ -1124,7 +1544,26 @@ def generate_extractive_answer(facts: List[Dict], question: str) -> str:
 
 
 def format_sources(merged_docs: List[Dict], limit: int = 10) -> List[Dict]:
-    """Format source documents for display."""
+    """
+    Format source documents for display.
+    
+    Prepares a list of source documents with truncated content and metadata
+    for display to the user, removing duplicates and limiting content length.
+    
+    Args:
+        merged_docs (List[Dict]): List of merged document dictionaries
+        limit (int, optional): Maximum number of sources to return. Defaults to 10.
+    
+    Returns:
+        List[Dict]: List of formatted source dictionaries containing:
+            - volume: Document volume number
+            - heading: Article title/heading
+            - doc_issue: Issue number
+            - content: Truncated content (max 1500 chars)
+            - word_count: Total word count of full document
+            - chunks_merged: Number of chunks merged
+            - score: Relevance score
+    """
     sources = []
     seen_hashes = set()
     
@@ -1152,7 +1591,19 @@ def format_sources(merged_docs: List[Dict], limit: int = 10) -> List[Dict]:
 
 
 def format_answer_output(answer: str, sources: List[Dict]) -> str:
-    """Format complete answer with sources for display."""
+    """
+    Format complete answer with sources for display.
+    
+    Creates a comprehensive formatted output combining the generated answer
+    with detailed source citations and metadata.
+    
+    Args:
+        answer (str): Generated answer text in Tamil
+        sources (List[Dict]): List of formatted source dictionaries
+    
+    Returns:
+        str: Complete formatted output with answer section and sources section
+    """
     lines = []
     
     lines.append("பதில்:")
@@ -1178,11 +1629,29 @@ def format_answer_output(answer: str, sources: List[Dict]) -> str:
     
     return '\n'.join(lines)
 
-
 def ask_question(question: str, top_k: int = 10, return_formatted: bool = False, use_llm: bool = True) -> Dict:
     """
     Main question answering function with database health check and hybrid search.
-    Now uses Streamlit-cached models for fast responses (models load silently).
+
+    Primary entry point for processing user queries. Handles database health checks,
+    author queries, vector search, document merging, LLM generation, and source formatting.
+
+    Args:
+        question (str): User's question in Tamil or English.
+        top_k (int, optional): Number of source documents to return. Defaults to 10.
+        return_formatted (bool, optional): If True, return formatted string; if False,
+                                        return dict. Defaults to False.
+        use_llm (bool, optional): If True, use LLM for answer generation; if False,
+                                use extractive fallback only. Defaults to True.
+
+    Returns:
+        dict or str: Depending on return_formatted:
+            - If False (default): Dict with keys:
+                - answer (str): Generated answer text
+                - sources (list): List of source document dicts
+                - query_type (str): Type of query handled (optional)
+                - error (str/dict): Error details if failed (optional)
+            - If True: Formatted string with answer and sources
     """
     health_status = check_qdrant_health()
     
@@ -1300,7 +1769,9 @@ Error Type: {health_status['error']}
 def preload_models():
     """
     Preload all models at app startup with visible spinners.
-    Call this ONCE in your Streamlit app's initialization section.
+
+    Initializes all required models (embedding, LLM, Qdrant client) with visible
+    progress indicators. Should be called ONCE during Streamlit app initialization.
     After this runs, all subsequent queries will be fast and silent.
     """
     logger.info("=" * 60)

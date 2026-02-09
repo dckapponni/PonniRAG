@@ -5,10 +5,8 @@ import io
 import base64
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-
 import streamlit as st
 from PIL import Image
-
 from pdf_links import PDF_LINKS
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
@@ -95,7 +93,30 @@ TRANSLATIONS = {
 
 
 def get_app_styles():
-    """Return complete CSS styles for the application."""
+    """
+    Return complete CSS styles for the application.
+
+    Generates comprehensive CSS styling for the entire Streamlit web application,
+    including navigation bar, chat interface, library cards, PDF viewer, and responsive
+    design elements. Ensures consistent white background, Tamil-friendly typography,
+    and smooth transitions.
+
+    Returns:
+        str: Complete CSS stylesheet as HTML string with <style> tags.
+
+    Styling Includes:
+        - Google Fonts (Inter) import for modern typography
+        - Fixed navigation bar with blur effect
+        - Hero section with gradient title
+        - Chat input with fixed positioning and rounded corners
+        - Source cards with hover effects
+        - Volume and issue cards with image thumbnails
+        - PDF viewer container
+        - Expandable sections with custom colors
+        - Responsive column layouts
+        - Custom scrollbar styling
+
+    """
     return """
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -190,7 +211,18 @@ def get_app_styles():
 
 
 def extract_file_id(pdf_url: str) -> Optional[str]:
-    """Extract Google Drive file ID from URL."""
+    """
+    Extract Google Drive file ID from URL.
+
+    Parses Google Drive URLs in various formats to extract the unique file identifier
+    needed for embedding PDFs in the viewer.
+
+    Args:
+        pdf_url (str): Google Drive URL in any common format.
+
+    Returns:
+        str or None: Extracted file ID string, or None if extraction fails or URL is invalid.
+    """
     if not pdf_url:
         return None
     try:
@@ -204,7 +236,16 @@ def extract_file_id(pdf_url: str) -> Optional[str]:
 
 
 def initialize_session_state():
-    """Initialize Streamlit session state variables."""
+    """
+    Initialize Streamlit session state variables.
+
+    Sets up required session state variables on first app load to prevent KeyErrors
+    and ensure consistent application state across reruns.
+
+    Session State Variables Created:
+        - language (str): Current UI language, defaults to "ta" (Tamil)
+        - messages (list): Chat message history, defaults to empty list
+    """
     if "language" not in st.session_state:
         st.session_state.language = "ta"
         logger.info("Initialized language to Tamil")
@@ -214,7 +255,21 @@ def initialize_session_state():
 
 
 def configure_page():
-    """Configure Streamlit page settings."""
+    """
+    Configure Streamlit page settings.
+
+    Sets up Streamlit page configuration including title, icon, layout, and sidebar
+    visibility for the Ponni Archive application.
+
+    Page Settings:
+        - page_title: "Ponni Archive"
+        - page_icon: "📜" (scroll emoji)
+        - layout: "wide" (full-width layout)
+        - initial_sidebar_state: "collapsed" (sidebar hidden by default)
+
+    """
+
+
     st.set_page_config(
         page_title="Ponni Archive",
         page_icon="scroll",
@@ -225,7 +280,26 @@ def configure_page():
 
 
 def handle_query_parameters() -> Tuple[str, Optional[str], Optional[str]]:
-    """Process URL query parameters for navigation and language switching."""
+    """
+    Process URL query parameters for navigation and language switching.
+
+    Reads and processes URL query parameters to determine current page, selected volume,
+    selected issue, and handle language toggle requests. Updates session state and
+    triggers rerun when language changes.
+
+    Returns:
+        tuple: Three-element tuple containing:
+            - current_page (str): Page identifier ("home", "library", "issues", 
+                                "pdf_viewer", "about")
+            - selected_volume (str or None): Volume ID if viewing issues/PDF
+            - selected_issue (str or None): Issue number if viewing PDF
+
+    Query Parameters Processed:
+        - page: Current page to display
+        - volume: Selected volume ID
+        - issue: Selected issue number
+        - lang: Language switch trigger (removed after processing)
+    """
     query_params = st.query_params
     current_page = query_params.get("page", "home")
     selected_volume = query_params.get("volume", None)
@@ -245,12 +319,35 @@ def handle_query_parameters() -> Tuple[str, Optional[str], Optional[str]]:
 
 
 def t(key: str) -> str:
-    """Get translation for current language."""
+    """
+    Get translation for current language.
+
+    Retrieves translated text for a given key based on the current language setting
+    in session state. Provides bilingual support (Tamil/English) for the entire UI.
+
+    Args:
+        key (str): Translation key to lookup (e.g., 'app_title', 'nav_ask_ai').
+
+    Returns:
+        str: Translated text for current language, or the key itself if translation
+            not found (fallback behavior).
+    """
     return TRANSLATIONS.get(st.session_state.language, {}).get(key, key)
 
 
 def render_navigation_bar():
-    """Render the top navigation bar with language toggle."""
+    """
+    Render the top navigation bar with language toggle.
+
+    Creates a fixed navigation bar at the top of the page with logo, navigation links
+    (Ask AI, Library, About), and language toggle button. Maintains current page context
+    during language switches.
+
+    Navigation Elements:
+        - Logo: App title with home link
+        - Links: Ask AI, Library, About pages
+        - Language Toggle: Switches between Tamil/English
+    """
     lang = st.session_state.language
     target_lang = "en" if lang == "ta" else "ta"
     query_params = st.query_params
@@ -273,13 +370,25 @@ def render_navigation_bar():
 
 
 def handle_suggestion_click(prompt_text: str):
-    """Handle click on suggestion button."""
+    """
+    Handle click on suggestion button.
+
+    Stores the suggestion prompt in session state for processing by the chat interface.
+    Used to pre-populate chat input when user clicks a suggested query button.
+
+    Args:
+        prompt_text (str): The suggested question/prompt text to submit.
+    """
     st.session_state.temp_submit = prompt_text
     logger.info(f"Suggestion clicked: {prompt_text[:50]}...")
 
 
 def render_home_page():
-    """Render the home page with AI chat interface."""
+    """
+    Render the home page with AI chat interface.
+    Displays the main chat interface with hero section, suggestion buttons (when no messages),
+    chat history, and user input field. Handles both initial state and ongoing conversation.
+    """
     logger.info("Rendering home page")
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -321,35 +430,49 @@ def render_home_page():
 
 
 def render_sources(msg_idx: int, sources: List):
-    """Render source citations for a message."""
+    """
+    Render source citations for a message with correct field mapping.
+
+    Displays an expandable section showing all source documents that informed the AI's
+    response. Each source shows metadata (volume, issue, title, author) and content
+    preview with read more/less functionality for long content.
+    """
     with st.expander(f"{t('sources_title')} — {len(sources)}"):
         for idx, src in enumerate(sources, 1):
+            # Extract metadata based on source type
             if hasattr(src, 'payload') and src.payload:
+                # Direct from Qdrant
                 payload = src.payload
                 metadata = payload.get("metadata", {})
                 full_content = payload.get("content", "").strip()
-                doc_issue = metadata.get("doc_issue")
-                volume = metadata.get("volume")
-                heading = metadata.get("heading")
-                author = metadata.get("author")
+                
+                # CORRECT MAPPING for new JSON format:
+                malar = metadata.get("doc_id", "unknown")          # மலர் = doc_id
+                issue = metadata.get("doc_issue", "unknown")       # இதழ் = doc_issue  
+                heading = metadata.get("title", "")                # தலைப்பு = title
+                author = metadata.get("author_name", "")           # எழுத்தாளர் = author_name
             else:
-                doc_issue = src.get("doc_issue")
-                volume = src.get("volume")
-                heading = src.get("heading")
-                author = src.get("author")
+                # From formatted sources dict (hybrid_search.py format_sources)
                 full_content = src.get("content", "").strip()
+                malar = src.get("volume", "unknown")               # மலர்
+                issue = src.get("doc_issue", "unknown")            # இதழ்
+                heading = src.get("heading", "")                   # தலைப்பு
+                author = src.get("author_name", "")                # எழுத்தாளர்
             
+            # Build metadata display string
             meta_parts = []
-            if doc_issue:
-                meta_parts.append(f"{t('issue_label')}: {doc_issue}")
-            if volume:
-                meta_parts.append(f"{t('malar_label')}: {volume}")
+            if issue and issue != "unknown":
+                meta_parts.append(f"{t('issue_label')}: {issue}")  # இதழ்: 6
+            if malar and malar != "unknown":
+                meta_parts.append(f"{t('malar_label')}: {malar}")  # மலர்: 1
             if heading:
                 meta_parts.append(f"{t('title_label')}: {heading}")
             if author:
                 meta_parts.append(f"{t('author_label')}: {author}")
-            meta_str = " • ".join(meta_parts)
             
+            meta_str = " • ".join(meta_parts) if meta_parts else "மெட்டாடேட்டா கிடைக்கவில்லை"
+            
+            # Handle expandable content for long sources
             read_more_key = f"read_more_{msg_idx}_{idx}"
             if read_more_key not in st.session_state:
                 st.session_state[read_more_key] = False
@@ -357,14 +480,18 @@ def render_sources(msg_idx: int, sources: List):
             if len(full_content) > 300:
                 preview_content = full_content[:300] + "..."
                 display_content = full_content if st.session_state[read_more_key] else preview_content
+                
                 source_html = f"""
                 <div class="source-card">
-                    <div class="source-header"><span class="source-title">{t('sources_title')} {idx}</span></div>
+                    <div class="source-header">
+                        <span class="source-title">{t('sources_title')} {idx}</span>
+                    </div>
                     <div class="source-meta">{meta_str}</div>
                     <div class="source-preview">{display_content}</div>
                 </div>
                 """
                 st.markdown(source_html, unsafe_allow_html=True)
+                
                 button_label = t('show_less') if st.session_state[read_more_key] else t('read_more')
                 if st.button(button_label, key=f"btn_{read_more_key}"):
                     st.session_state[read_more_key] = not st.session_state[read_more_key]
@@ -372,16 +499,22 @@ def render_sources(msg_idx: int, sources: List):
             else:
                 source_html = f"""
                 <div class="source-card">
-                    <div class="source-header"><span class="source-title">{t('sources_title')} {idx}</span></div>
+                    <div class="source-header">
+                        <span class="source-title">{t('sources_title')} {idx}</span>
+                    </div>
                     <div class="source-meta">{meta_str}</div>
                     <div class="source-preview">{full_content}</div>
                 </div>
                 """
                 st.markdown(source_html, unsafe_allow_html=True)
 
-
 def handle_user_input():
-    """Handle user input from chat interface."""
+    """
+    Handle user input from chat interface.
+
+    Processes user queries from either chat input field or suggestion buttons, sends
+    to AI backend, and updates message history with response and sources.
+    """
     if "temp_submit" in st.session_state:
         user_input = st.session_state.temp_submit
         del st.session_state.temp_submit
@@ -414,7 +547,13 @@ def handle_user_input():
 
 
 def render_library_page():
-    """Render the digital library page showing all volumes."""
+    """
+    Render the digital library page showing all volumes.
+
+    Displays a grid of volume cards (8 volumes total) representing Ponni magazine
+    issues from 1947-1954. Each card shows volume cover image, number, and year.
+
+    """
     logger.info("Rendering library page")
     st.markdown("<div style='height: 6rem;'></div>", unsafe_allow_html=True)
     st.markdown(f"## {t('lib_title')}")
@@ -422,9 +561,9 @@ def render_library_page():
     st.markdown("<br>", unsafe_allow_html=True)
     
     volumes = [
-        {"id": 1, "desc": "1947", "image": "Volume1.jpg"},
+        {"id": 1, "desc": "1947", "image": "Volume1.png"},
         {"id": 2, "desc": "1948", "image": "Volume2.jpg"},
-        {"id": 3, "desc": "1949", "image": "Volume3.jpg"},
+        {"id": 3, "desc": "1949", "image": "Volume3.png"},
         {"id": 4, "desc": "1950", "image": "Volume4.jpg"},
         {"id": 5, "desc": "1951", "image": "Volume5.jpg"},
         {"id": 6, "desc": "1952", "image": "Volume6.jpg"},
@@ -443,7 +582,14 @@ def render_library_page():
 
 
 def render_volume_card(vol: Dict):
-    """Render a single volume card with image and metadata."""
+    """
+    Render a single volume card with image and metadata.
+
+    Creates a clickable card displaying a volume's cover image, number, and year.
+    Handles image loading, thumbnail generation, and base64 encoding for display.
+
+
+    """
     img_path = IMG_DIR / vol["image"]
     if img_path.exists():
         try:
@@ -476,7 +622,10 @@ def render_volume_card(vol: Dict):
 
 
 def set_page(**params):
-    """Update query parameters for navigation."""
+    """Update query parameters for navigation.
+    Helper function to modify URL query parameters for page navigation while
+    preserving existing parameters.
+    """
     qp = dict(st.query_params)
     qp.update({k: v for k, v in params.items() if v is not None})
     st.query_params.clear()
@@ -484,7 +633,12 @@ def set_page(**params):
 
 
 def render_issues_page(volume_id: str):
-    """Render the issues page for a specific volume."""
+    """
+    Render the issues page for a specific volume.
+
+    Displays all available issues for a selected volume in a grid layout, with
+    each issue showing its cover image and number. Includes back navigation button.
+    """
     logger.info(f"Rendering issues page for volume {volume_id}")
     st.markdown("<div style='height: 6rem;'></div>", unsafe_allow_html=True)
     if st.button(t("lib_back")):
@@ -503,7 +657,13 @@ def render_issues_page(volume_id: str):
 
 
 def load_volume_issues(volume_id: str, volume_folder: Path) -> List[Dict]:
-    """Load issue data for a specific volume."""
+    """
+    Load issue data for a specific volume.
+
+    Scans the volume's image folder and builds a list of issues that have both
+    cover images and corresponding PDF links available.
+
+    """
     if not volume_folder.exists():
         return []
     image_files = []
@@ -523,7 +683,11 @@ def load_volume_issues(volume_id: str, volume_folder: Path) -> List[Dict]:
 
 
 def render_issue_grid(issues_data: List[Dict], volume_id: str):
-    """Render grid of issue cards."""
+    """
+    Render grid of issue cards.
+    Displays issue cards in a responsive grid layout with 4 cards per row.
+
+    """
     for i in range(0, len(issues_data), 4):
         cols = st.columns(4, gap="medium")
         for j in range(4):
@@ -535,7 +699,13 @@ def render_issue_grid(issues_data: List[Dict], volume_id: str):
 
 
 def render_issue_card(issue: Dict, volume_id: str):
-    """Render a single issue card."""
+    """
+    Render a single issue card.
+
+    Creates a clickable card displaying an issue's cover image and number,
+    linking to the PDF viewer page.
+
+    """
     try:
         img = Image.open(issue["image_path"])
         if img.mode != "RGB":
@@ -556,7 +726,13 @@ def render_issue_card(issue: Dict, volume_id: str):
 
 
 def render_pdf_viewer_page(volume_id: str, issue_num: str):
-    """Render PDF viewer page for a specific issue."""
+    """
+    Render PDF viewer page for a specific issue.
+
+    Displays an embedded PDF viewer for a selected magazine issue using Google Drive
+    preview. Includes back navigation button and direct link to open PDF in new tab.
+
+    """
     logger.info(f"Rendering PDF viewer for volume {volume_id}, issue {issue_num}")
     st.markdown("<div style='height: 6rem;'></div>", unsafe_allow_html=True)
     if st.button(t("lib_back_issues")):
@@ -582,7 +758,13 @@ def render_pdf_viewer_page(volume_id: str, issue_num: str):
 
 
 def load_image(image_name: str):
-    """Load and display an image with multiple extension attempts."""
+    """
+    Load and display an image with multiple extension attempts.
+
+    Attempts to load and display an image by trying multiple file extensions
+    (.png, .jpg, .jpeg in both lower and uppercase).
+
+    """
     for ext in ['.png', '.jpg', '.jpeg', '.PNG', '.JPG', '.JPEG']:
         img_path = IMG_DIR / f"{image_name}{ext}"
         if img_path.exists():
@@ -600,7 +782,13 @@ def load_image(image_name: str):
 
 
 def render_about_page():
-    """Render the About page with historical information about Ponni magazine."""
+    """
+    Render the About page with historical information about Ponni magazine.
+
+    Displays comprehensive Tamil text about Ponni magazine's history, significance,
+    contributors, and impact on Dravidian movement. Includes historical images
+    integrated throughout the content.
+    """
     logger.info("Rendering about page")
     st.markdown("<div style='height: 1rem;'></div>", unsafe_allow_html=True)
     
@@ -736,7 +924,28 @@ def render_about_page():
 
 
 def main():
-    """Main application entry point."""
+    """
+    Main application entry point.
+
+    Orchestrates the entire Streamlit application flow including configuration,
+    initialization, routing, and page rendering based on URL parameters.
+
+    Application Flow:
+        1. Configure Streamlit page settings
+        2. Initialize session state variables
+        3. Process URL query parameters
+        4. Apply CSS styles
+        5. Render navigation bar
+        6. Route to appropriate page based on current_page parameter
+        7. Log final page state
+
+    Page Routing:
+        - "library" → render_library_page()
+        - "issues" → render_issues_page(volume_id)
+        - "pdf_viewer" → render_pdf_viewer_page(volume_id, issue_num)
+        - "about" → render_about_page()
+        - default/other → render_home_page()
+    """
     logger.info("Starting Ponni Archive application")
     configure_page()
     initialize_session_state()

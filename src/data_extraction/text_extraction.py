@@ -1,6 +1,3 @@
-"""
-DOCX Text Extraction Script for Tamil Document Processing.
-"""
 import time
 import re
 import logging
@@ -75,7 +72,7 @@ def extract_text_from_file(file_bytes, filename):
     Returns:
         str: Extracted text
     """
-    # Try as DOCX first
+    
     try:
         file_bytes.seek(0)
         text = docx2txt.process(file_bytes)
@@ -83,7 +80,6 @@ def extract_text_from_file(file_bytes, filename):
     except Exception as docx_error:
         logger.warning(f"Failed to extract as DOCX: {docx_error}")
         
-        # Try as DOC (old format)
         try:
             file_bytes.seek(0)
             text = extract_text_from_doc(file_bytes)
