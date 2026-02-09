@@ -13,6 +13,14 @@ import json
 import torch
 torch.set_grad_enabled(False)
 
+import torch
+
+USE_CUDA = torch.cuda.is_available()
+DEVICE = "cuda" if USE_CUDA else "cpu"
+
+if USE_CUDA:
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
 
 USE_CUDA = torch.cuda.is_available()
 DEVICE = "cuda" if USE_CUDA else "cpu"
@@ -94,7 +102,8 @@ def get_qdrant_client() -> QdrantClient:
     return client
 
 
-def dense_embed_query(text: str):
+@st.cache_resource(show_spinner=False)  # ✅ No spinner during queries
+def get_llm():
     """
     Generate dense embedding for query text.
 
@@ -116,7 +125,8 @@ def dense_embed_query(text: str):
     return model.encode(f"query: {text}").tolist()
 
 
-def sparse_embed(text: str):
+@st.cache_resource(show_spinner=False)  # ✅ No spinner during queries
+def get_qdrant_client() -> QdrantClient:
     """
     Generate sparse BM25-style embedding for text.
 
@@ -138,6 +148,33 @@ def sparse_embed(text: str):
         4. Hashes tokens to indices (modulo 2^31)
         5. Uses frequencies as values
     """
+    logger.info("🔄 Connecting to Qdrant SERVER...")
+    
+    client = QdrantClient(
+        host=QDRANT_HOST,
+        port=QDRANT_PORT,
+        prefer_grpc=False,
+        timeout=30.0
+    )
+    
+    collection_info = client.get_collection(COLLECTION_NAME)
+    logger.info(f"✅ Connected: {collection_info.points_count} points")
+    
+    return client
+
+
+# ============================================================================
+# EMBEDDING FUNCTIONS (USE CACHED MODELS)
+# ============================================================================
+
+def dense_embed_query(text: str):
+    """Generate dense embedding for query text."""
+    model = get_embed_model()  # Gets cached model silently
+    return model.encode(f"query: {text}").tolist()
+
+
+def sparse_embed(text: str):
+    """Generate sparse BM25-style embedding for text."""
     tokens = re.findall(r"\b\w+\b", text.lower())
     counts = defaultdict(int)
     for t in tokens:
@@ -1724,6 +1761,10 @@ Error Type: {health_status['error']}
             return f"Error: {error_msg}"
         return {"answer": error_msg, "sources": [], "error": str(e)}
 
+
+# ============================================================================
+# PRELOAD FUNCTION FOR STREAMLIT APP INITIALIZATION
+# ============================================================================
 
 def preload_models():
     """

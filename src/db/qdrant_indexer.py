@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import uuid
 from pathlib import Path
 from typing import Dict, List
@@ -23,6 +24,8 @@ from src.config.config import (
 BASE_DIR = Path(__file__).resolve().parent
 
 QDRANT_PATH = str(BASE_DIR / "qdrant_data")
+QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
+QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
 
 COLLECTION_NAME = Path(__file__).stem
 
@@ -451,7 +454,7 @@ def main():
     5. Indexes author metadata
     6. Logs statistics and completion status
     """
-    client = QdrantClient(host="localhost", port=6333)
+    client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
 
     if client.collection_exists(COLLECTION_NAME):
         client.delete_collection(COLLECTION_NAME)
