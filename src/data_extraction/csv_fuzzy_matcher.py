@@ -1,7 +1,3 @@
-"""
-CSV-based fuzzy matching fallback for when மலர்/இதழ் extraction fails
-NEW FORMAT: Returns year and source_document, renamed fields
-"""
 import re
 import logging
 import pandas as pd
@@ -11,14 +7,46 @@ logger = logging.getLogger('TamilDocProcessor.csv_fuzzy_matcher')
 
 
 def calculate_similarity(str1, str2):
-    """Calculate similarity percentage between two strings"""
+    """
+    Calculate similarity percentage between two strings.
+
+    Uses Python's SequenceMatcher to compute a ratio-based similarity score
+    between two strings, useful for fuzzy matching of titles and text.
+
+    Args:
+        str1 (str): First string to compare.
+        str2 (str): Second string to compare.
+
+    Returns:
+        float: Similarity percentage from 0 to 100. Returns 0 if either string
+            is empty or None.
+    """
     if not str1 or not str2:
         return 0
     return SequenceMatcher(None, str1, str2).ratio() * 100
 
 
 def remove_symbols(text):
-    """Remove all punctuation and symbols, keep only letters and spaces"""
+    """
+    Remove all punctuation and symbols, keeping only letters and spaces.
+
+    Strips punctuation, special characters, and symbols from text while preserving
+    Unicode letters (including Tamil characters) and spaces. Used for normalizing
+    text before fuzzy matching.
+
+    Args:
+        text (str or any): Text to clean. Can handle pandas NA values and non-string types.
+
+    Returns:
+        str: Cleaned text with only letters and single spaces. Returns empty string
+            if input is NA or None.
+
+    Processing Steps:
+        1. Converts to string and strips whitespace
+        2. Removes all non-word, non-space characters (Unicode-aware)
+        3. Collapses multiple spaces into single space
+        4. Strips leading/trailing whitespace
+    """
     if pd.isna(text):
         return ""
     text = str(text).strip()
@@ -28,7 +56,24 @@ def remove_symbols(text):
 
 
 def extract_malar_issue_from_text(text):
-    """Extract மலர் and இதழ் from text (first 100 lines)"""
+    """
+    Extract மலர் (volume) and இதழ் (issue) numbers from document text.
+
+    Searches the first 100 lines of text for மலர் and இதழ் identifiers using
+    multiple regex patterns. Handles special cases like பொங்கல் மலர் (Pongal special).
+
+    Args:
+        text (str): Full document text (multi-line string).
+
+    Returns:
+        tuple: (malar, issue) where both are strings or None.
+            - malar (str or None): Volume number or special name like "பொங்கல்"
+            - issue (str or None): Issue number
+
+    Search Patterns:
+        For மலர்: "மலர்: X", "மலர் எண்: X", "தொகுதி: X", "பொங்கல் மலர்"
+        For இதழ்: "இதழ்: X", "எண்: X", "இல. X"
+    """
     lines = text.split('\n')[:100]
     first_pages = '\n'.join(lines)
     
@@ -73,7 +118,26 @@ def extract_malar_issue_from_text(text):
 
 
 def normalize_csv_value(val):
-    """Normalize CSV values - convert '1.0' to '1', strip whitespace"""
+    """
+    Normalize CSV values for consistent comparison.
+
+    Converts float-formatted strings like '1.0' to integer strings like '1',
+    and strips whitespace. Ensures consistent formatting between CSV data
+    and extracted document metadata.
+
+    Args:
+        val (any): Value from CSV cell (can be string, float, int, or pandas NA).
+
+    Returns:
+        str: Normalized string value. Returns empty string if input is NA or None.
+
+    Normalization Rules:
+        - Strips leading/trailing whitespace
+        - Converts "1.0" → "1" (float strings to integers when appropriate)
+        - Preserves non-numeric strings as-is
+        - Returns "" for NA/None values
+
+    """
     if pd.isna(val):
         return ''
     
@@ -89,7 +153,29 @@ def normalize_csv_value(val):
 
 
 def find_article_boundary_fuzzy(lines, title, next_title=None):
-    """Find article content using fuzzy title matching"""
+    """
+    Find article content boundaries using fuzzy title matching.
+
+    Locates an article in document lines by fuzzy-matching its title, then
+    extracts content from the matched title to either the next article's title
+    or end of document.
+
+    Args:
+        lines (list): List of text lines from the document.
+        title (str): Article title to search for.
+        next_title (str, optional): Title of the next article for boundary detection.
+                                If None, extracts to end of document.
+
+    Returns:
+        str or None: Extracted article content including title line, or None if:
+            - Title match score < 70%
+            - No match found
+
+    Matching Logic:
+        - Start: Finds line with highest similarity to title (minimum 70% required)
+        - End: Stops at line matching next_title (>80% similarity) or document end
+        - Returns all lines from start to end as joined string
+    """
     title_clean = remove_symbols(title)
     
     start_idx = -1
@@ -130,9 +216,28 @@ def find_article_boundary_fuzzy(lines, title, next_title=None):
 
 
 def extract_articles_from_csv(lines, csv_df, file_path):
+    
     """
-    Extract articles using CSV fuzzy matching when மலர்/இதழ் extraction fails
-    NEW FORMAT: Returns year and source_document, uses new field names
+    Extract articles using CSV fuzzy matching when மலர்/இதழ் extraction fails.
+    Args:
+        lines (list): List of text lines from the document.
+        csv_df (pd.DataFrame): DataFrame containing article metadata with columns:
+                            மலர், இதழ், தலைப்பு, ஆசிரியர், ஆண்டு
+        file_path (Path-like): File path object with .name attribute for source document.
+
+    Returns:
+        dict or None: Extraction results containing:
+            - articles (list): List of article dictionaries with fields:
+                - doc_id, doc_issue, article_no, author_name, title, content,
+                year, source_document
+            - authors_list (list): List of unique author dictionaries
+            - doc_id (str): Normalized மலர் identifier
+            - doc_issue (str): Normalized இதழ் number
+            
+            Returns None if:
+            - CSV DataFrame is None
+            - Cannot extract மலர்/இதழ் from document
+            - No matching articles found in CSV
     """
     logger.info("=" * 80)
     logger.info("CSV FUZZY MATCHING FALLBACK ACTIVATED")
@@ -198,16 +303,16 @@ def extract_articles_from_csv(lines, csv_df, file_path):
                 "doc_id": doc_malar_norm,
                 "doc_issue": doc_issue_norm,
                 "article_no": article_no,
-                "author_name": str(author),  # Changed from article_author_name
-                "title": str(title),  # Changed from article_heading
-                "content": content,  # Changed from article_content
-                "year": year,  # NEW FIELD
-                "source_document": source_document  # NEW FIELD
+                "author_name": str(author), 
+                "title": str(title), 
+                "content": content,  
+                "year": year, 
+                "source_document": source_document  
             })
-            logger.info(f"✓ CSV: {title[:40]}... ({len(content)} chars, year: {year})")
+            logger.info(f" CSV: {title[:40]}... ({len(content)} chars, year: {year})")
             article_no += 1
         else:
-            logger.debug(f"✗ CSV: {title[:40]}... (not found or too short)")
+            logger.debug(f" CSV: {title[:40]}... (not found or too short)")
     
     logger.info(f"CSV Fuzzy Matching extracted {len(articles)} articles")
     
@@ -226,7 +331,7 @@ def extract_articles_from_csv(lines, csv_df, file_path):
                 })
     
     return {
-        "articles": articles,  # No separate intro
+        "articles": articles,  
         "authors_list": authors_list,
         "doc_id": doc_malar_norm,
         "doc_issue": doc_issue_norm

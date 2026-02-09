@@ -1,11 +1,3 @@
-"""
-Qdrant Index Module for Tamil Document Processing (Modified for new JSON format).
-Handles document chunking, embedding generation, and indexing to Qdrant vector database.
-Supports both intro documents and author metadata with hybrid search (dense + sparse vectors).
-
-Modified to work with JSON format where articles are in an "articles" array.
-"""
-
 import json
 import logging
 import uuid

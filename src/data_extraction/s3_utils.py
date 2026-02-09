@@ -1,7 +1,3 @@
-"""
-S3 utility functions with comprehensive error handling and logging.
-Provides functions for listing, reading, writing, and managing files in AWS S3.
-"""
 import boto3
 import logging
 from io import BytesIO
