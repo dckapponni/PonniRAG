@@ -1,7 +1,3 @@
-"""
-Text processing utilities with comprehensive logging.
-Handles Tamil text normalization, author extraction, and heading validation.
-"""
 import re
 import logging
 from difflib import SequenceMatcher
@@ -30,7 +26,6 @@ def normalize_text(text):
         return text
         
     except Exception as e:
-        # Safely convert to string and slice
         text_str = str(text) if text else ''
         text_preview = text_str[:50] if len(text_str) > 50 else text_str
         logger.warning(f"Error normalizing text '{text_preview}...': {e}")
@@ -58,7 +53,6 @@ def normalize_title(title):
         return title
         
     except Exception as e:
-        # Safely convert to string and slice
         title_str = str(title) if title else ''
         title_preview = title_str[:50] if len(title_str) > 50 else title_str
         logger.warning(f"Error normalizing title '{title_preview}...': {e}")
@@ -93,7 +87,6 @@ def is_valid_heading(heading):
         return True
         
     except Exception as e:
-        # Safely convert to string and slice
         heading_str = str(heading) if heading else ''
         heading_preview = heading_str[:30] if len(heading_str) > 30 else heading_str
         logger.warning(f"Error validating heading '{heading_preview}...': {e}")
@@ -137,7 +130,6 @@ def fuzzy_match_author(line, authors_normalized, authors_original, threshold=0.8
         return (best_match, best_similarity)
         
     except Exception as e:
-        # Safely convert to string and slice
         line_str = str(line) if line else ''
         line_preview = line_str[:50] if len(line_str) > 50 else line_str
         logger.warning(f"Error in fuzzy_match_author for line '{line_preview}...': {e}")
@@ -183,7 +175,6 @@ def extract_author_from_line(line, authors_normalized, authors_original):
         return matched_author
         
     except Exception as e:
-        # Safely convert to string and slice
         line_str = str(line) if line else ''
         line_preview = line_str[:50] if len(line_str) > 50 else line_str
         logger.warning(f"Error extracting author from line '{line_preview}...': {e}")

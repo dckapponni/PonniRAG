@@ -1,14 +1,3 @@
-"""
-COMPLETE PATTERN A, B, C FIX - article_patterns.py
-Enhanced versions with comprehensive debugging
-
-Key improvements:
-1. Pattern A: HEADING → AUTHOR → CONTENT (forward)
-2. Pattern B: AUTHOR → HEADING → CONTENT (forward)
-3. Pattern C: Two scenarios
-   - Standalone: HEADING → CONTENT → AUTHOR (reverse)
-   - Embedded: HEADING → CONTENT (author at end)
-"""
 import logging
 import re
 from text_processing import extract_author_from_line, is_valid_heading
@@ -438,12 +427,14 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
                 i += 1
                 continue
             
+            # Check if this line is a standalone author (PATTERN C - STANDALONE)
             matched_author = extract_author_from_line(line, authors_normalized, authors_original)
             
             if matched_author:
                 author_idx = i
                 logger.debug(f"Standalone: Found '{matched_author}' at {author_idx}")
                 
+                # Search backwards for heading, skipping blank lines
                 heading_search_start = author_idx - 1
                 while heading_search_start >= start_idx and not lines[heading_search_start].strip():
                     heading_search_start -= 1
@@ -452,11 +443,13 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
                     i += 1
                     continue
                 
+                # The last non-blank line before author is potential end of content
                 content_end_idx = heading_search_start
                 heading = None
                 heading_idx = -1
-                
+            
                 j = content_end_idx
+                
                 while j >= start_idx:
                     if processed_lines[j]:
                         break
@@ -466,10 +459,12 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
                         j -= 1
                         continue
                     
+                    # Stop if we hit another author
                     prev_author = extract_author_from_line(lines[j], authors_normalized, authors_original)
                     if prev_author:
                         break
                     
+                    # Stop if we hit an intro keyword
                     is_intro = False
                     for keyword in intro_keywords:
                         if keyword in current_line:
@@ -478,13 +473,15 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
                     if is_intro:
                         break
                     
-                    if len(current_line) <= 50:
-                        ba = sum(1 for k in range(j-1, max(j-4, start_idx-1), -1) 
-                                if k >= start_idx and not lines[k].strip())
-                        bb = sum(1 for k in range(j+1, min(j+4, len(lines))) 
-                                if not lines[k].strip())
+                    # Check if this could be a heading (short line)
+                    if len(current_line) <= 60:
+                        # Check if there's a blank line IMMEDIATELY before (j-1)
+                        has_blank_immediately_before = (j > start_idx and not lines[j-1].strip())
+                        is_at_start = (j == start_idx)
                         
-                        if ba >= 1 or bb >= 1:
+                        logger.debug(f"   Checking line {j}: '{current_line[:40]}...' blank_before={has_blank_immediately_before}, at_start={is_at_start}")
+                        
+                        if has_blank_immediately_before or is_at_start:
                             heading = current_line
                             heading_idx = j
                             logger.debug(f"   Heading: '{heading}' at {heading_idx}")
@@ -492,20 +489,25 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
                     
                     j -= 1
                 
+                # If we found a heading, extract the content between heading and author
                 if heading:
                     content_lines = []
                     for k in range(heading_idx + 1, content_end_idx + 1):
                         if k < len(lines) and not processed_lines[k]:
                             content_lines.append(lines[k].rstrip())
                     
+                    # Clean up trailing blank lines
                     while content_lines and not content_lines[-1].strip():
                         content_lines.pop()
+                    # Clean up leading blank lines
                     while content_lines and not content_lines[0].strip():
                         content_lines.pop(0)
                     
                     content = '\n'.join(content_lines)
                     
+                    # Require at least 2 content lines
                     if content.strip() and count_content_lines(content) >= 2:
+                        # Mark all lines from heading to author as processed
                         for k in range(heading_idx, author_idx + 1):
                             if k < len(lines):
                                 processed_lines[k] = True
@@ -523,7 +525,9 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
                         i = author_idx + 1
                         continue
             
+            # Check if this line could be a heading for EMBEDDED author pattern
             if len(line) <= 60 and len(line) >= 3:
+                # Skip lines that look like part of content
                 skip_words = ['என்று', 'என்ற', 'என்பது', 'என்றால்', 'என்னும்']
                 if any(word in line for word in skip_words):
                     i += 1
@@ -534,6 +538,7 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
                 
                 logger.debug(f"Checking heading candidate at {i}: '{line[:50]}...'")
                 
+                # Count blank lines before and after
                 ba = sum(1 for k in range(heading_idx-1, max(heading_idx-3, start_idx-1), -1) 
                         if k >= start_idx and not lines[k].strip())
                 bb = sum(1 for k in range(heading_idx+1, min(heading_idx+4, len(lines))) 
@@ -541,10 +546,12 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
                 
                 logger.debug(f"   Blanks: above={ba}, below={bb}")
                 
+                # Accept as heading if has blank lines around it OR at document start
                 if ba >= 1 or bb >= 1 or heading_idx == start_idx:
                     heading = line
                     content_start_idx = heading_idx + bb + 1
                     
+                    # Collect content lines
                     content_lines = []
                     j = content_start_idx
                     
@@ -555,17 +562,20 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
                         current_line = lines[j]
                         stripped = current_line.strip()
                         
+                        # Stop if we hit another author (standalone)
                         if stripped:
                             next_author = extract_author_from_line(current_line, authors_normalized, authors_original)
                             if next_author:
                                 break
                         
+                        # Stop if we hit what looks like another heading
                         if stripped and len(stripped) <= 60:
                             next_ba = sum(1 for k in range(j-1, max(j-3, start_idx-1), -1) 
                                          if k >= start_idx and not lines[k].strip())
                             if next_ba >= 2:
                                 break
                         
+                        # Stop if we hit an intro keyword
                         if stripped:
                             found_intro = False
                             for keyword in intro_keywords:
@@ -573,10 +583,12 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
                                     found_intro = True
                                     break
                             if found_intro:
+                                # Remove trailing blanks before breaking
                                 while content_lines and not content_lines[-1].strip():
                                     content_lines.pop()
                                 break
                         
+                        # Stop if we hit too many consecutive blank lines
                         if not stripped:
                             blank_count = count_consecutive_blanks(lines, j)
                             if blank_count >= 4:
@@ -585,9 +597,11 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
                         content_lines.append(current_line.rstrip())
                         j += 1
                     
+                    # Clean up trailing blank lines
                     while content_lines and not content_lines[-1].strip():
                         content_lines.pop()
                     
+                    # Check for embedded author in content
                     if len(content_lines) >= 3:
                         logger.debug(f"   Content has {len(content_lines)} lines, checking for embedded author...")
                         
@@ -599,6 +613,7 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
                             content = '\n'.join(modified_content)
                             
                             if content.strip() and count_content_lines(content) >= 2:
+                                # Mark all lines as processed
                                 for k in range(heading_idx, j):
                                     if k < len(lines):
                                         processed_lines[k] = True
@@ -634,7 +649,6 @@ def extract_pattern_c_reverse(lines, start_idx, end_idx, authors_normalized,
     except Exception as e:
         logger.error(f"Pattern C: Error at line {i}: {e}", exc_info=True)
         return articles
-
 
 def extract_articles_main(lines, start_idx, end_idx, authors_normalized, 
                           authors_original, intro_keywords):
@@ -710,4 +724,5 @@ def extract_articles_main(lines, start_idx, end_idx, authors_normalized,
     logger.info(f"  Total articles: {len(all_articles)}")
     logger.info("=" * 80)
     
+
     return all_articles

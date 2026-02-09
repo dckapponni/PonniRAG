@@ -1,10 +1,3 @@
-"""
-Tamil Document Processing - Main Module (S3 VERSION)
-CSV EXTRACTION FIRST - Pattern extraction as fallback
-NEW FORMAT: All content as articles with year and source_document
-INCLUDES: Duplicate prevention - skips already processed files
-CSV: Read from local file system
-"""
 import sys
 import json
 import logging
@@ -54,7 +47,20 @@ from s3_utils import (
 INPUT_PREFIX = EXTRACTED_OUTPUT
 
 def setup_logging(log_file='tamil_doc_processing.log'):
-    """Setup comprehensive logging."""
+    """
+    Setup comprehensive logging for Tamil document processing.
+
+    Creates a logging configuration with both file and console handlers. File logs include
+    DEBUG level details with timestamps and function names, while console logs show INFO
+    level messages with simplified formatting.
+
+    Args:
+        log_file (str, optional): Base name for the log file. Defaults to 'tamil_doc_processing.log'.
+                                Actual filename will be timestamped.
+
+    Returns:
+        logging.Logger: Configured logger instance for the TamilDocProcessor.
+    """
     log_dir = Path('logs')
     log_dir.mkdir(exist_ok=True)
     
@@ -91,7 +97,18 @@ logger = setup_logging()
 
 
 def extract_year_from_s3_key(s3_key):
-    """Extract year from S3 key path."""
+    """
+    Extract the year from an S3 key path.
+
+    Searches for a 4-digit year pattern (19xx or 20xx) within the S3 key string.
+    Typically used to identify the publication year from file paths.
+
+    Args:
+        s3_key (str): The S3 object key/path to parse.
+
+    Returns:
+        str: The extracted 4-digit year if found, otherwise "Unknown".
+    """
     try:
         year_match = re.search(r'(19|20)\d{2}', s3_key)
         if year_match:
@@ -211,7 +228,30 @@ def load_csv_from_local(csv_path):
 
 
 def save_authors_to_s3(bucket, output_key_prefix, doc_id, doc_issue, authors_list):
-    """Save or update authors.json in S3."""
+    """
+    Save or update the authors.json file in S3.
+
+    Maintains a consolidated JSON file containing author information for all processed
+    documents. Updates existing entries or appends new ones based on document ID and issue.
+
+    Args:
+        bucket (str): S3 bucket name where the authors file is stored.
+        output_key_prefix (str): S3 key prefix (directory path) for the authors.json file.
+        doc_id (str): Document identifier (மலர் ID).
+        doc_issue (str): Document issue number (இதழ் number).
+        authors_list (list): List of authors, either as dictionaries with 'author_name' key,
+                            strings, or other types that can be converted to strings.
+
+    Returns:
+        None
+
+    Side Effects:
+        - Creates or updates authors.json in S3
+        - Logs information about added or updated author entries
+
+    Raises:
+        Exception: Re-raises any errors encountered during S3 operations after logging.
+    """
     try:
         authors_key = f"{output_key_prefix}authors.json"
         
@@ -262,9 +302,33 @@ def save_authors_to_s3(bucket, output_key_prefix, doc_id, doc_issue, authors_lis
 
 def parse_tamil_document_csv_first(lines, shared_authors_dict, csv_df, s3_key):
     """
-    Parse Tamil document with CSV FIRST approach.
-    Only use pattern extraction if CSV fails.
-    NEW: Returns articles only (no separate intro)
+    Parse Tamil document using CSV-first approach with pattern extraction fallback.
+
+    Primary parsing function that attempts to extract articles from Tamil documents
+    using CSV metadata first. If CSV extraction fails, falls back to pattern-based
+    extraction using multiple pattern recognition algorithms.
+
+    Args:
+        lines (list): List of text lines from the document.
+        shared_authors_dict (dict): Dictionary mapping document IDs to shared author lists.
+        csv_df (pd.DataFrame): DataFrame containing CSV metadata for article matching.
+        s3_key (str): S3 object key for the source document (used for year extraction).
+
+    Returns:
+        dict: Parsed document data containing:
+            - articles (list): List of article dictionaries with fields:
+                - doc_id, doc_issue, article_no, author_name, title, content,
+                year, source_document
+            - authors_list (list): List of author dictionaries
+            - doc_id (str): Document மலர் identifier
+            - doc_issue (str): Document இதழ் number
+    Processing Flow:
+        1. Attempts CSV-based extraction
+        2. On CSV failure, extracts document info (மலர்/இதழ்)
+        3. Extracts authors using multiple methods (markers, TOC, shared authors)
+        4. Applies pattern extraction (Pattern A, B, C)
+        5. Extracts intro sections as articles
+        6. Collects remaining unprocessed content
     """
     try:
         logger.info("=" * 80)
@@ -287,7 +351,7 @@ def parse_tamil_document_csv_first(lines, shared_authors_dict, csv_df, s3_key):
         
         if csv_result and len(csv_result['articles']) > 0:
             logger.info("=" * 80)
-            logger.info(f"✓ CSV EXTRACTION SUCCESS: {len(csv_result['articles'])} articles")
+            logger.info(f" CSV EXTRACTION SUCCESS: {len(csv_result['articles'])} articles")
             logger.info("=" * 80)
             
             # Add year and source_document to each article
@@ -300,7 +364,7 @@ def parse_tamil_document_csv_first(lines, shared_authors_dict, csv_df, s3_key):
         
         # CSV FAILED - FALLBACK TO PATTERN EXTRACTION
         logger.warning("=" * 80)
-        logger.warning("✗ CSV EXTRACTION FAILED - FALLING BACK TO PATTERN EXTRACTION")
+        logger.warning(" CSV EXTRACTION FAILED - FALLING BACK TO PATTERN EXTRACTION")
         logger.warning("=" * 80)
         
         # Extract doc info for pattern extraction
@@ -545,11 +609,31 @@ def parse_tamil_document_csv_first(lines, shared_authors_dict, csv_df, s3_key):
 
 def process_s3_files(force_reprocess=False):
     """
-    Process all TXT files from S3 - CSV FIRST approach.
-    
+    Process all TXT files from S3 using CSV-first extraction approach.
+
+    Main orchestration function that coordinates the entire document processing pipeline.
+    Reads TXT files from S3, processes them using CSV-first extraction, and saves
+    results back to S3 as JSON files.
+
     Args:
-        force_reprocess (bool): If True, reprocess all files even if already processed.
-                               If False (default), skip already processed files.
+        force_reprocess (bool, optional): If True, reprocess all files even if already processed.
+                                        If False, skip files with existing valid outputs.
+                                        Defaults to False.
+
+    Returns:
+        None
+
+    Processing Steps:
+        1. Loads CSV metadata from local file system
+        2. Lists all TXT files in S3 input location
+        3. Builds shared authors dictionary for fallback
+        4. For each file:
+            - Checks if already processed (unless force_reprocess=True)
+            - Validates existing outputs
+            - Reads and parses document
+            - Saves articles JSON and authors JSON to S3
+        5. Logs comprehensive processing summary
+
     """
     try:
         logger.info("=" * 80)
