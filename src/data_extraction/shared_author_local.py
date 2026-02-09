@@ -1,6 +1,3 @@
-"""
-Local version of shared author extraction
-"""
 import logging
 import re
 from pathlib import Path
@@ -11,7 +8,30 @@ logger = logging.getLogger('TamilDocProcessor.shared_author_local')
 
 
 def check_author_ahead(lines, current_idx, authors_normalized, authors_original, lookback=3):
-    """Check if an author name appears in the next few lines."""
+    """
+    Check if an author name appears in the next few lines.
+    Searches forward from the current position to detect if any known author name
+    appears within a specified lookahead window. Used to stop content extraction
+    before reaching the next author's section.
+
+    Args:
+
+        lines (list): List of text lines from the document.
+
+        current_idx (int): Current line index to start searching from.
+
+        authors_normalized (list): List of normalized author names for matching.
+
+        authors_original (list): List of original author names (parallel to normalized).
+
+        lookback (int, optional): Number of lines to look ahead. Defaults to 3.
+
+    Returns:
+
+        int or None: Line index where author name was found, or None if no author
+
+                    found within lookahead window or on error.
+    """
     try:
         from text_processing import extract_author_from_line
         
@@ -36,7 +56,28 @@ def check_author_ahead(lines, current_idx, authors_normalized, authors_original,
 
 
 def build_shared_authors_dict_local(input_dir):
-    """Build dictionary mapping document IDs to their authors from local files."""
+    """
+
+    Build dictionary mapping document IDs to their authors from local TXT files.
+    Scans all TXT files in a directory (recursively), extracts மலர்/இதழ் and author
+    information from each document's TOC section, and builds a lookup dictionary.
+    This dictionary is used as a fallback when individual document author extraction fails.
+
+    Args:
+
+        input_dir (Path or str): Directory path containing TXT files to process.
+
+    Returns:
+
+        dict: Dictionary mapping (doc_id, doc_issue) tuples to (authors_original, 
+
+            authors_normalized) tuples. Returns empty dict on error.
+
+            - Key: (doc_id, doc_issue) tuple of strings
+
+            - Value: (authors_original, authors_normalized) tuple of lists
+
+    """
     logger.info(f"Building shared authors dictionary from: {input_dir}")
     
     shared_authors = {}

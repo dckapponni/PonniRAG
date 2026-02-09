@@ -1,7 +1,3 @@
-"""
-Robust document utilities with comprehensive TOC format handling.
-Handles multiple TOC formats, ellipsis placeholders, and section headers.
-"""
 import re
 import logging
 from text_processing import normalize_text
@@ -325,7 +321,7 @@ def find_toc_boundaries(lines):
                     logger.info(f"Found end marker at line {j}")
                     break
                 
-                if j > i + 5:
+                if j > i + 5:  # ← THIS IS THE KEY CONDITION!
                     if re.match(r'^மலர்\s+\d+', check_line) or re.match(r'^விலை\s+\d+', check_line):
                         toc_end = j
                         logger.info(f"Found section boundary at line {j}")

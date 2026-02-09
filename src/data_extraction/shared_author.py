@@ -1,7 +1,3 @@
-"""
-Author management system with comprehensive logging - S3 VERSION.
-Handles shared author extraction and author-ahead checking from S3 files.
-"""
 import logging
 from pathlib import Path
 

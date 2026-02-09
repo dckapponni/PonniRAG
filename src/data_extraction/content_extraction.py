@@ -1,7 +1,3 @@
-"""
-Content extraction utilities with comprehensive logging.
-Handles extraction of intro sections, remaining content, and keyword detection.
-"""
 import logging
 from text_processing import is_valid_heading, extract_author_from_line
 from doc_utils import count_content_lines 
@@ -13,15 +9,21 @@ logger = logging.getLogger('TamilDocProcessor.content_extraction')
 def check_keyword_ahead(lines, current_idx, intro_keywords, lookback=2):
     """
     Check if an intro keyword appears in the next few lines.
-    
+
+    Searches forward from the current position to detect if any intro section keyword
+    (like தலையங்கம், படைப்புகள், etc.) appears within a specified lookahead window.
+
     Args:
-        lines (list): List of text lines
-        current_idx (int): Current line index
-        intro_keywords (list): List of intro keywords to search for
-        lookback (int): Number of lines to look ahead (default: 2)
-        
+        lines (list): List of text lines from the document.
+        current_idx (int): Current line index to start searching from.
+        intro_keywords (list): List of intro section keywords to search for.
+        lookback (int, optional): Number of lines to look ahead. Defaults to 2.
+
     Returns:
-        int or None: Index of keyword line if found, None otherwise
+        int or None: Index of the line containing the keyword if found within lookahead window,
+                    None if no keyword found or error occurred.
+
+
     """
     try:
         for i in range(current_idx, min(current_idx + lookback + 1, len(lines))):
@@ -43,13 +45,17 @@ def check_keyword_ahead(lines, current_idx, intro_keywords, lookback=2):
 def count_consecutive_blanks(lines, start_idx):
     """
     Count consecutive blank lines starting from a given index.
-    
+
+    Iterates forward from the starting index and counts how many consecutive lines
+    are blank (contain only whitespace or are empty).
+
     Args:
-        lines (list): List of text lines
-        start_idx (int): Starting index to begin counting
-        
+        lines (list): List of text lines from the document.
+        start_idx (int): Starting index to begin counting blank lines.
+
     Returns:
-        int: Number of consecutive blank lines
+        int: Number of consecutive blank lines found. Returns 0 if no blank lines
+            or if an error occurs.
     """
     try:
         count = 0
@@ -74,15 +80,32 @@ def count_consecutive_blanks(lines, start_idx):
 def extract_remaining_content(lines, start_idx, processed_lines):
     """
     Extract remaining unprocessed content using blank space logic.
-    Groups content by blank line separators and extracts sections with valid headings.
-    
+
+    Groups unprocessed document content by blank line separators and extracts sections
+    that have valid headings. Uses blank line count (3+ consecutive blanks) as primary
+    section separator. Filters out sections ending with author dashes and validates
+    content length.
+
     Args:
-        lines (list): List of text lines from document
-        start_idx (int): Starting index for extraction
+        lines (list): List of text lines from the document.
+        start_idx (int): Starting index for extraction.
         processed_lines (list): Boolean list tracking which lines have been processed
-        
+                            (True = already processed, False = available).
+
     Returns:
-        list: List of extracted content sections, each with heading, author, content, and indices
+        list: List of dictionaries, each containing:
+            - heading (str): First line used as heading
+            - author (str): Always "NA" (no author detection in this function)
+            - content (str): Extracted content text
+            - start_idx (int): Starting line index of this section
+            - end_idx (int): Ending line index of this section
+
+    Processing Logic:
+        1. Skips already processed lines
+        2. Groups content separated by 3+ blank lines
+        3. Validates first line as heading (< 25 chars, valid format)
+        4. Filters content with minimum 4 lines
+        5. Marks processed lines to avoid re-extraction
     """
     logger.debug(f"Starting remaining content extraction from line {start_idx}")
     groups = []

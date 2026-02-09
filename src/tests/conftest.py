@@ -7,62 +7,80 @@ from pathlib import Path
 import pytest
 import boto3
 from moto import mock_aws
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 import numpy as np
 
 
-# ========== MOCK HEAVY DEPENDENCIES BEFORE IMPORTS ==========
-# Mock SentenceTransformer to avoid loading models during test collection
 class MockSentenceTransformer:
+    """Mock implementation of SentenceTransformer to avoid loading heavy models during testing."""
+    
     def __init__(self, *args, **kwargs):
         pass
     
     def encode(self, text, **kwargs):
-        """Return mock embeddings as numpy array"""
+        """
+        Generate mock embeddings for input text.
+        
+        Args:
+            text: String or list of strings to encode
+            **kwargs: Additional arguments (ignored)
+            
+        Returns:
+            numpy.ndarray: Random 384-dimensional embedding(s)
+        """
         if isinstance(text, str):
-            # Return numpy array so .tolist() works
             return np.random.rand(384)
         return np.array([np.random.rand(384) for _ in text])
     
     def to(self, device):
+        """Mock device transfer method."""
         return self
 
-# Mock the entire sentence_transformers module
+
 mock_st_module = Mock()
 mock_st_module.SentenceTransformer = MockSentenceTransformer
 sys.modules['sentence_transformers'] = mock_st_module
 
-# Mock fastembed to avoid model loading
+
 class MockTextEmbedding:
+    """Mock implementation of FastEmbed TextEmbedding to avoid model loading."""
+    
     def __init__(self, *args, **kwargs):
         pass
     
     def embed(self, texts, **kwargs):
-        """Return mock sparse embeddings"""
+        """
+        Generate mock sparse embeddings for input texts.
+        
+        Args:
+            texts: Iterable of strings to embed
+            **kwargs: Additional arguments (ignored)
+            
+        Yields:
+            list: Tuples of (index, value) representing sparse embeddings
+        """
         for _ in texts:
             yield list(zip([1, 2, 3], [0.1, 0.2, 0.3]))
+
 
 mock_fastembed = Mock()
 mock_fastembed.TextEmbedding = MockTextEmbedding
 sys.modules['fastembed'] = mock_fastembed
 
 
-# ========== PATH SETUP ==========
-# Get the src directory (parent of tests directory)
-tests_dir = Path(__file__).resolve().parent  # src/tests/
-src_dir = tests_dir.parent  # src/
-project_root = src_dir.parent  # project root
-data_extraction_dir = src_dir / "data_extraction"  # src/data_extraction/
-db_dir = src_dir / "db"  # src/db/
-ui_dir = src_dir / "ui"  # src/ui/
+tests_dir = Path(__file__).resolve().parent
+src_dir = tests_dir.parent
+project_root = src_dir.parent
+data_extraction_dir = src_dir / "data_extraction"
+db_dir = src_dir / "db"
+ui_dir = src_dir / "ui"
 
-# Add directories to Python path (avoid duplicates)
 paths_to_add = [
-    str(db_dir),  # For imports like: from hybrid_search import ... (highest priority)
-    str(data_extraction_dir),  # For imports like: from text_processing import ...
-    str(ui_dir),  # For imports like: from streamlit_app import ...
-    str(src_dir),  # For imports like: from app import ...
-    str(project_root),  # For imports like: from src.hybrid_search import ...
+    str(db_dir),
+    str(data_extraction_dir),
+    str(ui_dir),
+    str(src_dir),
+    str(project_root),
 ]
 
 for path in paths_to_add:
@@ -74,19 +92,22 @@ for path in paths_to_add:
     print(f"  - {path}")
 
 
-# ========== PYTEST MARKERS ==========
 def pytest_configure(config):
-    """Register custom markers"""
+    """Register custom pytest markers for test categorization."""
     config.addinivalue_line(
         "markers", 
         "integration: mark test as integration test requiring external services (Qdrant, S3, etc.)"
     )
 
 
-# ========== AWS/S3 FIXTURES ==========
 @pytest.fixture(scope="function")
 def aws_credentials():
-    """Mocked AWS Credentials for moto."""
+    """
+    Set up mocked AWS credentials for testing.
+    
+    Configures environment variables with dummy AWS credentials
+    to prevent accidental use of real credentials during tests.
+    """
     import os
     os.environ["AWS_ACCESS_KEY_ID"] = "testing"
     os.environ["AWS_SECRET_ACCESS_KEY"] = "testing"
@@ -97,7 +118,15 @@ def aws_credentials():
 
 @pytest.fixture(scope="function")
 def s3_client(aws_credentials):
-    """Create a mocked S3 client."""
+    """
+    Create a mocked S3 client for testing.
+    
+    Args:
+        aws_credentials: Fixture providing mocked AWS credentials
+        
+    Yields:
+        boto3.client: Mocked S3 client instance
+    """
     with mock_aws():
         conn = boto3.client("s3", region_name="us-east-1")
         yield conn
@@ -105,16 +134,28 @@ def s3_client(aws_credentials):
 
 @pytest.fixture(scope="function")
 def s3_bucket(s3_client):
-    """Create a test S3 bucket."""
+    """
+    Create a test S3 bucket.
+    
+    Args:
+        s3_client: Mocked S3 client fixture
+        
+    Yields:
+        str: Name of the created test bucket
+    """
     bucket_name = "test-bucket"
     s3_client.create_bucket(Bucket=bucket_name)
     yield bucket_name
 
 
-# ========== EMBEDDING FIXTURES ==========
 @pytest.fixture
 def mock_dense_embedding():
-    """Mock dense embedding function"""
+    """
+    Provide a mock function for generating dense embeddings.
+    
+    Returns:
+        callable: Function that returns random 384-dimensional embeddings
+    """
     def _mock_embed(text):
         return np.random.rand(384).tolist()
     return _mock_embed
@@ -122,7 +163,12 @@ def mock_dense_embedding():
 
 @pytest.fixture
 def mock_sparse_embedding():
-    """Mock sparse embedding function"""
+    """
+    Provide a mock function for generating sparse embeddings.
+    
+    Returns:
+        callable: Function that returns SparseVector with mock indices and values
+    """
     def _mock_embed(text):
         from qdrant_client.models import SparseVector
         return SparseVector(
