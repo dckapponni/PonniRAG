@@ -1,0 +1,107 @@
+import React, { useState } from 'react';
+import { getTranslation } from '../services/translations';
+import { askQuestion } from '../services/api';
+import ChatMessage from '../components/ChatMessage';
+import ChatInput from '../components/ChatInput';
+
+const Home = ({ language }) => {
+  const [messages, setMessages] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const t = (key) => getTranslation(language, key);
+
+  const handleSuggestionClick = (prompt) => {
+    handleSubmit(prompt);
+  };
+
+  const handleSubmit = async (question) => {
+    // Add user message
+    const userMessage = { role: 'user', content: question };
+    setMessages((prev) => [...prev, userMessage]);
+    setIsLoading(true);
+
+    try {
+      const result = await askQuestion(question);
+      const assistantMessage = {
+        role: 'assistant',
+        content: result.answer || '',
+        sources: result.sources || [],
+      };
+      setMessages((prev) => [...prev, assistantMessage]);
+    } catch (error) {
+      console.error('Error asking question:', error);
+      const errorMessage = {
+        role: 'assistant',
+        content: `${t('error_message')}: ${error.message}`,
+        sources: [],
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const suggestions = [
+    {
+      key: 'sugg_founder',
+      prompt: language === 'ta'
+        ? 'பொன்னி இதழில் எழுதிய ஆசிரியர்கள் யார்?'
+        : 'Who are the authors in ponni magazine?',
+    },
+    {
+      key: 'sugg_poets',
+      prompt: language === 'ta'
+        ? 'பாரதிதாசன் எழுதிய கட்டுரைகள் பட்டியலிடுக'
+        : 'List the articles written by Bharathidasan',
+    },
+    {
+      key: 'sugg_dravidian',
+      prompt: language === 'ta'
+        ? 'பொன்னி திராவிட இயக்கத்திற்கு எவ்வாறு பங்களித்தது?'
+        : 'How did Ponni contribute to the Dravidian movement?',
+    },
+    {
+      key: 'sugg_archive',
+      prompt: language === 'ta'
+        ? 'வேண்டாத ஆசை ஆசிரியர் யார்?'
+        : 'Who is the founder of Ponni magazine?',
+    },
+  ];
+
+  return (
+    <div className="chat-container">
+      {messages.length === 0 ? (
+        <>
+          <div className="hero-container">
+            <h1 className="hero-title">{t('app_title')}</h1>
+          </div>
+          <div className="suggestions-container">
+            {suggestions.map((suggestion) => (
+              <button
+                key={suggestion.key}
+                className="suggestion-btn"
+                onClick={() => handleSuggestionClick(suggestion.prompt)}
+              >
+                {t(suggestion.key)}
+              </button>
+            ))}
+          </div>
+        </>
+      ) : (
+        <div className="chat-messages">
+          {messages.map((message, index) => (
+            <ChatMessage key={index} message={message} language={language} />
+          ))}
+          {isLoading && (
+            <div className="loading-spinner">
+              <div className="spinner"></div>
+              <span>{t('searching')}</span>
+            </div>
+          )}
+        </div>
+      )}
+      <ChatInput onSubmit={handleSubmit} isLoading={isLoading} language={language} />
+    </div>
+  );
+};
+
+export default Home;

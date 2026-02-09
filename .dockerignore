@@ -1,14 +1,62 @@
+# Virtual environment
 venv/
+.venv/
+env/
+
+# Python cache
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# IDE
+.idea/
+.vscode/
 *.swp
-*.tmp
-.DS_Store
-.coverage
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Local data (mounted as volumes)
+qdrant_storage/
+storage/
+snapshots/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs
 *.log
+logs/
 .cache/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test and coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local binaries
+qdrant
+
+# Model files (downloaded at runtime)
 *.pth
 *.pt
 data/
