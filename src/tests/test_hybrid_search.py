@@ -7,9 +7,10 @@ FIXES:
 2. Fixed test_check_qdrant_health_collection_not_found to match actual error behavior
 """
 import pytest
+import asyncio
 import pandas as pd
 from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch, mock_open
+from unittest.mock import Mock, MagicMock, AsyncMock, patch, mock_open
 from collections import namedtuple
 import tempfile
 import os
@@ -1200,6 +1201,123 @@ class TestAdditionalCoverage:
         entity = system.extract_entity('பொன்னி இதழில் கருணாநிதி என்ன எழுதினார் குறிப்பிடுக', 'author_topics')
         assert 'பொன்னி' not in entity
         assert 'குறிப்பிடுக' not in entity
+
+
+# Test async functions
+class TestAsyncFunctions:
+    """Test async versions of core functions."""
+
+    @pytest.mark.asyncio
+    async def test_generate_llm_answer_async_success(self):
+        """Test async LLM answer generation."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            'response': 'விரிவான பதில் (200-500 சொற்கள்): தமிழ் மொழி பதில்'
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+
+        with patch('hybrid_search.httpx.AsyncClient') as mock_cls:
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            answer = await hs.generate_llm_answer_async('question', 'context')
+            assert 'தமிழ்' in answer
+
+    @pytest.mark.asyncio
+    async def test_generate_llm_answer_async_failure(self):
+        """Test async LLM answer generation failure."""
+        mock_client = AsyncMock()
+        mock_client.post.side_effect = Exception("timeout")
+
+        with patch('hybrid_search.httpx.AsyncClient') as mock_cls:
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            answer = await hs.generate_llm_answer_async('question', 'context')
+            assert answer == ""
+
+    @pytest.mark.asyncio
+    @patch('hybrid_search.check_qdrant_health')
+    async def test_ask_question_async_unhealthy_db(self, mock_health):
+        """Test async ask_question with unhealthy database."""
+        mock_health.return_value = {
+            'healthy': False,
+            'error': 'connection_failed',
+            'message': 'Failed to connect'
+        }
+
+        result = await hs.ask_question_async('test question')
+        assert 'error' in result
+
+    @pytest.mark.asyncio
+    @patch('hybrid_search.check_qdrant_health')
+    @patch('hybrid_search.get_qdrant_client')
+    @patch('hybrid_search.HybridQdrantSearch')
+    @patch('hybrid_search.merge_consecutive_chunks')
+    async def test_ask_question_async_success(
+        self, mock_merge, mock_search_class, mock_client, mock_health
+    ):
+        """Test successful async question answering."""
+        mock_health.return_value = {'healthy': True, 'points_count': 1000}
+        mock_client.return_value = MagicMock()
+
+        mock_searcher = MagicMock()
+        point = MagicMock()
+        point.score = 0.95
+        point.payload = {'type': 'intro', 'content': 'test'}
+        mock_searcher.search.return_value = [point]
+        mock_search_class.return_value = mock_searcher
+
+        mock_merge.return_value = [{
+            'content': 'தமிழ் மொழி விவரம்',
+            'volume': 'vol1',
+            'heading': 'தமிழ்',
+            'doc_issue': '1',
+            'word_count': 50,
+            'chunk_count': 2,
+            'score': 0.95
+        }]
+
+        with patch('hybrid_search.generate_llm_answer_async', new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = 'தமிழ் மொழி பற்றிய விரிவான பதில்'
+            result = await hs.ask_question_async('தமிழ் என்றால் என்ன?')
+            assert 'answer' in result
+            assert 'sources' in result
+
+
+# Test thread safety
+class TestThreadSafety:
+    """Test thread safety mechanisms."""
+
+    def test_embed_lock_exists(self):
+        """Test that the embedding lock is available."""
+        assert hasattr(hs, '_embed_lock')
+        assert isinstance(hs._embed_lock, type(MagicMock()).__class__) or hasattr(hs._embed_lock, 'acquire')
+
+    def test_author_system_cache_exists(self):
+        """Test that the author system cache is available."""
+        assert hasattr(hs, '_author_system_cache')
+        assert isinstance(hs._author_system_cache, dict)
+
+    def test_author_system_lock_exists(self):
+        """Test that the author system lock is available."""
+        assert hasattr(hs, '_author_system_lock')
+        assert hasattr(hs._author_system_lock, 'acquire')
+
+    def test_handle_author_query_caches_system(self, temp_csv_file):
+        """Test that handle_author_query caches the system."""
+        # Clear cache first
+        hs._author_system_cache.clear()
+
+        hs.handle_author_query('எழுத்தாளர்கள் யார்', temp_csv_file)
+        assert temp_csv_file in hs._author_system_cache
+
+        # Second call should use cached system
+        hs.handle_author_query('கருணாநிதி என்ன எழுதினார்', temp_csv_file)
+        assert temp_csv_file in hs._author_system_cache
 
 
 # Run tests with coverage

@@ -10,6 +10,9 @@ import streamlit as st
 import pandas as pd
 import requests
 import json
+import asyncio
+import threading
+import httpx
 import torch
 torch.set_grad_enabled(False)
 
@@ -38,6 +41,10 @@ CSV_PATH = BASE_DIR / "data" / "summary.csv"
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434")
 OLLAMA_MODEL = "tamil-llama"
 SCORE_THRESHOLD = 0.8  # Minimum cosine similarity for dense vector search
+
+_embed_lock = threading.Lock()
+_author_system_cache = {}
+_author_system_lock = threading.Lock()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -169,9 +176,10 @@ def get_qdrant_client() -> QdrantClient:
 # ============================================================================
 
 def dense_embed_query(text: str):
-    """Generate dense embedding for query text."""
+    """Generate dense embedding for query text (thread-safe)."""
     model = get_embed_model()  # Gets cached model silently
-    return model.encode(f"query: {text}").tolist()
+    with _embed_lock:
+        return model.encode(f"query: {text}").tolist()
 
 
 def sparse_embed(text: str):
@@ -1081,8 +1089,11 @@ def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
         logger.info("Detected issue count query")
         result = get_issue_count(csv_path)
         return True, format_issue_count(result)
-    
-    system = EnhancedAuthorQuerySystem(csv_path)
+
+    with _author_system_lock:
+        if csv_path not in _author_system_cache:
+            _author_system_cache[csv_path] = EnhancedAuthorQuerySystem(csv_path)
+        system = _author_system_cache[csv_path]
     
     if system.df is None or system.df.empty:
         return False, ""
@@ -1493,7 +1504,7 @@ def generate_llm_answer(question: str, context: str, max_words: int = 500) -> st
         response = requests.post(
             f"{OLLAMA_HOST}/api/generate",
             json=payload,
-            timeout=120
+            timeout=300
         )
 
         response.raise_for_status()
@@ -1511,6 +1522,59 @@ def generate_llm_answer(question: str, context: str, max_words: int = 500) -> st
     except Exception as e:
         logger.error(f"Ollama generation failed: {e}")
         return ""
+
+
+async def generate_llm_answer_async(question: str, context: str, max_words: int = 500) -> str:
+    """
+    Async version of generate_llm_answer using httpx.
+
+    Non-blocking LLM call that frees the event loop while waiting for Ollama,
+    allowing other requests to be served concurrently.
+    """
+    try:
+        prompt = f"""{TAMIL_ANSWER_SYSTEM_PROMPT}
+
+கேள்வி: {question}
+
+சூழல்:
+{context}
+
+விரிவான பதில் (200-500 சொற்கள்):"""
+
+        payload = {
+            "model": OLLAMA_MODEL,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.0,
+                "num_predict": 512,
+                "num_ctx": 2048,
+            },
+            "keep_alive": "10m",
+        }
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{OLLAMA_HOST}/api/generate",
+                json=payload,
+                timeout=300.0,
+            )
+            response.raise_for_status()
+
+        data = response.json()
+        answer = data.get("response", "").strip()
+
+        answer = re.sub(r'\s+', ' ', answer)
+
+        word_count = len(re.findall(r'[\u0B80-\u0BFF]+|\w+', answer))
+        logger.info(f"Ollama async answer generated: {word_count} words")
+
+        return answer
+
+    except Exception as e:
+        logger.error(f"Ollama async generation failed: {e}")
+        return ""
+
 
 def generate_extractive_answer(facts: List[Dict], question: str) -> str:
     """
@@ -1759,6 +1823,128 @@ Error Type: {health_status['error']}
             "sources": sources
         }
         
+    except Exception as e:
+        error_msg = f"Query error: {str(e)}"
+        logger.error(error_msg)
+        if return_formatted:
+            return f"Error: {error_msg}"
+        return {"answer": error_msg, "sources": [], "error": str(e)}
+
+
+async def ask_question_async(question: str, return_formatted: bool = False, use_llm: bool = True) -> Dict:
+    """
+    Async version of ask_question for FastAPI concurrent request handling.
+
+    Uses asyncio.to_thread for sync I/O operations (Qdrant, embeddings) and
+    httpx async client for Ollama LLM calls. This allows multiple user requests
+    to be processed concurrently without blocking the event loop.
+    """
+    health_status = await asyncio.to_thread(check_qdrant_health)
+
+    if not health_status["healthy"]:
+        error_message = f"""
+Database Error: {health_status['message']}
+
+Details: {health_status.get('details', 'No additional details')}
+Action: {health_status.get('action', 'Contact administrator')}
+
+Error Type: {health_status['error']}
+"""
+        if return_formatted:
+            return error_message
+        return {
+            "answer": error_message,
+            "sources": [],
+            "error": health_status
+        }
+
+    logger.info("Database is healthy - proceeding with async query")
+
+    if CSV_PATH.exists():
+        try:
+            logger.info("Checking author query...")
+            is_handled, response = await asyncio.to_thread(
+                handle_author_query, question, str(CSV_PATH)
+            )
+
+            if is_handled:
+                logger.info("Handled as CSV author query")
+                if return_formatted:
+                    return response
+                return {
+                    "answer": response,
+                    "sources": [],
+                    "query_type": "author_csv"
+                }
+        except Exception as e:
+            logger.error(f"CSV query error: {e}")
+
+    try:
+        client = await asyncio.to_thread(get_qdrant_client)
+
+        if is_author_question(question):
+            authors = await asyncio.to_thread(fetch_all_authors, client)
+            answer = format_authors_tamil(authors) if authors else "எழுத்தாளர் தகவல்கள் கிடைக்கவில்லை."
+            if return_formatted:
+                return format_answer_output(answer, [])
+            return {"answer": answer, "sources": []}
+
+        logger.info(f"Searching: {question[:60]}...")
+
+        searcher = HybridQdrantSearch(client)
+        results = await asyncio.to_thread(
+            searcher.search, question, 50, SCORE_THRESHOLD
+        )
+
+        if not results:
+            answer = "மன்னிக்கவும், தகவல்கள் கிடைக்கவில்லை."
+            if return_formatted:
+                return format_answer_output(answer, [])
+            return {"answer": answer, "sources": []}
+
+        logger.info(f"Found {len(results)} chunks")
+
+        merged_docs = await asyncio.to_thread(
+            merge_consecutive_chunks, client, results
+        )
+
+        if not merged_docs:
+            answer = "போதுமான தகவல்கள் இல்லை."
+            if return_formatted:
+                return format_answer_output(answer, [])
+            return {"answer": answer, "sources": []}
+
+        logger.info(f"Merged into {len(merged_docs)} documents")
+
+        context_parts = []
+        for idx, doc in enumerate(merged_docs[:5], 1):
+            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:800]}")
+
+        context = "\n\n".join(context_parts)
+
+        answer = ""
+        if use_llm:
+            answer = await generate_llm_answer_async(question, context)
+
+        if not answer or len(answer) < 100:
+            logger.warning("LLM failed, using extractive answer")
+            facts = extract_key_facts(merged_docs, question)
+            answer = generate_extractive_answer(facts, question)
+
+        if not answer or len(answer) < 50:
+            answer = "கேள்விக்கான தகவல்கள் ஆதாரங்களில் உள்ளன."
+
+        sources = format_sources(merged_docs)
+        logger.info(f"Ready with {len(sources)} sources")
+
+        if return_formatted:
+            return format_answer_output(answer, sources)
+
+        return {
+            "answer": answer,
+            "sources": sources
+        }
+
     except Exception as e:
         error_msg = f"Query error: {str(e)}"
         logger.error(error_msg)
