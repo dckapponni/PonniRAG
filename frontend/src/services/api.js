@@ -78,14 +78,12 @@ export const getApiInfo = async () => {
 /**
  * Ask a question and get AI-generated answer with sources
  * @param {string} question - The question to ask
- * @param {number} topK - Number of sources to return (1-50)
  * @param {boolean} useLLM - Whether to use LLM for answer generation
  * @returns {Promise<{answer: string, sources: Array, query_type: string, error: object}>}
  */
-export const askQuestion = async (question, topK = 10, useLLM = true) => {
+export const askQuestion = async (question, useLLM = true) => {
   const response = await api.post('/api/ask', {
     question,
-    top_k: topK,
     use_llm: useLLM,
   });
   return response.data;
@@ -94,13 +92,12 @@ export const askQuestion = async (question, topK = 10, useLLM = true) => {
 /**
  * Search the archive (GET alternative to askQuestion)
  * @param {string} query - Search query
- * @param {number} topK - Number of results
  * @param {boolean} useLLM - Whether to use LLM
  * @returns {Promise<{answer: string, sources: Array}>}
  */
-export const search = async (query, topK = 10, useLLM = false) => {
+export const search = async (query, useLLM = false) => {
   const response = await api.get('/api/search', {
-    params: { q: query, top_k: topK, use_llm: useLLM },
+    params: { q: query, use_llm: useLLM },
   });
   return response.data;
 };

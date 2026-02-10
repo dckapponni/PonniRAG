@@ -519,7 +519,7 @@ class TestDocumentProcessing:
                 'score': 0.95
             }
         ]
-        sources = hs.format_sources(docs, limit=10)
+        sources = hs.format_sources(docs)
         assert len(sources) > 0
         assert sources[0]['heading'] == 'தமிழ்'
     
@@ -1062,7 +1062,7 @@ class TestAdditionalCoverage:
                 'score': 0.90
             }
         ]
-        sources = hs.format_sources(docs, limit=10)
+        sources = hs.format_sources(docs)
         assert len(sources) == 1
     
     def test_format_sources_long_content_truncation(self):
@@ -1079,7 +1079,7 @@ class TestAdditionalCoverage:
                 'score': 0.95
             }
         ]
-        sources = hs.format_sources(docs, limit=10)
+        sources = hs.format_sources(docs)
         assert len(sources[0]['content']) <= 1510
         assert sources[0]['content'].endswith('...')
     
