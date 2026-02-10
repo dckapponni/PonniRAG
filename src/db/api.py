@@ -3,6 +3,7 @@ FastAPI REST API for Ponni RAG System.
 Provides endpoints for search, question answering, and library access.
 """
 
+import asyncio
 import logging
 import os
 import sys
@@ -19,10 +20,13 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 # Import real hybrid_search module
 from hybrid_search import (
     ask_question,
+    ask_question_async,
     check_qdrant_health,
     EnhancedAuthorQuerySystem,
     get_issue_count,
     CSV_PATH,
+    _author_system_cache,
+    _author_system_lock,
 )
 
 from pdf_links import PDF_LINKS
@@ -161,6 +165,14 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning(f"Qdrant not available: {health.get('message', 'Unknown error')}")
 
+    # Pre-cache the author query system at startup
+    csv_path = str(CSV_PATH)
+    if CSV_PATH.exists():
+        with _author_system_lock:
+            if csv_path not in _author_system_cache:
+                _author_system_cache[csv_path] = EnhancedAuthorQuerySystem(csv_path)
+        logger.info("Author query system cached at startup")
+
     yield
 
     logger.info("Shutting down Ponni RAG API...")
@@ -225,7 +237,7 @@ async def ask_question_endpoint(request: QuestionRequest):
     try:
         logger.info(f"Question received: {request.question[:100]}...")
 
-        result = ask_question(
+        result = await ask_question_async(
             question=request.question,
             return_formatted=False,
             use_llm=request.use_llm
@@ -255,7 +267,7 @@ async def search_endpoint(
     Results are filtered by score threshold (>= 80% similarity).
     """
     try:
-        result = ask_question(
+        result = await ask_question_async(
             question=q,
             return_formatted=False,
             use_llm=use_llm
@@ -285,8 +297,13 @@ async def list_authors():
         if not CSV_PATH.exists():
             raise HTTPException(status_code=404, detail="Author data not available")
 
-        system = EnhancedAuthorQuerySystem(str(CSV_PATH))
-        result = system.list_all_authors()
+        csv_path = str(CSV_PATH)
+        with _author_system_lock:
+            if csv_path not in _author_system_cache:
+                _author_system_cache[csv_path] = EnhancedAuthorQuerySystem(csv_path)
+            system = _author_system_cache[csv_path]
+
+        result = await asyncio.to_thread(system.list_all_authors)
 
         if not result["success"]:
             raise HTTPException(status_code=500, detail=result.get("message", "Failed to load authors"))
@@ -318,8 +335,13 @@ async def get_author_articles(author_name: str):
         if not CSV_PATH.exists():
             raise HTTPException(status_code=404, detail="Author data not available")
 
-        system = EnhancedAuthorQuerySystem(str(CSV_PATH))
-        result = system.get_topics_by_author(author_name)
+        csv_path = str(CSV_PATH)
+        with _author_system_lock:
+            if csv_path not in _author_system_cache:
+                _author_system_cache[csv_path] = EnhancedAuthorQuerySystem(csv_path)
+            system = _author_system_cache[csv_path]
+
+        result = await asyncio.to_thread(system.get_topics_by_author, author_name)
 
         return AuthorArticlesResponse(
             success=result["success"],
@@ -350,8 +372,13 @@ async def search_by_topic(
         if not CSV_PATH.exists():
             raise HTTPException(status_code=404, detail="Topic data not available")
 
-        system = EnhancedAuthorQuerySystem(str(CSV_PATH))
-        result = system.get_author_by_topic(topic)
+        csv_path = str(CSV_PATH)
+        with _author_system_lock:
+            if csv_path not in _author_system_cache:
+                _author_system_cache[csv_path] = EnhancedAuthorQuerySystem(csv_path)
+            system = _author_system_cache[csv_path]
+
+        result = await asyncio.to_thread(system.get_author_by_topic, topic)
 
         return TopicSearchResponse(
             success=result["success"],
@@ -379,7 +406,7 @@ async def get_issue_statistics():
         if not CSV_PATH.exists():
             raise HTTPException(status_code=404, detail="Issue data not available")
 
-        result = get_issue_count(str(CSV_PATH))
+        result = await asyncio.to_thread(get_issue_count, str(CSV_PATH))
 
         return IssueStatsResponse(
             success=result["success"],
