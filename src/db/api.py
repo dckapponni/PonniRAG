@@ -37,7 +37,6 @@ logger = logging.getLogger(__name__)
 class QuestionRequest(BaseModel):
     """Request model for asking questions."""
     question: str = Field(..., min_length=1, description="The question to ask")
-    top_k: int = Field(default=10, ge=1, le=50, description="Number of sources to return")
     use_llm: bool = Field(default=True, description="Use LLM for answer generation")
 
 
@@ -218,9 +217,9 @@ async def ask_question_endpoint(request: QuestionRequest):
 
     This endpoint performs hybrid search (dense + sparse vectors) and
     optionally uses an LLM to generate a comprehensive answer.
+    Results are filtered by score threshold (>= 80% similarity).
 
     - **question**: The question to ask (in Tamil or English)
-    - **top_k**: Number of source documents to return (1-50)
     - **use_llm**: Whether to use LLM for answer generation
     """
     try:
@@ -228,7 +227,6 @@ async def ask_question_endpoint(request: QuestionRequest):
 
         result = ask_question(
             question=request.question,
-            top_k=request.top_k,
             return_formatted=False,
             use_llm=request.use_llm
         )
@@ -248,18 +246,17 @@ async def ask_question_endpoint(request: QuestionRequest):
 @app.get("/api/search", response_model=QuestionResponse, tags=["Search"])
 async def search_endpoint(
     q: str = Query(..., min_length=1, description="Search query"),
-    top_k: int = Query(default=10, ge=1, le=50, description="Number of results"),
     use_llm: bool = Query(default=False, description="Use LLM for answer")
 ):
     """
     Search the archive with a query string.
 
     GET alternative to POST /api/ask for simpler search queries.
+    Results are filtered by score threshold (>= 80% similarity).
     """
     try:
         result = ask_question(
             question=q,
-            top_k=top_k,
             return_formatted=False,
             use_llm=use_llm
         )

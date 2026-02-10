@@ -37,6 +37,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 CSV_PATH = BASE_DIR / "data" / "summary.csv"
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434")
 OLLAMA_MODEL = "tamil-llama"
+SCORE_THRESHOLD = 0.8  # Minimum cosine similarity for dense vector search
 
 logging.basicConfig(
     level=logging.INFO,
@@ -1205,17 +1206,19 @@ class HybridQdrantSearch:
         """
         self.client = client
 
-    def search(self, query: str, limit: int = 30):
+    def search(self, query: str, limit: int = 30, score_threshold: float = SCORE_THRESHOLD):
         """
         Perform hybrid search using dense and sparse vectors.
-        
+
         Executes a two-stage search combining dense embeddings for semantic similarity
         and sparse embeddings for keyword matching, then fuses results using RRF.
-        
+
         Args:
             query (str): Search query string in Tamil or English
             limit (int, optional): Maximum number of results to return. Defaults to 30.
-        
+            score_threshold (float, optional): Minimum cosine similarity for dense
+                vector results. Defaults to SCORE_THRESHOLD (0.8).
+
         Returns:
             List[ScoredPoint]: List of scored points from Qdrant with fused relevance scores
         """
@@ -1226,6 +1229,7 @@ class HybridQdrantSearch:
                     query=dense_embed_query(query),
                     using="dense",
                     filter=models.Filter(must=[models.FieldCondition(key="type", match=models.MatchValue(value="article"))]),
+                    score_threshold=score_threshold,
                     limit=limit * 2,
                 ),
                 models.Prefetch(
@@ -1480,15 +1484,16 @@ def generate_llm_answer(question: str, context: str, max_words: int = 500) -> st
             "stream": False,
             "options": {
                 "temperature": 0.0,
-                "top_p": 0.9,
-                "num_predict": 800
-            }
+                "num_predict": 512,
+                "num_ctx": 2048,
+            },
+            "keep_alive": "10m",
         }
 
         response = requests.post(
             f"{OLLAMA_HOST}/api/generate",
             json=payload,
-            timeout=300
+            timeout=120
         )
 
         response.raise_for_status()
@@ -1543,17 +1548,17 @@ def generate_extractive_answer(facts: List[Dict], question: str) -> str:
     return answer
 
 
-def format_sources(merged_docs: List[Dict], limit: int = 10) -> List[Dict]:
+def format_sources(merged_docs: List[Dict]) -> List[Dict]:
     """
     Format source documents for display.
-    
+
     Prepares a list of source documents with truncated content and metadata
     for display to the user, removing duplicates and limiting content length.
-    
+    All documents that passed the score threshold are included.
+
     Args:
         merged_docs (List[Dict]): List of merged document dictionaries
-        limit (int, optional): Maximum number of sources to return. Defaults to 10.
-    
+
     Returns:
         List[Dict]: List of formatted source dictionaries containing:
             - volume: Document volume number
@@ -1566,8 +1571,8 @@ def format_sources(merged_docs: List[Dict], limit: int = 10) -> List[Dict]:
     """
     sources = []
     seen_hashes = set()
-    
-    for doc in merged_docs[:limit]:
+
+    for doc in merged_docs:
         content_hash = hash(doc["content"][:200])
         if content_hash in seen_hashes:
             continue
@@ -1629,16 +1634,16 @@ def format_answer_output(answer: str, sources: List[Dict]) -> str:
     
     return '\n'.join(lines)
 
-def ask_question(question: str, top_k: int = 10, return_formatted: bool = False, use_llm: bool = True) -> Dict:
+def ask_question(question: str, return_formatted: bool = False, use_llm: bool = True) -> Dict:
     """
     Main question answering function with database health check and hybrid search.
 
     Primary entry point for processing user queries. Handles database health checks,
     author queries, vector search, document merging, LLM generation, and source formatting.
+    Results are filtered by score threshold rather than a fixed top_k count.
 
     Args:
         question (str): User's question in Tamil or English.
-        top_k (int, optional): Number of source documents to return. Defaults to 10.
         return_formatted (bool, optional): If True, return formatted string; if False,
                                         return dict. Defaults to False.
         use_llm (bool, optional): If True, use LLM for answer generation; if False,
@@ -1704,7 +1709,7 @@ Error Type: {health_status['error']}
         logger.info(f"Searching: {question[:60]}...")
         
         searcher = HybridQdrantSearch(client)
-        results = searcher.search(question, limit=50)
+        results = searcher.search(question, limit=50, score_threshold=SCORE_THRESHOLD)
 
         if not results:
             answer = "மன்னிக்கவும், தகவல்கள் கிடைக்கவில்லை."
@@ -1743,7 +1748,7 @@ Error Type: {health_status['error']}
         if not answer or len(answer) < 50:
             answer = "கேள்விக்கான தகவல்கள் ஆதாரங்களில் உள்ளன."
 
-        sources = format_sources(merged_docs, limit=top_k)
+        sources = format_sources(merged_docs)
         logger.info(f"Ready with {len(sources)} sources")
 
         if return_formatted:
