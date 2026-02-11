@@ -1471,6 +1471,7 @@ def generate_llm_answer(question: str, context: str, max_words: int = 500) -> st
                 "temperature": 0.0,
                 "num_predict": 300,
                 "num_ctx": 2048,
+                "num_gpu": 999,
             },
             "keep_alive": "10m",
         }
@@ -1523,6 +1524,7 @@ async def generate_llm_answer_async(question: str, context: str, max_words: int 
                 "temperature": 0.0,
                 "num_predict": 300,
                 "num_ctx": 2048,
+                "num_gpu": 999,
             },
             "keep_alive": "10m",
         }
