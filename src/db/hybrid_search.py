@@ -13,6 +13,7 @@ import json
 import asyncio
 import threading
 import httpx
+import time
 import torch
 torch.set_grad_enabled(False)
 
@@ -1695,8 +1696,10 @@ def ask_question(question: str, return_formatted: bool = False, use_llm: bool = 
                 - error (str/dict): Error details if failed (optional)
             - If True: Formatted string with answer and sources
     """
+    t_start = time.time()
     health_status = check_qdrant_health()
-    
+    logger.info(f"[TIMING] health_check: {time.time() - t_start:.2f}s")
+
     if not health_status["healthy"]:
         error_message = f"""
 Database Error: {health_status['message']}
@@ -1744,9 +1747,11 @@ Error Type: {health_status['error']}
             return {"answer": answer, "sources": []}
 
         logger.info(f"Searching: {question[:60]}...")
-        
+
+        t0 = time.time()
         searcher = HybridQdrantSearch(client)
         results = searcher.search(question, limit=50, score_threshold=SCORE_THRESHOLD)
+        logger.info(f"[TIMING] hybrid_search: {time.time() - t0:.2f}s ({len(results)} results)")
 
         if not results:
             answer = "மன்னிக்கவும், தகவல்கள் கிடைக்கவில்லை."
@@ -1754,28 +1759,28 @@ Error Type: {health_status['error']}
                 return format_answer_output(answer, [])
             return {"answer": answer, "sources": []}
 
-        logger.info(f"Found {len(results)} chunks")
-
+        t0 = time.time()
         merged_docs = merge_consecutive_chunks(client, results)
-        
+        logger.info(f"[TIMING] merge_chunks: {time.time() - t0:.2f}s ({len(merged_docs)} docs)")
+
         if not merged_docs:
             answer = "போதுமான தகவல்கள் இல்லை."
             if return_formatted:
                 return format_answer_output(answer, [])
             return {"answer": answer, "sources": []}
-        
-        logger.info(f"Merged into {len(merged_docs)} documents")
 
         context_parts = []
         for idx, doc in enumerate(merged_docs[:3], 1):
             context_parts.append(f"ஆவணம் {idx}: {doc['content'][:500]}")
-        
+
         context = "\n\n".join(context_parts)
-        
+
         answer = ""
         if use_llm:
+            t0 = time.time()
             answer = generate_llm_answer(question, context)
-        
+            logger.info(f"[TIMING] ollama_llm: {time.time() - t0:.2f}s")
+
         if not answer or len(answer) < 100:
             logger.warning("LLM failed, using extractive answer")
             facts = extract_key_facts(merged_docs, question)
@@ -1786,16 +1791,16 @@ Error Type: {health_status['error']}
             answer = "கேள்விக்கான தகவல்கள் ஆதாரங்களில் உள்ளன."
 
         sources = format_sources(merged_docs)
-        logger.info(f"Ready with {len(sources)} sources")
+        logger.info(f"[TIMING] TOTAL ask_question: {time.time() - t_start:.2f}s | {len(sources)} sources")
 
         if return_formatted:
             return format_answer_output(answer, sources)
-        
+
         return {
             "answer": answer,
             "sources": sources
         }
-        
+
     except Exception as e:
         error_msg = f"Query error: {str(e)}"
         logger.error(error_msg)
@@ -1812,7 +1817,9 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
     httpx async client for Ollama LLM calls. This allows multiple user requests
     to be processed concurrently without blocking the event loop.
     """
+    t_start = time.time()
     health_status = await asyncio.to_thread(check_qdrant_health)
+    logger.info(f"[TIMING] async health_check: {time.time() - t_start:.2f}s")
 
     if not health_status["healthy"]:
         error_message = f"""
@@ -1864,10 +1871,12 @@ Error Type: {health_status['error']}
 
         logger.info(f"Searching: {question[:60]}...")
 
+        t0 = time.time()
         searcher = HybridQdrantSearch(client)
         results = await asyncio.to_thread(
             searcher.search, question, 50, SCORE_THRESHOLD
         )
+        logger.info(f"[TIMING] async hybrid_search: {time.time() - t0:.2f}s ({len(results)} results)")
 
         if not results:
             answer = "மன்னிக்கவும், தகவல்கள் கிடைக்கவில்லை."
@@ -1875,19 +1884,17 @@ Error Type: {health_status['error']}
                 return format_answer_output(answer, [])
             return {"answer": answer, "sources": []}
 
-        logger.info(f"Found {len(results)} chunks")
-
+        t0 = time.time()
         merged_docs = await asyncio.to_thread(
             merge_consecutive_chunks, client, results
         )
+        logger.info(f"[TIMING] async merge_chunks: {time.time() - t0:.2f}s ({len(merged_docs)} docs)")
 
         if not merged_docs:
             answer = "போதுமான தகவல்கள் இல்லை."
             if return_formatted:
                 return format_answer_output(answer, [])
             return {"answer": answer, "sources": []}
-
-        logger.info(f"Merged into {len(merged_docs)} documents")
 
         context_parts = []
         for idx, doc in enumerate(merged_docs[:3], 1):
@@ -1897,7 +1904,9 @@ Error Type: {health_status['error']}
 
         answer = ""
         if use_llm:
+            t0 = time.time()
             answer = await generate_llm_answer_async(question, context)
+            logger.info(f"[TIMING] async ollama_llm: {time.time() - t0:.2f}s")
 
         if not answer or len(answer) < 100:
             logger.warning("LLM failed, using extractive answer")
@@ -1908,7 +1917,7 @@ Error Type: {health_status['error']}
             answer = "கேள்விக்கான தகவல்கள் ஆதாரங்களில் உள்ளன."
 
         sources = format_sources(merged_docs)
-        logger.info(f"Ready with {len(sources)} sources")
+        logger.info(f"[TIMING] TOTAL ask_question_async: {time.time() - t_start:.2f}s | {len(sources)} sources")
 
         if return_formatted:
             return format_answer_output(answer, sources)
