@@ -1427,41 +1427,14 @@ def extract_key_facts(docs: List[Dict], question: str) -> List[Dict]:
     facts.sort(key=lambda x: x['score'], reverse=True)
     return facts[:20]
 
-TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இதழ் தொடர்பான கேள்விகளுக்கு பதிலளிக்கும் ஒரு தமிழ் நிபுணர்.
+TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இதழ் தொடர்பான கேள்விகளுக்கு தமிழில் பதிலளிக்கும் நிபுணர்.
 
-உங்கள் பணி:
-1. கொடுக்கப்பட்ட சூழல் (context) மற்றும் கேள்வியின் அடிப்படையில் விரிவான பதில் எழுதுக
-2. பதில் 200 முதல் 500 சொற்கள் வரை இருக்க வேண்டும்
-3. தெளிவான, எளிமையான, நடைமுறை தமிழில் எழுதுக
-4. சூழலில் உள்ள தகவல்களை மட்டுமே பயன்படுத்துக – கற்பனையாக எதையும் சேர்க்காதீர்கள்
-5. பதில் வாசிப்பதற்கு மிகவும் எளிதாகவும், நன்கு கட்டமைக்கப்பட்டதாகவும் இருக்க வேண்டும்
-6. பதில் தொடங்கும் போதும் முடியும் போதும் எந்தச் சொலும் துண்டிக்கப்பட்டதாக இருக்கக் கூடாது
-
-மிக முக்கியமான வடிவமைப்பு விதிகள் (Formatting Rules):
-- கேள்வி **புள்ளிவாரியான (points-wise)** பதிலை எதிர்பார்க்குமானால்:
-  * ஒவ்வொரு புள்ளியும் தனித்தனி வரியில் எழுதப்பட வேண்டும்
-  * ஒரு புள்ளி முடிந்தவுடன் அடுத்த புள்ளி புதிய வரியில் தொடங்க வேண்டும்
-  * புள்ளிகளுக்கிடையே சரியான வரி இடைவெளி இருக்க வேண்டும்
-  * ஒரே புள்ளியில் பல கருத்துகளை கலக்கக் கூடாது
-
-- கேள்வி **பத்திவாரியான (paragraph-wise)** பதிலை எதிர்பார்க்குமானால்:
-  * ஒவ்வொரு பத்தியும் தனித்தனி வரியில் இருக்க வேண்டும்
-  * ஒவ்வொரு பத்தியின் முன்பும் பின்பும் ஒரு காலி வரி (spacing) இருக்க வேண்டும்
-  * மிக நீளமான ஒரே பத்தியாக எழுதக்கூடாது
-  * ஒவ்வொரு பத்தியும் ஒரு முக்கிய கருத்தை மட்டும் விளக்க வேண்டும்
-
-எழுதும் முறை:
-- முதல் வாக்கியத்தில் கேள்விக்கான நேரடியான பதிலை தெளிவாக கூறுக
-- அதன் பின்னர் விவரங்கள், விளக்கங்கள், எடுத்துக்காட்டுகளை ஒழுங்காக எழுதுக
-- தேவையான இடங்களில் துணைத்தலைப்புகளை பயன்படுத்தலாம்
-- இறுதியில் சுருக்கமான முடிவுரை எழுதலாம்
-
-கவனிக்க வேண்டியவை:
-- சூழலில் இல்லாத தகவல்களை எதையும் எழுதாதீர்கள்
-- "சூழலின் படி", "ஆதாரத்தின் படி" போன்ற சொற்களை பயன்படுத்த வேண்டாம்
-- வாசிப்பவரின் கண்களுக்கு சோர்வு வராத வகையில் பதிலை அமைக்க வேண்டும்
-
-இப்போது, கீழே கொடுக்கப்பட்ட கேள்வி மற்றும் சூழலின் அடிப்படையில், மேலுள்ள அனைத்து விதிகளையும் கட்டாயமாக பின்பற்றி, தெளிவாகவும் வாசிக்க எளிதாகவும் விரிவான பதிலை எழுதுக."""
+விதிகள்:
+- சூழலில் உள்ள தகவல்களை மட்டுமே பயன்படுத்துக, கற்பனையாக சேர்க்காதீர்கள்
+- 100-200 சொற்களில் தெளிவாக எழுதுக
+- முதலில் நேரடி பதில், பின்னர் விவரங்கள்
+- புள்ளிகள் தனி வரியில், பத்திகளுக்கிடையே இடைவெளி
+- முழுமையான வாக்கியங்களில் எழுதுக"""
 
 
 def generate_llm_answer(question: str, context: str, max_words: int = 500) -> str:
@@ -1487,7 +1460,7 @@ def generate_llm_answer(question: str, context: str, max_words: int = 500) -> st
 சூழல்:
 {context}
 
-விரிவான பதில் (200-500 சொற்கள்):"""
+பதில் (100-200 சொற்கள்):"""
 
         payload = {
             "model": OLLAMA_MODEL,
@@ -1495,7 +1468,7 @@ def generate_llm_answer(question: str, context: str, max_words: int = 500) -> st
             "stream": False,
             "options": {
                 "temperature": 0.0,
-                "num_predict": 512,
+                "num_predict": 300,
                 "num_ctx": 2048,
             },
             "keep_alive": "10m",
@@ -1539,7 +1512,7 @@ async def generate_llm_answer_async(question: str, context: str, max_words: int 
 சூழல்:
 {context}
 
-விரிவான பதில் (200-500 சொற்கள்):"""
+பதில் (100-200 சொற்கள்):"""
 
         payload = {
             "model": OLLAMA_MODEL,
@@ -1547,7 +1520,7 @@ async def generate_llm_answer_async(question: str, context: str, max_words: int 
             "stream": False,
             "options": {
                 "temperature": 0.0,
-                "num_predict": 512,
+                "num_predict": 300,
                 "num_ctx": 2048,
             },
             "keep_alive": "10m",
@@ -1794,8 +1767,8 @@ Error Type: {health_status['error']}
         logger.info(f"Merged into {len(merged_docs)} documents")
 
         context_parts = []
-        for idx, doc in enumerate(merged_docs[:5], 1):
-            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:800]}")
+        for idx, doc in enumerate(merged_docs[:3], 1):
+            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:500]}")
         
         context = "\n\n".join(context_parts)
         
@@ -1917,8 +1890,8 @@ Error Type: {health_status['error']}
         logger.info(f"Merged into {len(merged_docs)} documents")
 
         context_parts = []
-        for idx, doc in enumerate(merged_docs[:5], 1):
-            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:800]}")
+        for idx, doc in enumerate(merged_docs[:3], 1):
+            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:500]}")
 
         context = "\n\n".join(context_parts)
 
