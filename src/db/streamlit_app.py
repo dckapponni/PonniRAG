@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
 QDRANT_PATH = str(BASE_DIR / "qdrant_data")
-IMG_DIR = BASE_DIR.parent / "img"
+IMG_DIR = BASE_DIR.parent.parent/"frontend"/"public"/"images"
 
 # Check if mock mode is enabled
 USE_MOCK_DATA = os.getenv("USE_MOCK_DATA", "false").lower() in ("true", "1", "yes")
@@ -648,7 +648,7 @@ def render_issues_page(volume_id: str):
     st.markdown("<br>", unsafe_allow_html=True)
     
     base_dir = Path(IMG_DIR) if isinstance(IMG_DIR, str) else IMG_DIR
-    volume_folder = base_dir / f"volume {volume_id} cover images"
+    volume_folder = base_dir / f"volume{volume_id}-covers"
     issues_data = load_volume_issues(volume_id, volume_folder)
     if not issues_data:
         logger.warning(f"No issues found for volume {volume_id}")
