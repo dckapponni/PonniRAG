@@ -39,7 +39,7 @@ const SourceCard = ({ source, index, language }) => {
 };
 
 const Sources = ({ sources, language }) => {
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(true);
   const t = (key) => getTranslation(language, key);
 
   if (!sources || sources.length === 0) return null;
