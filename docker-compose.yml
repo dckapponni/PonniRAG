@@ -8,6 +8,12 @@ services:
       - "6333:6333"
     volumes:
       - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
     restart: unless-stopped
 
   ollama:
@@ -17,7 +23,7 @@ services:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
-      - /home/ubuntu/tamil-llama-ollama:/models/tamil-llama
+      - ${MODEL_PATH:-/home/ubuntu/tamil-llama-ollama}:/models/tamil-llama
       - ./Modelfile:/models/tamil-llama/Modelfile
       - ./ollama-entrypoint.sh:/ollama-entrypoint.sh
     entrypoint: ["/bin/bash", "/ollama-entrypoint.sh"]
@@ -32,6 +38,12 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 15s
+      timeout: 5s
+      start_period: 180s
+      retries: 5
     restart: unless-stopped
 
   api:
@@ -42,8 +54,10 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      - qdrant
-      - ollama
+      qdrant:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
     environment:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
