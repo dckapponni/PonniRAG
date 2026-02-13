@@ -3,7 +3,11 @@ FastAPI REST API for Ponni RAG System.
 Provides endpoints for search, question answering, and library access.
 """
 
+<<<<<<< Updated upstream
 import asyncio
+=======
+import json
+>>>>>>> Stashed changes
 import logging
 import os
 import sys
@@ -13,6 +17,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
@@ -20,13 +25,21 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 # Import real hybrid_search module
 from hybrid_search import (
     ask_question,
+<<<<<<< Updated upstream
     ask_question_async,
+=======
+    ask_question_stream,
+>>>>>>> Stashed changes
     check_qdrant_health,
     EnhancedAuthorQuerySystem,
     get_issue_count,
     CSV_PATH,
+<<<<<<< Updated upstream
     _author_system_cache,
     _author_system_lock,
+=======
+    preload_ollama_model,
+>>>>>>> Stashed changes
 )
 
 from pdf_links import PDF_LINKS
@@ -165,6 +178,7 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning(f"Qdrant not available: {health.get('message', 'Unknown error')}")
 
+<<<<<<< Updated upstream
     # Pre-cache the author query system at startup
     csv_path = str(CSV_PATH)
     if CSV_PATH.exists():
@@ -172,6 +186,10 @@ async def lifespan(app: FastAPI):
             if csv_path not in _author_system_cache:
                 _author_system_cache[csv_path] = EnhancedAuthorQuerySystem(csv_path)
         logger.info("Author query system cached at startup")
+=======
+    # Preload Ollama model into GPU memory
+    preload_ollama_model()
+>>>>>>> Stashed changes
 
     yield
 
@@ -253,6 +271,42 @@ async def ask_question_endpoint(request: QuestionRequest):
     except Exception as e:
         logger.error(f"Error processing question: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/ask/stream", tags=["Search"])
+async def ask_question_stream_endpoint(request: QuestionRequest):
+    """
+    Ask a question and get a streaming AI-generated answer via SSE.
+
+    Streams tokens as Server-Sent Events:
+    - event: token — individual answer tokens
+    - event: sources — source documents (JSON array)
+    - event: done — signals completion
+    """
+    def event_generator():
+        try:
+            for event in ask_question_stream(
+                question=request.question,
+                top_k=request.top_k,
+            ):
+                if event["type"] == "token":
+                    yield f"event: token\ndata: {json.dumps({'content': event['content']})}\n\n"
+                elif event["type"] == "sources":
+                    yield f"event: sources\ndata: {json.dumps({'sources': event['sources']})}\n\n"
+            yield "event: done\ndata: {}\n\n"
+        except Exception as e:
+            logger.error(f"Streaming error: {e}")
+            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
 
 
 @app.get("/api/search", response_model=QuestionResponse, tags=["Search"])
