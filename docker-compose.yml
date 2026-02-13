@@ -1,80 +1,135 @@
 version: "3.9"
 
+
+
 services:
+
   qdrant:
+
     image: qdrant/qdrant
+
     container_name: qdrant
+
     ports:
+
       - "6333:6333"
+
     volumes:
+
       - qdrant_data:/qdrant/storage
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
-      interval: 10s
-      timeout: 5s
-      start_period: 10s
-      retries: 5
+
     restart: unless-stopped
+
+
 
   ollama:
+
     image: ollama/ollama
+
     container_name: ollama
+
     ports:
+
       - "11434:11434"
+
     volumes:
+
       - ollama_data:/root/.ollama
-      - ${MODEL_PATH:-/home/ubuntu/tamil-llama-ollama}:/models/tamil-llama
-      - ./Modelfile:/models/tamil-llama/Modelfile
+
+      - /home/ubuntu/tamil-llama-ollama:/models/tamil-llama
+
       - ./ollama-entrypoint.sh:/ollama-entrypoint.sh
+
+
+
     entrypoint: ["/bin/bash", "/ollama-entrypoint.sh"]
+
     environment:
+
       - OLLAMA_HOST=0.0.0.0:11434
+
       - NVIDIA_VISIBLE_DEVICES=all
+
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
     deploy:
+
       resources:
+
         reservations:
+
           devices:
+
             - driver: nvidia
+
               count: 1
+
               capabilities: [gpu]
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
-      interval: 15s
-      timeout: 5s
-      start_period: 180s
-      retries: 5
+
     restart: unless-stopped
+
+
 
   api:
+
     build:
+
       context: .
+
       dockerfile: Dockerfile.api
+
     container_name: ponni-api
+
     ports:
+
       - "8000:8000"
+
     depends_on:
-      qdrant:
-        condition: service_healthy
-      ollama:
-        condition: service_healthy
+
+      - qdrant
+
+      - ollama
+
     environment:
+
       - QDRANT_HOST=qdrant
+
       - QDRANT_PORT=6333
+
       - OLLAMA_HOST=http://ollama:11434
+
       - OLLAMA_MODEL=tamil-llama
+
     restart: unless-stopped
+
+
 
   frontend:
+
     build:
+
       context: ./frontend
+
+      args:
+
+        REACT_APP_API_URL: http://localhost:8000
+
     container_name: ponni-frontend
+
     ports:
+
       - "3000:3000"
+
     depends_on:
+
       - api
+
     restart: unless-stopped
 
+
+
 volumes:
+
   qdrant_data:
+
   ollama_data:
