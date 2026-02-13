@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 // Configuration
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+const API_BASE_URL = process.env.REACT_APP_API_URL || '';
 
 // Create axios instance with default config
 const api = axios.create({
@@ -97,13 +97,13 @@ export const askQuestion = async (question, useLLM = true) => {
  * @param {object} callbacks - { onToken, onSources, onDone, onError }
  * @returns {AbortController} - Call .abort() to cancel the stream
  */
-export const askQuestionStream = (question, topK = 10, { onToken, onSources, onDone, onError }) => {
+export const askQuestionStream = (question, { onToken, onSources, onDone, onError }) => {
   const controller = new AbortController();
 
   fetch(`${API_BASE_URL}/api/ask/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question, top_k: topK, use_llm: true }),
+    body: JSON.stringify({ question, use_llm: true }),
     signal: controller.signal,
   })
     .then(async (response) => {

@@ -276,7 +276,6 @@ async def ask_question_stream_endpoint(request: QuestionRequest):
         try:
             for event in ask_question_stream(
                 question=request.question,
-                top_k=request.top_k,
             ):
                 if event["type"] == "token":
                     yield f"event: token\ndata: {json.dumps({'content': event['content']})}\n\n"
