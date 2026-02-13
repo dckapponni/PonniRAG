@@ -1363,19 +1363,10 @@ CSV உள்ளடக்கம்:
             "keep_alive": "10m",
             "options": {
                 "temperature": 0.0,
-<<<<<<< Updated upstream
                 "num_predict": 300,
                 "num_ctx": 2048,
                 "num_gpu": 999,
-            },
-            "keep_alive": "10m",
-=======
-                "top_p": 0.9,
-                "num_predict": 2048,
-                "num_ctx": 4096,
-                "num_gpu": 99,
             }
->>>>>>> Stashed changes
         }
 
         response = requests.post(
@@ -1401,60 +1392,34 @@ CSV உள்ளடக்கம்:
         return ""
 
 
-<<<<<<< Updated upstream
 async def generate_llm_answer_async(question: str, context: str, max_words: int = 500) -> str:
     """
     Async version of generate_llm_answer using httpx.
 
     Non-blocking LLM call that frees the event loop while waiting for Ollama,
     allowing other requests to be served concurrently.
-=======
-def generate_llm_answer_stream(question: str, context: str, csv_context: str):
-    """
-    Generate LLM answer using Ollama API with streaming.
-    Yields individual token strings as they arrive from Ollama.
->>>>>>> Stashed changes
     """
     try:
         prompt = f"""{TAMIL_ANSWER_SYSTEM_PROMPT}
 
-<<<<<<< Updated upstream
 கேள்வி: {question}
 
 சூழல்:
 {context}
 
 பதில் (100-200 சொற்கள்):"""
-=======
-கேள்வி:
-{question}
-
-========================
-CSV உள்ளடக்கம்:
-{csv_context}
-========================
-
-========================
-ஆவண சூழல்:
-{context}
-========================
-
-விரிவான பதில் (200-500 சொற்கள்):
-"""
->>>>>>> Stashed changes
 
         payload = {
             "model": OLLAMA_MODEL,
             "prompt": prompt,
-<<<<<<< Updated upstream
             "stream": False,
+            "keep_alive": "10m",
             "options": {
                 "temperature": 0.0,
                 "num_predict": 300,
                 "num_ctx": 2048,
                 "num_gpu": 999,
             },
-            "keep_alive": "10m",
         }
 
         async with httpx.AsyncClient() as client:
@@ -1478,15 +1443,42 @@ CSV உள்ளடக்கம்:
     except Exception as e:
         logger.error(f"Ollama async generation failed: {e}")
         return ""
-=======
+
+
+def generate_llm_answer_stream(question: str, context: str, csv_context: str):
+    """
+    Generate LLM answer using Ollama API with streaming.
+    Yields individual token strings as they arrive from Ollama.
+    """
+    try:
+        prompt = f"""{TAMIL_ANSWER_SYSTEM_PROMPT}
+
+கேள்வி:
+{question}
+
+========================
+CSV உள்ளடக்கம்:
+{csv_context}
+========================
+
+========================
+ஆவண சூழல்:
+{context}
+========================
+
+விரிவான பதில் (200-500 சொற்கள்):
+"""
+
+        payload = {
+            "model": OLLAMA_MODEL,
+            "prompt": prompt,
             "stream": True,
             "keep_alive": "10m",
             "options": {
                 "temperature": 0.0,
-                "top_p": 0.9,
-                "num_predict": 2048,
-                "num_ctx": 4096,
-                "num_gpu": 99,
+                "num_predict": 300,
+                "num_ctx": 2048,
+                "num_gpu": 999,
             }
         }
 
@@ -1510,7 +1502,6 @@ CSV உள்ளடக்கம்:
     except Exception as e:
         logger.error(f"Ollama streaming generation failed: {e}")
         yield ""
->>>>>>> Stashed changes
 
 
 def generate_extractive_answer(facts: List[Dict], question: str) -> str:
@@ -1612,15 +1603,12 @@ def format_answer_output(answer: str, sources: List[Dict]) -> str:
 
 def ask_question(question: str, return_formatted: bool = False, use_llm: bool = True) -> Dict:
     """
-    ✅ CRITICAL FIX: Check CSV queries BEFORE vector search
-    This ensures CSV data is returned directly without LLM hallucination
-    """
-    # ✅ 1. CHECK QDRANT HEALTH
     Main question answering function with database health check and hybrid search.
 
     Primary entry point for processing user queries. Handles database health checks,
     author queries, vector search, document merging, LLM generation, and source formatting.
     Results are filtered by score threshold rather than a fixed top_k count.
+    CSV queries are checked BEFORE vector search to return direct data without LLM.
 
     Args:
         question (str): User's question in Tamil or English.
