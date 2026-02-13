@@ -7,6 +7,8 @@ __pycache__/
 qdrant_storage/
 qdrant_data/
 *.json
+!frontend/package.json
+!frontend/package-lock.json
 *.log
 .env
 ./
