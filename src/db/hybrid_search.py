@@ -1392,7 +1392,7 @@ CSV உள்ளடக்கம்:
         return ""
 
 
-async def generate_llm_answer_async(question: str, context: str, max_words: int = 500) -> str:
+async def generate_llm_answer_async(question: str, context: str, csv_context: str, max_words: int = 500) -> str:
     """
     Async version of generate_llm_answer using httpx.
 
@@ -1402,12 +1402,21 @@ async def generate_llm_answer_async(question: str, context: str, max_words: int 
     try:
         prompt = f"""{TAMIL_ANSWER_SYSTEM_PROMPT}
 
-கேள்வி: {question}
+கேள்வி:
+{question}
 
-சூழல்:
+========================
+CSV உள்ளடக்கம்:
+{csv_context}
+========================
+
+========================
+ஆவண சூழல்:
 {context}
+========================
 
-பதில் (100-200 சொற்கள்):"""
+விரிவான பதில் (200-500 சொற்கள்):
+"""
 
         payload = {
             "model": OLLAMA_MODEL,
@@ -1727,7 +1736,7 @@ Error Type: {health_status['error']}
         answer = ""
         if use_llm:
             t0 = time.time()
-            answer = generate_llm_answer(question, context)
+            answer = generate_llm_answer(question, context, csv_context)
             logger.info(f"[TIMING] ollama_llm: {time.time() - t0:.2f}s")
 
         if not answer or len(answer) < 150:
@@ -1847,14 +1856,27 @@ Error Type: {health_status['error']}
 
         context_parts = []
         for idx, doc in enumerate(merged_docs[:3], 1):
-            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:500]}")
+            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:400]}")
+
+        # CSV semantic context
+        csv_results = await asyncio.to_thread(search_csv_semantic, question, 3)
+        logger.info("------ CSV Rows Sent To LLM (async) ------")
+        for row in csv_results:
+            logger.info(row)
+        logger.info("------------------------------------------")
+
+        csv_context = ""
+        if csv_results:
+            csv_context = "\n".join([f"{idx}. {row}" for idx, row in enumerate(csv_results, 1)])
+        else:
+            csv_context = "தொடர்புடைய CSV தகவல் இல்லை."
 
         context = "\n\n".join(context_parts)
 
         answer = ""
         if use_llm:
             t0 = time.time()
-            answer = await generate_llm_answer_async(question, context)
+            answer = await generate_llm_answer_async(question, context, csv_context)
             logger.info(f"[TIMING] async ollama_llm: {time.time() - t0:.2f}s")
 
         if not answer or len(answer) < 100:

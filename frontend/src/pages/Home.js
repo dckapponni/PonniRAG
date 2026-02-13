@@ -24,7 +24,7 @@ const Home = ({ language }) => {
       { role: 'assistant', content: '', sources: [] },
     ]);
 
-    askQuestionStream(question, {
+    const streamController = askQuestionStream(question, {
       onToken: (token) => {
         setMessages((prev) => {
           const updated = [...prev];
@@ -53,6 +53,7 @@ const Home = ({ language }) => {
       },
       onError: (error) => {
         console.error('Streaming error, falling back:', error);
+        streamController.abort();
         // Fall back to non-streaming
         askQuestion(question)
           .then((result) => {

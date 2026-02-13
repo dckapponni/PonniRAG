@@ -99,6 +99,14 @@ export const askQuestion = async (question, useLLM = true) => {
  */
 export const askQuestionStream = (question, { onToken, onSources, onDone, onError }) => {
   const controller = new AbortController();
+  let doneFired = false;
+
+  const fireDone = () => {
+    if (!doneFired) {
+      doneFired = true;
+      if (onDone) onDone();
+    }
+  };
 
   fetch(`${API_BASE_URL}/api/ask/stream`, {
     method: 'POST',
@@ -133,8 +141,8 @@ export const askQuestionStream = (question, { onToken, onSources, onDone, onErro
               onToken(data.content);
             } else if (eventType === 'sources' && onSources) {
               onSources(data.sources);
-            } else if (eventType === 'done' && onDone) {
-              onDone();
+            } else if (eventType === 'done') {
+              fireDone();
             } else if (eventType === 'error' && onError) {
               onError(new Error(data.error));
             }
@@ -143,7 +151,7 @@ export const askQuestionStream = (question, { onToken, onSources, onDone, onErro
         }
       }
 
-      if (onDone) onDone();
+      fireDone();
     })
     .catch((error) => {
       if (error.name !== 'AbortError' && onError) {
