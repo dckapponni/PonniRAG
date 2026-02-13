@@ -54,8 +54,6 @@ services:
   frontend:
     build:
       context: ./frontend
-      args:
-        REACT_APP_API_URL: http://localhost:8000
     container_name: ponni-frontend
     ports:
       - "3000:3000"

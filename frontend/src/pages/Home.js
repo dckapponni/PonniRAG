@@ -24,7 +24,7 @@ const Home = ({ language }) => {
       { role: 'assistant', content: '', sources: [] },
     ]);
 
-    askQuestionStream(question, 10, {
+    askQuestionStream(question, {
       onToken: (token) => {
         setMessages((prev) => {
           const updated = [...prev];

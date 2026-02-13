@@ -1884,7 +1884,7 @@ Error Type: {health_status['error']}
         return {"answer": error_msg, "sources": [], "error": str(e)}
 
 
-def ask_question_stream(question: str, top_k: int = 3):
+def ask_question_stream(question: str):
     """
     Streaming version of ask_question.
     Yields dicts: {"type": "token", "content": str} for answer tokens,
@@ -1964,7 +1964,7 @@ def ask_question_stream(question: str, top_k: int = 3):
             if answer:
                 yield {"type": "token", "content": answer}
 
-        sources = format_sources(merged_docs, limit=top_k)
+        sources = format_sources(merged_docs)
         yield {"type": "sources", "sources": sources}
 
     except Exception as e:
