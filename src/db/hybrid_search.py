@@ -44,9 +44,6 @@ CSV_PATH = BASE_DIR / "data" / "summary.csv"
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434")
 OLLAMA_MODEL = "tamil-llama"
 
-# # Force CPU usage to avoid CUDA OOM
-# os.environ["CUDA_VISIBLE_DEVICES"] = ""
-# os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -68,11 +65,7 @@ def verify_files():
 verify_files()
 
 
-# ============================================================================
-# STREAMLIT-CACHED MODEL LOADERS (PERSISTENT ACROSS RERUNS)
-# ============================================================================
-
-@st.cache_resource(show_spinner=False)  # ✅ No spinner during queries
+@st.cache_resource(show_spinner=False)  
 def get_embed_model():
     """
     Load and cache embedding model using Streamlit's cache_resource.
@@ -81,7 +74,7 @@ def get_embed_model():
     """
     logger.info("🔄 Loading embedding model (this happens only once)...")
     model = SentenceTransformer(EMBEDDING_MODEL, device="cpu")
-    logger.info("✅ Embedding model loaded and cached")
+    logger.info(" Embedding model loaded and cached")
     return model
 
 
@@ -141,10 +134,6 @@ def get_csv_embeddings():
     return list(zip(texts, embeddings))
 
 
-# ============================================================================
-# EMBEDDING FUNCTIONS (USE CACHED MODELS)
-# ============================================================================
-
 def dense_embed_query(text: str):
     """Generate dense embedding for query text."""
     model = get_embed_model()  # Gets cached model silently
@@ -182,10 +171,6 @@ def search_csv_semantic(question: str, top_k: int = 5):
 
     return [text for text, _ in scored[:top_k]]
 
-
-# ============================================================================
-# REST OF YOUR CODE (UNCHANGED)
-# ============================================================================
 
 def check_qdrant_health() -> Dict:
     """Check Qdrant database health and connectivity."""
@@ -372,7 +357,6 @@ class EnhancedAuthorQuerySystem:
         
         has_ponni = any(variation in q for variation in ponni_variations)
 
-        # ✅ TOPIC AUTHOR PATTERNS - These ask "who wrote X?"
         topic_patterns = [
             'யார் எழுதிய',
             'யார் எழுதினார்',
@@ -392,11 +376,10 @@ class EnhancedAuthorQuerySystem:
         if any(p in q for p in topic_patterns):
             return 'topic_author'
 
-        # ✅ AUTHOR TOPICS PATTERNS - These ask "what did X write?"
         known_authors = [
             'கலைஞர்', 'கருணாநிதி', 'பெரியார்', 'அண்ணா', 'அண்ணாதுரை',
             'நக்கீரன்', 'பாரதிதாசன்', 'புதுமைப்பித்தன்', 'அகிலன்', 
-            'கண்ணதாசன்', 'தங்கமணி', 'நாச்சியப்பன்', 'நாரா',  # ✅ Added common authors
+            'கண்ணதாசன்', 'தங்கமணி', 'நாச்சியப்பன்', 'நாரா', 
         ]
         has_author = any(author in q for author in known_authors)
         
@@ -408,30 +391,29 @@ class EnhancedAuthorQuerySystem:
             'எழுதிய தலைப்பு',
             'எழுதிய தலைப்புகள்',
             'எழுதிய கட்டுரைகள்',
-            'எழுதிய தொடர்',  # ✅ NEW: Detect series queries
-            'எழுதிய தொடரின்',  # ✅ NEW
-            'தொடரின் பெயர்',  # ✅ NEW: "series name" pattern
-            'தொடர் பெயர்',  # ✅ NEW
+            'எழுதிய தொடர்',  
+            'எழுதிய தொடரின்',  
+            'தொடரின் பெயர்', 
+            'தொடர் பெயர்',  
             'பற்றி எழுதினார்',
             'எந்த தலைப்புகள்',
             'அவர் எழுதிய',
-            'படைப்புகள்',  # ✅ CRITICAL: "works" pattern
-            'படைப்புகளை',  # ✅ CRITICAL
-            'படைப்புகளைப் பட்டியலிடுக',  # ✅ CRITICAL: "list works"
-            'பட்டியலிடுக',  # ✅ CRITICAL: "list"
-            'பட்டியல்',  # ✅ CRITICAL
+            'படைப்புகள்',  
+            'படைப்புகளை', 
+            'படைப்புகளைப் பட்டியலிடுக',  
+            'பட்டியலிடுக',  
+            'பட்டியல்', 
             'list of writings',
             'articles by',
             'works of',
             'what did write',
             'list works',
-            'படைப்பு'  # ✅ CRITICAL: singular "work"
+            'படைப்பு'  
         ]
 
         if has_author or any(p in q for p in author_action_patterns):
             return 'author_topics'
-        
-        # LIST ALL AUTHORS PATTERNS
+
         list_patterns = [
             'எழுத்தாளர்கள் யார்',
             'ஆசிரியர்கள் யார்',
@@ -455,11 +437,10 @@ class EnhancedAuthorQuerySystem:
     def extract_entity(self, question: str, query_type: str) -> str:
         """
         Enhanced entity extraction with better noise word removal.
-        ✅ FIXED: Now properly removes "தொடரின்", "கதையின்" etc. from extracted topics
+        FIXED: Now properly removes "தொடரின்", "கதையின்" etc. from extracted topics
         """
         q = question.strip()
         
-        # ✅ Normalize Ponni variations
         ponni_variations = [
             'பொன்னியில்', 'பொன்னியின்', 'பொன்னிக்கு', 
             'பொன்னியை', 'பொன்னியால்', 'பொன்னியுடன்',
@@ -482,8 +463,8 @@ class EnhancedAuthorQuerySystem:
                 'புதுமைப்பித்தன்': 'புதுமைப்பித்தன்',
                 'அகிலன்': 'அகிலன்',
                 'கண்ணதாசன்': 'கண்ணதாசன்',
-                'நாச்சியப்பன்': 'நாச்சியப்பன்',  # ✅ Added
-                'நாரா': 'நாச்சியப்பன்',  # ✅ Maps நாரா to full name
+                'நாச்சியப்பன்': 'நாச்சியப்பன்',  
+                'நாரா': 'நாச்சியப்பன்', 
             }
             
             for pattern, canonical in known_authors.items():
@@ -519,13 +500,13 @@ class EnhancedAuthorQuerySystem:
                 'கட்டுரை',
                 'எழுதிய',
                 'யார்',
-                'படைப்புகளைப்',  # ✅ NEW: Remove list keywords
-                'படைப்புகளை',  # ✅ NEW
-                'படைப்புகள்',  # ✅ NEW
-                'பட்டியலிடுக',  # ✅ NEW
-                'பட்டியல்',  # ✅ NEW
-                'ன்',  # ✅ NEW: possessive marker
-                'இன்',  # ✅ NEW
+                'படைப்புகளைப்', 
+                'படைப்புகளை', 
+                'படைப்புகள்',  
+                'பட்டியலிடுக',  
+                'பட்டியல்',  
+                'ன்',  
+                'இன்',  
             ]
             
             for word in noise:
@@ -537,7 +518,7 @@ class EnhancedAuthorQuerySystem:
             return ' '.join(words) if words else ''
         
         elif query_type == 'topic_author':
-            # ✅ ENHANCED: Better noise word removal for topic extraction
+            #  ENHANCED: Better noise word removal for topic extraction
             noise = [
                 'யார் எழுதினார்',
                 'எழுதியவர் யார்',
@@ -554,7 +535,7 @@ class EnhancedAuthorQuerySystem:
                 'கட்டுரை',
                 'எழுதிய',
                 'யார்',
-                # ✅ NEW: Add common title suffixes to noise
+                #  NEW: Add common title suffixes to noise
                 'தொடரின்',
                 'தொடர்',
                 'கதையின்',
@@ -661,7 +642,7 @@ class EnhancedAuthorQuerySystem:
     def get_author_by_topic(self, topic: str) -> Dict:
         """
         Find authors who wrote about a specific topic.
-        ✅ ENHANCED: Now uses partial matching and handles common suffixes
+         ENHANCED: Now uses partial matching and handles common suffixes
         """
         if self.df is None or self.df.empty:
             return {
@@ -671,7 +652,7 @@ class EnhancedAuthorQuerySystem:
                 "articles": []
             }
         
-        # ✅ NEW: Clean up common suffixes that don't appear in CSV titles
+        #  NEW: Clean up common suffixes that don't appear in CSV titles
         topic_cleaned = topic
         suffixes_to_remove = [
             'தொடரின்',
@@ -702,12 +683,12 @@ class EnhancedAuthorQuerySystem:
         # Remove quotes and extra spaces
         topic_cleaned = topic_cleaned.replace("'", "").replace('"', '').strip()
         
-        # ✅ STRATEGY 1: Try exact match first (after cleaning)
+        #  STRATEGY 1: Try exact match first (after cleaning)
         matches = self.df[
             self.df['தலைப்பு'].str.contains(topic_cleaned, case=False, na=False, regex=False)
         ]
         
-        # ✅ STRATEGY 2: If no match, try word-by-word partial matching
+        #  STRATEGY 2: If no match, try word-by-word partial matching
         if matches.empty and len(topic_cleaned.split()) > 1:
             # Split topic into words and search for all words present
             words = topic_cleaned.split()
@@ -720,7 +701,7 @@ class EnhancedAuthorQuerySystem:
             
             matches = self.df[self.df['தலைப்பு'].apply(contains_all_words)]
         
-        # ✅ STRATEGY 3: If still no match, try each word individually (most lenient)
+        #  STRATEGY 3: If still no match, try each word individually (most lenient)
         if matches.empty:
             words = topic_cleaned.split()
             if words:  # Try matching with the longest/most significant word
@@ -734,7 +715,7 @@ class EnhancedAuthorQuerySystem:
                 "type": "topic_author",
                 "success": False,
                 "topic": topic,
-                "cleaned_topic": topic_cleaned,  # ✅ Show what was actually searched
+                "cleaned_topic": topic_cleaned,  #  Show what was actually searched
                 "message": f"'{topic}' தலைப்பு கண்டுபிடிக்க முடியவில்லை. தேடிய சொல்: '{topic_cleaned}'",
                 "articles": [],
                 "suggestion": "தலைப்பை முழுமையாக குறிப்பிடவும் அல்லது முக்கிய சொற்களை மட்டும் பயன்படுத்தவும்"
@@ -760,7 +741,7 @@ class EnhancedAuthorQuerySystem:
             "type": "topic_author",
             "success": True,
             "topic": topic,
-            "cleaned_topic": topic_cleaned,  # ✅ Show what was searched
+            "cleaned_topic": topic_cleaned,  #  Show what was searched
             "count": len(articles),
             "articles": articles
         }
@@ -1039,7 +1020,7 @@ def get_start_year() -> str:
 
 def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
     """
-    ✅ ENHANCED: Now returns CSV data directly without LLM processing
+     ENHANCED: Now returns CSV data directly without LLM processing
     This prevents hallucinations for author/topic queries
     """
     if detect_start_year_query(question):
@@ -1061,7 +1042,7 @@ def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
     if query_type == 'none':
         return False, ""
     
-    # ✅ All these queries return CSV data directly - NO LLM
+    #  All these queries return CSV data directly - NO LLM
     if query_type == 'list_all_authors':
         result = system.list_all_authors()
         return True, format_author_list(result)
@@ -1270,7 +1251,7 @@ TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இத�
 
 உங்கள் பணி:
 1. கொடுக்கப்பட்ட சூழல் (context) மற்றும் கேள்வியின் அடிப்படையில் விரிவான பதில் எழுதுக
-2. பதில் 200 முதல் 500 சொற்கள் வரை இருக்க வேண்டும்
+2. கேள்வியின் தன்மைக்கு ஏற்ப சுருக்கமாகவும் அல்லது விரிவாகவும் பதில் எழுதுக (தேவையற்ற நீளத்தை தவிர்க்கவும்)
 3. தெளிவான, எளிமையான, நடைமுறை தமிழில் எழுதுக
 4. சூழலில் உள்ள தகவல்களை மட்டுமே பயன்படுத்துக – கற்பனையாக எதையும் சேர்க்காதீர்கள்
 5. பதில் வாசிப்பதற்கு மிகவும் எளிதாகவும், நன்கு கட்டமைக்கப்பட்டதாகவும் இருக்க வேண்டும்
@@ -1296,7 +1277,7 @@ TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இத�
 - இறுதியில் சுருக்கமான முடிவுரை எழுதலாம்
 
 கவனிக்க வேண்டியவை:
-- CSV உள்ளடக்கத்தை பயன்படுத்தாமல் பதில் எழுதக்கூடாது.
+- CSV மற்றும் ஆவண சூழலில் உள்ள தகவல்களை பயன்படுத்தி பதில் எழுதுக
 - CSV தகவல் தொடர்பில்லையெனில் அதனை தெளிவாக குறிப்பிட வேண்டும்.
 - சூழலில் இல்லாத தகவல்களை எதையும் எழுதாதீர்கள்
 - "சூழலின் படி", "ஆதாரத்தின் படி" போன்ற சொற்களை பயன்படுத்த வேண்டாம்
@@ -1308,8 +1289,8 @@ TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இத�
 def generate_llm_answer(question: str, context: str, csv_context: str, max_words: int = 500) -> str:
     """
     Generate LLM answer using Ollama API.
-    ✅ FIXED: Increased num_predict to 2048 to prevent truncation
-    ✅ FIXED: Added num_ctx for context window
+     FIXED: Increased num_predict to 2048 to prevent truncation
+     FIXED: Added num_ctx for context window
     """
     try:
         prompt = f"""{TAMIL_ANSWER_SYSTEM_PROMPT}
@@ -1327,7 +1308,7 @@ CSV உள்ளடக்கம்:
 {context}
 ========================
 
-விரிவான பதில் (200-500 சொற்கள்):
+பதில் :
 """
 
         payload = {
@@ -1335,10 +1316,10 @@ CSV உள்ளடக்கம்:
             "prompt": prompt,
             "stream": False,
             "options": {
-                "temperature": 0.0,
-                "top_p": 0.9,
-                "num_predict": 2048,  # ✅ FIXED: Increased from 800 to 2048
-                "num_ctx": 4096  # ✅ FIXED: Added context window size
+                "temperature": 0.2,
+                "top_p": 0.95,
+                "num_predict": 512,  
+                "num_ctx": 4096  
             }
         }
 
@@ -1445,10 +1426,10 @@ def format_answer_output(answer: str, sources: List[Dict]) -> str:
 
 def ask_question(question: str, top_k: int = 3, return_formatted: bool = False, use_llm: bool = True) -> Dict:
     """
-    ✅ CRITICAL FIX: Check CSV queries BEFORE vector search
+     CRITICAL FIX: Check CSV queries BEFORE vector search
     This ensures CSV data is returned directly without LLM hallucination
     """
-    # ✅ 1. CHECK QDRANT HEALTH
+    #  1. CHECK QDRANT HEALTH
     health_status = check_qdrant_health()
     
     if not health_status["healthy"]:
@@ -1470,7 +1451,7 @@ Error Type: {health_status['error']}
     
     logger.info("Database is healthy - proceeding with query")
     
-    # ✅ 2. CHECK CSV QUERIES FIRST (BEFORE VECTOR SEARCH)
+    #  2. CHECK CSV QUERIES FIRST (BEFORE VECTOR SEARCH)
     # This is CRITICAL - CSV queries should return immediately
     if CSV_PATH.exists():
         try:
@@ -1478,19 +1459,19 @@ Error Type: {health_status['error']}
             is_handled, response = handle_author_query(question, str(CSV_PATH))
             
             if is_handled:
-                logger.info("✅ Handled as CSV author query - returning direct CSV data")
+                logger.info(" Handled as CSV author query - returning direct CSV data")
                 if return_formatted:
                     return response
                 return {
                     "answer": response,
                     "sources": [],
                     "query_type": "author_csv",
-                    "csv_direct": True  # ✅ Flag to indicate this came from CSV
+                    "csv_direct": True  #  Flag to indicate this came from CSV
                 }
         except Exception as e:
             logger.error(f"CSV query error: {e}")
     
-    # ✅ 3. IF NOT CSV QUERY, PROCEED WITH VECTOR SEARCH + LLM
+    #  3. IF NOT CSV QUERY, PROCEED WITH VECTOR SEARCH + LLM
     try:
         client = get_qdrant_client()
 
@@ -1504,7 +1485,7 @@ Error Type: {health_status['error']}
         logger.info(f"Searching: {question[:60]}...")
         
         searcher = HybridQdrantSearch(client)
-        results = searcher.search(question, limit=50)
+        results = searcher.search(question, limit=20)
 
         if not results:
             answer = "மன்னிக்கவும், தகவல்கள் கிடைக்கவில்லை."
@@ -1547,14 +1528,23 @@ Error Type: {health_status['error']}
         if use_llm:
             answer = generate_llm_answer(question, context, csv_context)
         
-        if not answer or len(answer) < 150:
-            logger.warning("LLM failed, using extractive answer")
+                # Calculate proper word count (Tamil + English safe)
+            word_count = len(re.findall(r'[\u0B80-\u0BFF]+|\w+', answer))
+            logger.info(f"LLM final word count: {word_count}")
+
+            # Only fallback if LLM truly failed (not just short)
+            if not answer or word_count < 6:
+                logger.warning(f"LLM answer too weak ({word_count} words), using extractive answer")
+                facts = extract_key_facts(merged_docs, question)
+                logger.info(f"Extracted {len(facts)} facts")
+                answer = generate_extractive_answer(facts, question)
+        else:
             facts = extract_key_facts(merged_docs, question)
-            logger.info(f"Extracted {len(facts)} facts")
             answer = generate_extractive_answer(facts, question)
-        
-        if not answer or len(answer) < 50:
+    
+        if answer is None or answer.strip() == "":
             answer = "கேள்விக்கான தகவல்கள் ஆதாரங்களில் உள்ளன."
+
 
         sources = format_sources(merged_docs, limit=top_k)
         logger.info(f"Ready with {len(sources)} sources")
@@ -1589,14 +1579,14 @@ def preload_models():
     # Show spinners ONLY during initial preload
     with st.spinner("🔄 Loading embedding model..."):
         _ = get_embed_model()
-        st.success("✅ Embedding model loaded")
+        st.success(" Embedding model loaded")
     
     with st.spinner("🔄 Connecting to Qdrant database..."):
         _ = get_qdrant_client()
-        st.success("✅ Qdrant connected")
+        st.success(" Qdrant connected")
     
     logger.info("=" * 60)
-    logger.info("✅ ALL MODELS READY - APP IS READY TO SERVE")
+    logger.info(" ALL MODELS READY - APP IS READY TO SERVE")
     logger.info("=" * 60)
     
-    st.success("✅ All models loaded successfully! Ready to answer queries.")
+    st.success(" All models loaded successfully! Ready to answer queries.")
