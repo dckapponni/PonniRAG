@@ -18,6 +18,9 @@ services:
     volumes:
       - ollama_data:/root/.ollama
       - /home/ubuntu/tamil-llama-ollama:/models/tamil-llama
+      - ./Modelfile:/models/tamil-llama/Modelfile
+      - ./ollama-entrypoint.sh:/ollama-entrypoint.sh
+    entrypoint: ["/bin/bash", "/ollama-entrypoint.sh"]
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
       - NVIDIA_VISIBLE_DEVICES=all
