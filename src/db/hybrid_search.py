@@ -1360,13 +1360,22 @@ CSV உள்ளடக்கம்:
             "model": OLLAMA_MODEL,
             "prompt": prompt,
             "stream": False,
+            "keep_alive": "10m",
             "options": {
                 "temperature": 0.0,
+<<<<<<< Updated upstream
                 "num_predict": 300,
                 "num_ctx": 2048,
                 "num_gpu": 999,
             },
             "keep_alive": "10m",
+=======
+                "top_p": 0.9,
+                "num_predict": 2048,
+                "num_ctx": 4096,
+                "num_gpu": 99,
+            }
+>>>>>>> Stashed changes
         }
 
         response = requests.post(
@@ -1392,26 +1401,52 @@ CSV உள்ளடக்கம்:
         return ""
 
 
+<<<<<<< Updated upstream
 async def generate_llm_answer_async(question: str, context: str, max_words: int = 500) -> str:
     """
     Async version of generate_llm_answer using httpx.
 
     Non-blocking LLM call that frees the event loop while waiting for Ollama,
     allowing other requests to be served concurrently.
+=======
+def generate_llm_answer_stream(question: str, context: str, csv_context: str):
+    """
+    Generate LLM answer using Ollama API with streaming.
+    Yields individual token strings as they arrive from Ollama.
+>>>>>>> Stashed changes
     """
     try:
         prompt = f"""{TAMIL_ANSWER_SYSTEM_PROMPT}
 
+<<<<<<< Updated upstream
 கேள்வி: {question}
 
 சூழல்:
 {context}
 
 பதில் (100-200 சொற்கள்):"""
+=======
+கேள்வி:
+{question}
+
+========================
+CSV உள்ளடக்கம்:
+{csv_context}
+========================
+
+========================
+ஆவண சூழல்:
+{context}
+========================
+
+விரிவான பதில் (200-500 சொற்கள்):
+"""
+>>>>>>> Stashed changes
 
         payload = {
             "model": OLLAMA_MODEL,
             "prompt": prompt,
+<<<<<<< Updated upstream
             "stream": False,
             "options": {
                 "temperature": 0.0,
@@ -1443,6 +1478,39 @@ async def generate_llm_answer_async(question: str, context: str, max_words: int 
     except Exception as e:
         logger.error(f"Ollama async generation failed: {e}")
         return ""
+=======
+            "stream": True,
+            "keep_alive": "10m",
+            "options": {
+                "temperature": 0.0,
+                "top_p": 0.9,
+                "num_predict": 2048,
+                "num_ctx": 4096,
+                "num_gpu": 99,
+            }
+        }
+
+        response = requests.post(
+            f"{OLLAMA_HOST}/api/generate",
+            json=payload,
+            timeout=300,
+            stream=True,
+        )
+        response.raise_for_status()
+
+        for line in response.iter_lines():
+            if line:
+                data = json.loads(line)
+                token = data.get("response", "")
+                if token:
+                    yield token
+                if data.get("done", False):
+                    break
+
+    except Exception as e:
+        logger.error(f"Ollama streaming generation failed: {e}")
+        yield ""
+>>>>>>> Stashed changes
 
 
 def generate_extractive_answer(facts: List[Dict], question: str) -> str:
@@ -1828,6 +1896,123 @@ Error Type: {health_status['error']}
         return {"answer": error_msg, "sources": [], "error": str(e)}
 
 
+def ask_question_stream(question: str, top_k: int = 3):
+    """
+    Streaming version of ask_question.
+    Yields dicts: {"type": "token", "content": str} for answer tokens,
+    and {"type": "sources", "sources": list} at the end.
+    For non-streamable responses (CSV queries, errors), yields complete answer as single token.
+    """
+    # 1. Check health
+    health_status = check_qdrant_health()
+    if not health_status["healthy"]:
+        yield {"type": "token", "content": f"Database Error: {health_status['message']}"}
+        yield {"type": "sources", "sources": []}
+        return
+
+    # 2. Check CSV queries first
+    if CSV_PATH.exists():
+        try:
+            is_handled, response = handle_author_query(question, str(CSV_PATH))
+            if is_handled:
+                yield {"type": "token", "content": response}
+                yield {"type": "sources", "sources": []}
+                return
+        except Exception as e:
+            logger.error(f"CSV query error: {e}")
+
+    # 3. Vector search + LLM streaming
+    try:
+        client = get_qdrant_client()
+
+        if is_author_question(question):
+            authors = fetch_all_authors(client)
+            answer = format_authors_tamil(authors) if authors else "எழுத்தாளர் தகவல்கள் கிடைக்கவில்லை."
+            yield {"type": "token", "content": answer}
+            yield {"type": "sources", "sources": []}
+            return
+
+        logger.info(f"Streaming search: {question[:60]}...")
+        searcher = HybridQdrantSearch(client)
+        results = searcher.search(question, limit=50)
+
+        if not results:
+            yield {"type": "token", "content": "மன்னிக்கவும், தகவல்கள் கிடைக்கவில்லை."}
+            yield {"type": "sources", "sources": []}
+            return
+
+        merged_docs = merge_consecutive_chunks(client, results)
+        if not merged_docs:
+            yield {"type": "token", "content": "போதுமான தகவல்கள் இல்லை."}
+            yield {"type": "sources", "sources": []}
+            return
+
+        logger.info(f"Merged into {len(merged_docs)} documents")
+
+        context_parts = []
+        for idx, doc in enumerate(merged_docs[:3], 1):
+            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:400]}")
+
+        csv_results = search_csv_semantic(question, top_k=3)
+        csv_context = ""
+        if csv_results:
+            csv_context = "\n".join([f"{idx}. {row}" for idx, row in enumerate(csv_results, 1)])
+        else:
+            csv_context = "தொடர்புடைய CSV தகவல் இல்லை."
+
+        context = "\n\n".join(context_parts)
+
+        # Stream LLM tokens
+        token_count = 0
+        for token in generate_llm_answer_stream(question, context, csv_context):
+            token_count += 1
+            yield {"type": "token", "content": token}
+
+        # If streaming produced too few tokens, fall back to extractive
+        if token_count < 10:
+            logger.warning("Streaming produced too few tokens, using extractive fallback")
+            facts = extract_key_facts(merged_docs, question)
+            answer = generate_extractive_answer(facts, question)
+            if answer:
+                yield {"type": "token", "content": answer}
+
+        sources = format_sources(merged_docs, limit=top_k)
+        yield {"type": "sources", "sources": sources}
+
+    except Exception as e:
+        logger.error(f"Streaming query error: {e}")
+        yield {"type": "token", "content": f"Query error: {str(e)}"}
+        yield {"type": "sources", "sources": []}
+
+
+def preload_ollama_model():
+    """
+    Warm up the Ollama LLM by sending a minimal prompt.
+    Loads the model into GPU memory so the first real query is fast.
+    No Streamlit dependency - safe to call from FastAPI.
+    """
+    logger.info("Preloading Ollama model into memory...")
+    try:
+        payload = {
+            "model": OLLAMA_MODEL,
+            "prompt": "hello",
+            "stream": False,
+            "keep_alive": "10m",
+            "options": {
+                "num_predict": 1,
+                "num_gpu": 99,
+            }
+        }
+        response = requests.post(
+            f"{OLLAMA_HOST}/api/generate",
+            json=payload,
+            timeout=120
+        )
+        response.raise_for_status()
+        logger.info("Ollama model preloaded successfully")
+    except Exception as e:
+        logger.warning(f"Ollama model preload failed (non-fatal): {e}")
+
 
 def preload_models():
     """
@@ -1838,18 +2023,21 @@ def preload_models():
     logger.info("=" * 60)
     logger.info("PRELOADING MODELS FOR STREAMLIT")
     logger.info("=" * 60)
-    
-    # Show spinners ONLY during initial preload
-    with st.spinner("🔄 Loading embedding model..."):
+
+    with st.spinner("Loading embedding model..."):
         _ = get_embed_model()
-        st.success("✅ Embedding model loaded")
-    
-    with st.spinner("🔄 Connecting to Qdrant database..."):
+        st.success("Embedding model loaded")
+
+    with st.spinner("Connecting to Qdrant database..."):
         _ = get_qdrant_client()
-        st.success("✅ Qdrant connected")
-    
+        st.success("Qdrant connected")
+
+    with st.spinner("Loading Ollama LLM..."):
+        preload_ollama_model()
+        st.success("Ollama LLM loaded")
+
     logger.info("=" * 60)
-    logger.info("✅ ALL MODELS READY - APP IS READY TO SERVE")
+    logger.info("ALL MODELS READY - APP IS READY TO SERVE")
     logger.info("=" * 60)
-    
-    st.success("✅ All models loaded successfully! Ready to answer queries.")
+
+    st.success("All models loaded successfully! Ready to answer queries.")

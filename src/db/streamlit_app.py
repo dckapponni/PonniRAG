@@ -26,14 +26,16 @@ USE_MOCK_DATA = os.getenv("USE_MOCK_DATA", "false").lower() in ("true", "1", "ye
 
 if USE_MOCK_DATA:
     from mock_search import mock_ask_question as ask_question
+    ask_question_stream = None
     logger.info("Running in MOCK MODE - using mock_search module")
 else:
     try:
-        from hybrid_search import ask_question
+        from hybrid_search import ask_question, ask_question_stream
         logger.info("Successfully imported hybrid_search module")
     except ImportError as e:
         logger.error(f"Failed to import hybrid_search: {e}")
         ask_question = None
+        ask_question_stream = None
 
 
 TRANSLATIONS = {
@@ -510,39 +512,60 @@ def render_sources(msg_idx: int, sources: List):
 
 def handle_user_input():
     """
-    Handle user input from chat interface.
-
-    Processes user queries from either chat input field or suggestion buttons, sends
-    to AI backend, and updates message history with response and sources.
+    Handle user input from chat interface with streaming support.
+    Uses st.write_stream for real-time token display when available,
+    falls back to non-streaming for mock mode.
     """
     if "temp_submit" in st.session_state:
         user_input = st.session_state.temp_submit
         del st.session_state.temp_submit
     else:
         user_input = st.chat_input(t("hero_input_placeholder"))
-    
+
     if user_input:
         st.session_state.messages.append({"role": "user", "content": user_input})
         logger.info(f"User query: {user_input[:100]}...")
         st.rerun()
-    
+
     if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
-        with st.spinner(t("searching")):
-            try:
-                last_user_msg = st.session_state.messages[-1]["content"]
-                if ask_question is None:
-                    raise ImportError("Hybrid search module not available")
-                result = ask_question(last_user_msg) or {}
-                logger.info("AI response generated for query")
+        try:
+            last_user_msg = st.session_state.messages[-1]["content"]
+            if ask_question is None:
+                raise ImportError("Hybrid search module not available")
+
+            if ask_question_stream is not None:
+                # Streaming path
+                collected_sources = []
+
+                def token_generator():
+                    nonlocal collected_sources
+                    for event in ask_question_stream(last_user_msg):
+                        if event["type"] == "token":
+                            yield event["content"]
+                        elif event["type"] == "sources":
+                            collected_sources = event["sources"]
+
+                with st.chat_message("assistant"):
+                    collected_answer = st.write_stream(token_generator())
+
                 st.session_state.messages.append({
                     "role": "assistant",
-                    "content": result.get("answer", ""),
-                    "sources": result.get("sources", []),
+                    "content": collected_answer,
+                    "sources": collected_sources,
                 })
-            except Exception as e:
-                logger.error(f"Error processing query: {str(e)}")
-                error_msg = "மன்னிக்கவும், பிழை ஏற்பட்டது" if st.session_state.language == "ta" else "Sorry, an error occurred"
-                st.session_state.messages.append({"role": "assistant", "content": f"{error_msg}: {str(e)}", "sources": []})
+            else:
+                # Non-streaming fallback (mock mode)
+                with st.spinner(t("searching")):
+                    result = ask_question(last_user_msg) or {}
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": result.get("answer", ""),
+                        "sources": result.get("sources", []),
+                    })
+        except Exception as e:
+            logger.error(f"Error processing query: {str(e)}")
+            error_msg = "மன்னிக்கவும், பிழை ஏற்பட்டது" if st.session_state.language == "ta" else "Sorry, an error occurred"
+            st.session_state.messages.append({"role": "assistant", "content": f"{error_msg}: {str(e)}", "sources": []})
         st.rerun()
 
 

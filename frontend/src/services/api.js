@@ -90,6 +90,71 @@ export const askQuestion = async (question, useLLM = true) => {
 };
 
 /**
+ * Ask a question with streaming response (SSE).
+ * Uses fetch (not axios) since EventSource only supports GET.
+ * @param {string} question - The question to ask
+ * @param {number} topK - Number of sources to return
+ * @param {object} callbacks - { onToken, onSources, onDone, onError }
+ * @returns {AbortController} - Call .abort() to cancel the stream
+ */
+export const askQuestionStream = (question, topK = 10, { onToken, onSources, onDone, onError }) => {
+  const controller = new AbortController();
+
+  fetch(`${API_BASE_URL}/api/ask/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question, top_k: topK, use_llm: true }),
+    signal: controller.signal,
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        let eventType = null;
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            eventType = line.slice(7).trim();
+          } else if (line.startsWith('data: ') && eventType) {
+            const data = JSON.parse(line.slice(6));
+            if (eventType === 'token' && onToken) {
+              onToken(data.content);
+            } else if (eventType === 'sources' && onSources) {
+              onSources(data.sources);
+            } else if (eventType === 'done' && onDone) {
+              onDone();
+            } else if (eventType === 'error' && onError) {
+              onError(new Error(data.error));
+            }
+            eventType = null;
+          }
+        }
+      }
+
+      if (onDone) onDone();
+    })
+    .catch((error) => {
+      if (error.name !== 'AbortError' && onError) {
+        onError(error);
+      }
+    });
+
+  return controller;
+};
+
+/**
  * Search the archive (GET alternative to askQuestion)
  * @param {string} query - Search query
  * @param {boolean} useLLM - Whether to use LLM

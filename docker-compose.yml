@@ -31,11 +31,13 @@ services:
               capabilities: [gpu]
     restart: unless-stopped
 
-  streamlit:
-    build: .
-    container_name: ponni-streamlit
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: ponni-api
     ports:
-      - "8501:8501"
+      - "8000:8000"
     depends_on:
       - qdrant
       - ollama
@@ -44,6 +46,18 @@ services:
       - QDRANT_PORT=6333
       - OLLAMA_HOST=http://ollama:11434
       - OLLAMA_MODEL=tamil-llama
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        REACT_APP_API_URL: http://localhost:8000
+    container_name: ponni-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
     restart: unless-stopped
 
 volumes:

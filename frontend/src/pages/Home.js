@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { getTranslation } from '../services/translations';
-import { askQuestion } from '../services/api';
+import { askQuestion, askQuestionStream } from '../services/api';
 import ChatMessage from '../components/ChatMessage';
 import ChatInput from '../components/ChatInput';
 
@@ -14,30 +14,72 @@ const Home = ({ language }) => {
   };
 
   const handleSubmit = async (question) => {
-    // Add user message
     const userMessage = { role: 'user', content: question };
     setMessages((prev) => [...prev, userMessage]);
     setIsLoading(true);
 
-    try {
-      const result = await askQuestion(question);
-      const assistantMessage = {
-        role: 'assistant',
-        content: result.answer || '',
-        sources: result.sources || [],
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
-    } catch (error) {
-      console.error('Error asking question:', error);
-      const errorMessage = {
-        role: 'assistant',
-        content: `${t('error_message')}: ${error.message}`,
-        sources: [],
-      };
-      setMessages((prev) => [...prev, errorMessage]);
-    } finally {
-      setIsLoading(false);
-    }
+    // Add placeholder assistant message for streaming
+    setMessages((prev) => [
+      ...prev,
+      { role: 'assistant', content: '', sources: [] },
+    ]);
+
+    askQuestionStream(question, 10, {
+      onToken: (token) => {
+        setMessages((prev) => {
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          if (last && last.role === 'assistant') {
+            updated[updated.length - 1] = {
+              ...last,
+              content: last.content + token,
+            };
+          }
+          return updated;
+        });
+      },
+      onSources: (sources) => {
+        setMessages((prev) => {
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          if (last && last.role === 'assistant') {
+            updated[updated.length - 1] = { ...last, sources };
+          }
+          return updated;
+        });
+      },
+      onDone: () => {
+        setIsLoading(false);
+      },
+      onError: (error) => {
+        console.error('Streaming error, falling back:', error);
+        // Fall back to non-streaming
+        askQuestion(question)
+          .then((result) => {
+            setMessages((prev) => {
+              const updated = [...prev];
+              updated[updated.length - 1] = {
+                role: 'assistant',
+                content: result.answer || '',
+                sources: result.sources || [],
+              };
+              return updated;
+            });
+          })
+          .catch((fallbackError) => {
+            setMessages((prev) => {
+              const updated = [...prev];
+              updated[updated.length - 1] = {
+                role: 'assistant',
+                content: `${t('error_message')}: ${fallbackError.message}`,
+                sources: [],
+              };
+              return updated;
+            });
+          })
+          .finally(() => setIsLoading(false));
+      },
+    });
   };
 
   const suggestions = [
