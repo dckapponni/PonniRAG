@@ -3,11 +3,8 @@ FastAPI REST API for Ponni RAG System.
 Provides endpoints for search, question answering, and library access.
 """
 
-<<<<<<< Updated upstream
 import asyncio
-=======
 import json
->>>>>>> Stashed changes
 import logging
 import os
 import sys
@@ -25,21 +22,15 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 # Import real hybrid_search module
 from hybrid_search import (
     ask_question,
-<<<<<<< Updated upstream
     ask_question_async,
-=======
     ask_question_stream,
->>>>>>> Stashed changes
     check_qdrant_health,
     EnhancedAuthorQuerySystem,
     get_issue_count,
     CSV_PATH,
-<<<<<<< Updated upstream
     _author_system_cache,
     _author_system_lock,
-=======
     preload_ollama_model,
->>>>>>> Stashed changes
 )
 
 from pdf_links import PDF_LINKS
@@ -178,7 +169,6 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning(f"Qdrant not available: {health.get('message', 'Unknown error')}")
 
-<<<<<<< Updated upstream
     # Pre-cache the author query system at startup
     csv_path = str(CSV_PATH)
     if CSV_PATH.exists():
@@ -186,10 +176,9 @@ async def lifespan(app: FastAPI):
             if csv_path not in _author_system_cache:
                 _author_system_cache[csv_path] = EnhancedAuthorQuerySystem(csv_path)
         logger.info("Author query system cached at startup")
-=======
+
     # Preload Ollama model into GPU memory
     preload_ollama_model()
->>>>>>> Stashed changes
 
     yield
 
