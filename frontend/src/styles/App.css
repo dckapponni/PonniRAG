@@ -275,14 +275,9 @@ html, body {
   border-radius: 0.5rem;
   padding: 0.75rem 1rem;
   font-weight: 600;
-  cursor: pointer;
   display: flex;
   justify-content: space-between;
   align-items: center;
-}
-
-.sources-header:hover {
-  background-color: #1e293b;
 }
 
 .sources-list {
