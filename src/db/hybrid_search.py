@@ -1348,8 +1348,6 @@ TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இத�
 def generate_llm_answer(question: str, context: str, csv_context: str, max_words: int = 500) -> str:
     """
     Generate LLM answer using Ollama API.
-    ✅ FIXED: Increased num_predict to 2048 to prevent truncation
-    ✅ FIXED: Added num_ctx for context window
     """
     try:
         prompt = f"""{TAMIL_ANSWER_SYSTEM_PROMPT}
@@ -1377,8 +1375,8 @@ CSV உள்ளடக்கம்:
             "keep_alive": "10m",
             "options": {
                 "temperature": 0.0,
-                "num_predict": 300,
-                "num_ctx": 2048,
+                "num_predict": 1200,
+                "num_ctx": 4096,
                 "num_gpu": 999,
             }
         }
@@ -1439,8 +1437,8 @@ CSV உள்ளடக்கம்:
             "keep_alive": "10m",
             "options": {
                 "temperature": 0.0,
-                "num_predict": 300,
-                "num_ctx": 2048,
+                "num_predict": 1200,
+                "num_ctx": 4096,
                 "num_gpu": 999,
             },
         }
@@ -1499,8 +1497,8 @@ CSV உள்ளடக்கம்:
             "keep_alive": "10m",
             "options": {
                 "temperature": 0.0,
-                "num_predict": 300,
-                "num_ctx": 2048,
+                "num_predict": 1200,
+                "num_ctx": 4096,
                 "num_gpu": 999,
             }
         }
