@@ -1100,6 +1100,20 @@ def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
     return False, ""
 
 
+def _csv_source() -> List[Dict]:
+    """Return a source entry indicating the answer came from the article database."""
+    return [{
+        "volume": "பொன்னி கட்டுரை தரவுத்தளம்",
+        "heading": "Article Database",
+        "doc_issue": "",
+        "content": "இந்த பதில் பொன்னி இதழ் கட்டுரை அட்டவணையில் இருந்து பெறப்பட்டது. "
+                   "இது எழுத்தாளர், தலைப்பு மற்றும் இதழ் தகவல்களைக் கொண்டுள்ளது.",
+        "word_count": 0,
+        "chunks_merged": 0,
+        "score": 1.0,
+    }]
+
+
 def is_author_question(question: str) -> bool:
     """Check if question is about authors."""
     keywords = ["author", "authors", "list", "எழுத்தாளர்", "எழுத்தாளர்கள்", "பட்டியல்"]
@@ -1671,9 +1685,9 @@ Error Type: {health_status['error']}
                     return response
                 return {
                     "answer": response,
-                    "sources": [],
+                    "sources": _csv_source(),
                     "query_type": "author_csv",
-                    "csv_direct": True  # ✅ Flag to indicate this came from CSV
+                    "csv_direct": True,
                 }
         except Exception as e:
             logger.error(f"CSV query error: {e}")
@@ -1686,8 +1700,8 @@ Error Type: {health_status['error']}
             authors = fetch_all_authors(client)
             answer = format_authors_tamil(authors) if authors else "எழுத்தாளர் தகவல்கள் கிடைக்கவில்லை."
             if return_formatted:
-                return format_answer_output(answer, [])
-            return {"answer": answer, "sources": []}
+                return format_answer_output(answer, _csv_source())
+            return {"answer": answer, "sources": _csv_source()}
 
         logger.info(f"Searching: {question[:60]}...")
 
@@ -1811,8 +1825,8 @@ Error Type: {health_status['error']}
                     return response
                 return {
                     "answer": response,
-                    "sources": [],
-                    "query_type": "author_csv"
+                    "sources": _csv_source(),
+                    "query_type": "author_csv",
                 }
         except Exception as e:
             logger.error(f"CSV query error: {e}")
@@ -1824,8 +1838,8 @@ Error Type: {health_status['error']}
             authors = await asyncio.to_thread(fetch_all_authors, client)
             answer = format_authors_tamil(authors) if authors else "எழுத்தாளர் தகவல்கள் கிடைக்கவில்லை."
             if return_formatted:
-                return format_answer_output(answer, [])
-            return {"answer": answer, "sources": []}
+                return format_answer_output(answer, _csv_source())
+            return {"answer": answer, "sources": _csv_source()}
 
         logger.info(f"Searching: {question[:60]}...")
 
@@ -1926,7 +1940,7 @@ def ask_question_stream(question: str):
             is_handled, response = handle_author_query(question, str(CSV_PATH))
             if is_handled:
                 yield {"type": "token", "content": response}
-                yield {"type": "sources", "sources": []}
+                yield {"type": "sources", "sources": _csv_source()}
                 return
         except Exception as e:
             logger.error(f"CSV query error: {e}")
@@ -1939,7 +1953,7 @@ def ask_question_stream(question: str):
             authors = fetch_all_authors(client)
             answer = format_authors_tamil(authors) if authors else "எழுத்தாளர் தகவல்கள் கிடைக்கவில்லை."
             yield {"type": "token", "content": answer}
-            yield {"type": "sources", "sources": []}
+            yield {"type": "sources", "sources": _csv_source()}
             return
 
         logger.info(f"Streaming search: {question[:60]}...")
