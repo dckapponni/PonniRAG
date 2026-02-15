@@ -13,7 +13,7 @@ KEY FIXES:
 from typing import List, Dict, Tuple, Optional
 from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 import re
 import os
 import logging
@@ -30,6 +30,7 @@ import asyncio
 import threading
 import httpx
 import time
+import hashlib
 import torch
 torch.set_grad_enabled(False)
 
@@ -54,6 +55,77 @@ SCORE_THRESHOLD = 0.8  # Minimum cosine similarity for dense vector search
 _embed_lock = threading.Lock()
 _author_system_cache = {}
 _author_system_lock = threading.Lock()
+
+
+class ResponseCache:
+    """Thread-safe TTL + LRU cache for ask_question results."""
+
+    def __init__(self, max_size: int = 100, ttl_seconds: int = 3600):
+        self._cache: OrderedDict = OrderedDict()
+        self._timestamps: dict = {}
+        self._lock = threading.Lock()
+        self._max_size = max_size
+        self._ttl = ttl_seconds
+        self._hits = 0
+        self._misses = 0
+
+    @staticmethod
+    def _make_key(question: str) -> str:
+        normalized = re.sub(r'\s+', ' ', question.strip().lower())
+        return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+
+    def get(self, question: str) -> Optional[Dict]:
+        key = self._make_key(question)
+        with self._lock:
+            if key not in self._cache:
+                self._misses += 1
+                return None
+            if time.time() - self._timestamps.get(key, 0) > self._ttl:
+                del self._cache[key]
+                del self._timestamps[key]
+                self._misses += 1
+                logger.info(f"[CACHE] TTL expired for {key[:12]}...")
+                return None
+            self._cache.move_to_end(key)
+            self._hits += 1
+            total = self._hits + self._misses
+            logger.info(f"[CACHE] HIT (hits={self._hits}, misses={self._misses}, rate={self._hits / total:.0%})")
+            return self._cache[key]
+
+    def put(self, question: str, result: Dict) -> None:
+        key = self._make_key(question)
+        with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+                self._cache[key] = result
+                self._timestamps[key] = time.time()
+                return
+            while len(self._cache) >= self._max_size:
+                evicted_key, _ = self._cache.popitem(last=False)
+                self._timestamps.pop(evicted_key, None)
+            self._cache[key] = result
+            self._timestamps[key] = time.time()
+
+    def clear(self) -> None:
+        with self._lock:
+            self._cache.clear()
+            self._timestamps.clear()
+            logger.info("[CACHE] Cache cleared")
+
+    def stats(self) -> Dict:
+        with self._lock:
+            total = max(1, self._hits + self._misses)
+            return {
+                "size": len(self._cache),
+                "max_size": self._max_size,
+                "ttl_seconds": self._ttl,
+                "hits": self._hits,
+                "misses": self._misses,
+                "hit_rate": f"{self._hits / total:.0%}",
+            }
+
+
+_response_cache = ResponseCache(max_size=100, ttl_seconds=3600)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -1306,6 +1378,17 @@ def extract_key_facts(docs: List[Dict], question: str) -> List[Dict]:
     facts.sort(key=lambda x: x['score'], reverse=True)
     return facts[:20]
 
+PONNI_ABOUT_CONTEXT = """பொன்னி இதழ் பற்றிய பின்னணி தகவல்:
+பொன்னி இதழ் திரு. அரு. பெரியண்ணன் மற்றும் திரு. முருகு. சுப்பிரமணியம் ஆகியோரால் 1947ஆம் ஆண்டு பிப்ரவரி மாதம் தொடங்கப்பெற்ற கலை இலக்கிய இதழ். 1947 முதல் 1955 வரை இயங்கியது. முதல் வருடத்தில் மாதம் ஓர் இதழ் என வெளிவந்த பொன்னி 1948 முதல் மாதம் ஈரிதழாக வெளிவந்தது.
+
+திராவிட இதழ்களின் வரிசையில் வைத்து போற்றத்தக்க இதழாகப் பொன்னி திகழ்கிறது. பகுத்தறிவு, சுயமரியாதை, சமத்துவம் ஆகியவற்றை மிகத் தீவிரமாக எடுத்துரைக்கும் இதழாக இவ்விதழ் வெளிவந்தது. வண்ண அட்டைப்படத்தில் மிக நேர்த்தியாக வடிவமைக்கப்பட்டு வெளியிடப்பெற்றது.
+
+தந்தை பெரியார், பேரறிஞர் அண்ணா, பாவேந்தர் பாரதிதாசன், திரு.வி.க., கலைஞர் மு. கருணாநிதி, கா. அப்பாதுரையார், கவியரசு கண்ணதாசன், டி. கே. சீனிவாசன், மு. வ., மு. அண்ணாமலை, கவிஞர் வாணிதாசன், கவிஞர் சுரதா போன்ற பல முதன்மையான இலக்கிய, அரசியல் ஆளுமைகள் பொன்னியில் எழுதியுள்ளனர்.
+
+கவிதைகள், சிறுகதைகள், தொடர்கதைகள், நொடிக் கதைகள், நாடகங்கள், பொதுக் கட்டுரைகள், ஆய்வுக் கட்டுரைகள், ஒப்பாய்வுக் கட்டுரைகள், தொடர் கட்டுரைகள், செய்திப் பாட்டு போன்ற இலக்கிய வகைமைகளில் படைப்புகள் வெளியாகியுள்ளன.
+
+மாநில சுயாட்சி, இந்தித் திணிப்பு, தனித்தமிழ் பற்று, விடுதலை, அரசியல், சமூகம் சார்ந்த திராவிடச் சிந்தனைகள் கட்டுரைகளாக, கதைகளாக, கவிதைகளாக வெளிவந்தன. பாரதிதாசன் அவரின் 'குயில்' இதழ் அரசால் தடை செய்யப்பட்ட பிறகு பொன்னியில் எழுதினார். 1947 முதல் 1955 வரையிலான தமிழகத்தின் காலக் கண்ணாடியாகப் பொன்னி இதழ் விளங்குகிறது."""
+
 TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இதழ் தொடர்பான கேள்விகளுக்கு பதிலளிக்கும் ஒரு தமிழ் நிபுணர்.
 
 உங்கள் பணி:
@@ -1315,6 +1398,19 @@ TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இத�
 4. சூழலில் உள்ள தகவல்களை மட்டுமே பயன்படுத்துக – கற்பனையாக எதையும் சேர்க்காதீர்கள்
 5. பதில் வாசிப்பதற்கு மிகவும் எளிதாகவும், நன்கு கட்டமைக்கப்பட்டதாகவும் இருக்க வேண்டும்
 6. பதில் தொடங்கும் போதும் முடியும் போதும் எந்தச் சொலும் துண்டிக்கப்பட்டதாக இருக்கக் கூடாது
+
+விவரிப்பு வகை கேள்விகளுக்கான விதி:
+- பயனர் விவரிப்பு வகையான கேள்வி கேட்டால் (எ.கா. "விளக்குக", "விவரி", "என்ன?", "எப்படி?"), மிக அதிக தொடர்புடைய முதல் ஆவணத்தின் உள்ளடக்கத்தை சுருக்கமாக விவரித்து, ஆதாரங்களுடன் பதிலளிக்கவும்
+- முதல் ஆவணத்தின் முக்கிய கருத்துகளை தெளிவாக சுருக்கி, அதன் பின்னர் மற்ற ஆவணங்களிலிருந்து கூடுதல் தகவல்களை சேர்க்கவும்
+
+பொன்னி இதழ் பற்றிய கேள்விகளுக்கான விதி:
+- கேள்வி பொன்னி இதழ் பற்றியதாக இருந்தால் (எ.கா. "பொன்னி இதழ் என்ன?", "பொன்னி பற்றி கூறுக", "பொன்னி இதழின் வரலாறு"), கீழே கொடுக்கப்பட்ட பொன்னி பின்னணி தகவலை முதலில் பயன்படுத்தி பதிலளிக்கவும்
+- பொன்னி பின்னணி தகவலுடன் ஆவண சூழலையும் இணைத்து முழுமையான பதிலை எழுதுக
+
+========================
+பொன்னி பின்னணி தகவல்:
+""" + PONNI_ABOUT_CONTEXT + """
+========================
 
 மிக முக்கியமான வடிவமைப்பு விதிகள் (Formatting Rules):
 - கேள்வி **புள்ளிவாரியான (points-wise)** பதிலை எதிர்பார்க்குமானால்:
@@ -1347,12 +1443,11 @@ TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இத�
 
 def generate_llm_answer(question: str, context: str, csv_context: str, max_words: int = 500) -> str:
     """
-    Generate LLM answer using Ollama API.
+    Generate LLM answer using Ollama /api/chat.
+    Uses system message for KV prefix caching of the static prompt.
     """
     try:
-        prompt = f"""{TAMIL_ANSWER_SYSTEM_PROMPT}
-
-கேள்வி:
+        user_content = f"""கேள்வி:
 {question}
 
 ========================
@@ -1370,19 +1465,22 @@ CSV உள்ளடக்கம்:
 
         payload = {
             "model": OLLAMA_MODEL,
-            "prompt": prompt,
+            "messages": [
+                {"role": "system", "content": TAMIL_ANSWER_SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
             "stream": False,
             "keep_alive": "10m",
             "options": {
                 "temperature": 0.0,
                 "num_predict": 1200,
-                "num_ctx": 4096,
+                "num_ctx": 8192,
                 "num_gpu": 999,
             }
         }
 
         response = requests.post(
-            f"{OLLAMA_HOST}/api/generate",
+            f"{OLLAMA_HOST}/api/chat",
             json=payload,
             timeout=300
         )
@@ -1390,7 +1488,7 @@ CSV உள்ளடக்கம்:
         response.raise_for_status()
 
         data = response.json()
-        answer = data.get("response", "").strip()
+        answer = data.get("message", {}).get("content", "").strip()
 
         answer = re.sub(r'\s+', ' ', answer)
 
@@ -1406,15 +1504,11 @@ CSV உள்ளடக்கம்:
 
 async def generate_llm_answer_async(question: str, context: str, csv_context: str, max_words: int = 500) -> str:
     """
-    Async version of generate_llm_answer using httpx.
-
-    Non-blocking LLM call that frees the event loop while waiting for Ollama,
-    allowing other requests to be served concurrently.
+    Async version of generate_llm_answer using httpx and /api/chat.
+    Uses system message for KV prefix caching of the static prompt.
     """
     try:
-        prompt = f"""{TAMIL_ANSWER_SYSTEM_PROMPT}
-
-கேள்வி:
+        user_content = f"""கேள்வி:
 {question}
 
 ========================
@@ -1432,27 +1526,30 @@ CSV உள்ளடக்கம்:
 
         payload = {
             "model": OLLAMA_MODEL,
-            "prompt": prompt,
+            "messages": [
+                {"role": "system", "content": TAMIL_ANSWER_SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
             "stream": False,
             "keep_alive": "10m",
             "options": {
                 "temperature": 0.0,
                 "num_predict": 1200,
-                "num_ctx": 4096,
+                "num_ctx": 8192,
                 "num_gpu": 999,
             },
         }
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{OLLAMA_HOST}/api/generate",
+                f"{OLLAMA_HOST}/api/chat",
                 json=payload,
                 timeout=300.0,
             )
             response.raise_for_status()
 
         data = response.json()
-        answer = data.get("response", "").strip()
+        answer = data.get("message", {}).get("content", "").strip()
 
         answer = re.sub(r'\s+', ' ', answer)
 
@@ -1468,13 +1565,12 @@ CSV உள்ளடக்கம்:
 
 def generate_llm_answer_stream(question: str, context: str, csv_context: str):
     """
-    Generate LLM answer using Ollama API with streaming.
+    Generate LLM answer using Ollama /api/chat with streaming.
+    Uses system message for KV prefix caching of the static prompt.
     Yields individual token strings as they arrive from Ollama.
     """
     try:
-        prompt = f"""{TAMIL_ANSWER_SYSTEM_PROMPT}
-
-கேள்வி:
+        user_content = f"""கேள்வி:
 {question}
 
 ========================
@@ -1492,19 +1588,22 @@ CSV உள்ளடக்கம்:
 
         payload = {
             "model": OLLAMA_MODEL,
-            "prompt": prompt,
+            "messages": [
+                {"role": "system", "content": TAMIL_ANSWER_SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
             "stream": True,
             "keep_alive": "10m",
             "options": {
                 "temperature": 0.0,
                 "num_predict": 1200,
-                "num_ctx": 4096,
+                "num_ctx": 8192,
                 "num_gpu": 999,
             }
         }
 
         response = requests.post(
-            f"{OLLAMA_HOST}/api/generate",
+            f"{OLLAMA_HOST}/api/chat",
             json=payload,
             timeout=300,
             stream=True,
@@ -1514,7 +1613,7 @@ CSV உள்ளடக்கம்:
         for line in response.iter_lines():
             if line:
                 data = json.loads(line)
-                token = data.get("response", "")
+                token = data.get("message", {}).get("content", "")
                 if token:
                     yield token
                 if data.get("done", False):
@@ -1669,14 +1768,23 @@ Error Type: {health_status['error']}
         }
     
     logger.info("Database is healthy - proceeding with query")
-    
+
+    # --- RESPONSE CACHE LOOKUP ---
+    cached = _response_cache.get(question)
+    if cached is not None:
+        logger.info(f"[TIMING] TOTAL ask_question (CACHED): {time.time() - t_start:.2f}s")
+        if return_formatted:
+            return format_answer_output(cached["answer"], cached["sources"])
+        return cached
+    # --- END CACHE LOOKUP ---
+
     # ✅ 2. CHECK CSV QUERIES FIRST (BEFORE VECTOR SEARCH)
     # This is CRITICAL - CSV queries should return immediately
     if CSV_PATH.exists():
         try:
             logger.info("Checking author query...")
             is_handled, response = handle_author_query(question, str(CSV_PATH))
-            
+
             if is_handled:
                 logger.info("✅ Handled as CSV author query - returning direct CSV data")
                 if return_formatted:
@@ -1763,13 +1871,13 @@ Error Type: {health_status['error']}
         sources = format_sources(merged_docs)
         logger.info(f"[TIMING] TOTAL ask_question: {time.time() - t_start:.2f}s | {len(sources)} sources")
 
+        result = {"answer": answer, "sources": sources}
+        _response_cache.put(question, result)
+
         if return_formatted:
             return format_answer_output(answer, sources)
 
-        return {
-            "answer": answer,
-            "sources": sources
-        }
+        return result
 
     except Exception as e:
         error_msg = f"Query error: {str(e)}"
@@ -1809,6 +1917,15 @@ Error Type: {health_status['error']}
         }
 
     logger.info("Database is healthy - proceeding with async query")
+
+    # --- RESPONSE CACHE LOOKUP ---
+    cached = _response_cache.get(question)
+    if cached is not None:
+        logger.info(f"[TIMING] TOTAL ask_question_async (CACHED): {time.time() - t_start:.2f}s")
+        if return_formatted:
+            return format_answer_output(cached["answer"], cached["sources"])
+        return cached
+    # --- END CACHE LOOKUP ---
 
     if CSV_PATH.exists():
         try:
@@ -1902,13 +2019,13 @@ Error Type: {health_status['error']}
         sources = format_sources(merged_docs)
         logger.info(f"[TIMING] TOTAL ask_question_async: {time.time() - t_start:.2f}s | {len(sources)} sources")
 
+        result = {"answer": answer, "sources": sources}
+        _response_cache.put(question, result)
+
         if return_formatted:
             return format_answer_output(answer, sources)
 
-        return {
-            "answer": answer,
-            "sources": sources
-        }
+        return result
 
     except Exception as e:
         error_msg = f"Query error: {str(e)}"
@@ -1931,6 +2048,15 @@ def ask_question_stream(question: str):
         yield {"type": "token", "content": f"Database Error: {health_status['message']}"}
         yield {"type": "sources", "sources": []}
         return
+
+    # --- RESPONSE CACHE LOOKUP ---
+    cached = _response_cache.get(question)
+    if cached is not None:
+        logger.info("[CACHE] Streaming cache hit - yielding full cached answer")
+        yield {"type": "token", "content": cached["answer"]}
+        yield {"type": "sources", "sources": cached["sources"]}
+        return
+    # --- END CACHE LOOKUP ---
 
     # 2. Check CSV queries first
     if CSV_PATH.exists():
@@ -1984,10 +2110,12 @@ def ask_question_stream(question: str):
 
         context = "\n\n".join(context_parts)
 
-        # Stream LLM tokens
+        # Stream LLM tokens and accumulate for caching
         token_count = 0
+        accumulated_tokens = []
         for token in generate_llm_answer_stream(question, context, csv_context):
             token_count += 1
+            accumulated_tokens.append(token)
             yield {"type": "token", "content": token}
 
         # If streaming produced too few tokens, fall back to extractive
@@ -1996,9 +2124,17 @@ def ask_question_stream(question: str):
             facts = extract_key_facts(merged_docs, question)
             answer = generate_extractive_answer(facts, question)
             if answer:
+                accumulated_tokens = [answer]
                 yield {"type": "token", "content": answer}
 
         sources = format_sources(merged_docs)
+
+        # --- CACHE STORE ---
+        full_answer = "".join(accumulated_tokens)
+        if full_answer and len(full_answer) >= 50:
+            _response_cache.put(question, {"answer": full_answer, "sources": sources})
+        # --- END CACHE STORE ---
+
         yield {"type": "sources", "sources": sources}
 
     except Exception as e:
@@ -2009,15 +2145,18 @@ def ask_question_stream(question: str):
 
 def preload_ollama_model():
     """
-    Warm up the Ollama LLM by sending a minimal prompt.
-    Loads the model into GPU memory so the first real query is fast.
-    No Streamlit dependency - safe to call from FastAPI.
+    Warm up the Ollama LLM via /api/chat with the full system prompt.
+    Loads the model into GPU memory AND pre-caches the system prompt KV state
+    so the first real query reuses it.
     """
-    logger.info("Preloading Ollama model into memory...")
+    logger.info("Preloading Ollama model and system prompt KV cache...")
     try:
         payload = {
             "model": OLLAMA_MODEL,
-            "prompt": "hello",
+            "messages": [
+                {"role": "system", "content": TAMIL_ANSWER_SYSTEM_PROMPT},
+                {"role": "user", "content": "hello"},
+            ],
             "stream": False,
             "keep_alive": "10m",
             "options": {
@@ -2026,12 +2165,12 @@ def preload_ollama_model():
             }
         }
         response = requests.post(
-            f"{OLLAMA_HOST}/api/generate",
+            f"{OLLAMA_HOST}/api/chat",
             json=payload,
             timeout=120
         )
         response.raise_for_status()
-        logger.info("Ollama model preloaded successfully")
+        logger.info("Ollama model and system prompt KV cache preloaded successfully")
     except Exception as e:
         logger.warning(f"Ollama model preload failed (non-fatal): {e}")
 

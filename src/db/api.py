@@ -31,6 +31,7 @@ from hybrid_search import (
     _author_system_cache,
     _author_system_lock,
     preload_ollama_model,
+    _response_cache,
 )
 
 from pdf_links import PDF_LINKS
@@ -295,6 +296,19 @@ async def ask_question_stream_endpoint(request: QuestionRequest):
             "X-Accel-Buffering": "no",
         }
     )
+
+
+@app.get("/api/cache/stats", tags=["Cache"])
+async def cache_stats():
+    """Return response cache statistics."""
+    return _response_cache.stats()
+
+
+@app.post("/api/cache/clear", tags=["Cache"])
+async def cache_clear():
+    """Clear the response cache."""
+    _response_cache.clear()
+    return {"message": "Cache cleared"}
 
 
 @app.get("/api/search", response_model=QuestionResponse, tags=["Search"])
