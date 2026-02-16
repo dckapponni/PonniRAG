@@ -23,7 +23,7 @@ const SourceCard = ({ source, index, language }) => {
   return (
     <div className="source-card">
       <div className="source-header">
-        <span className="source-title">{t('sources_title')} {index + 1}</span>
+        <span className="source-title">{t('source_title')} {index + 1}</span>
       </div>
       {metaParts.length > 0 && (
         <div className="source-meta">{metaParts.join(' • ')}</div>
