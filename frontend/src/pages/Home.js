@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { getTranslation } from '../services/translations';
 import { askQuestion, askQuestionStream } from '../services/api';
 import ChatMessage from '../components/ChatMessage';
@@ -9,23 +9,35 @@ const Home = ({ language }) => {
   const [isLoading, setIsLoading] = useState(false);
   const t = (key) => getTranslation(language, key);
 
+  // Track active stream to abort on new submit and guard stale callbacks
+  const activeStreamRef = useRef(null);
+  const requestIdRef = useRef(0);
+
   const handleSuggestionClick = (prompt) => {
     handleSubmit(prompt);
   };
 
   const handleSubmit = async (question) => {
-    const userMessage = { role: 'user', content: question };
-    setMessages((prev) => [...prev, userMessage]);
-    setIsLoading(true);
+    // Abort any in-flight stream before starting a new one
+    if (activeStreamRef.current) {
+      activeStreamRef.current.abort();
+      activeStreamRef.current = null;
+    }
 
-    // Add placeholder assistant message for streaming
+    // Increment request ID — stale callbacks from old streams will be ignored
+    const thisRequestId = ++requestIdRef.current;
+
+    const userMessage = { role: 'user', content: question };
     setMessages((prev) => [
       ...prev,
+      userMessage,
       { role: 'assistant', content: '', sources: [] },
     ]);
+    setIsLoading(true);
 
     const streamController = askQuestionStream(question, {
       onToken: (token) => {
+        if (requestIdRef.current !== thisRequestId) return;
         setMessages((prev) => {
           const updated = [...prev];
           const last = updated[updated.length - 1];
@@ -39,6 +51,7 @@ const Home = ({ language }) => {
         });
       },
       onSources: (sources) => {
+        if (requestIdRef.current !== thisRequestId) return;
         setMessages((prev) => {
           const updated = [...prev];
           const last = updated[updated.length - 1];
@@ -49,14 +62,18 @@ const Home = ({ language }) => {
         });
       },
       onDone: () => {
+        if (requestIdRef.current !== thisRequestId) return;
+        activeStreamRef.current = null;
         setIsLoading(false);
       },
       onError: (error) => {
+        if (requestIdRef.current !== thisRequestId) return;
         console.error('Streaming error, falling back:', error);
-        streamController.abort();
+        activeStreamRef.current = null;
         // Fall back to non-streaming
         askQuestion(question)
           .then((result) => {
+            if (requestIdRef.current !== thisRequestId) return;
             setMessages((prev) => {
               const updated = [...prev];
               updated[updated.length - 1] = {
@@ -68,6 +85,7 @@ const Home = ({ language }) => {
             });
           })
           .catch((fallbackError) => {
+            if (requestIdRef.current !== thisRequestId) return;
             setMessages((prev) => {
               const updated = [...prev];
               updated[updated.length - 1] = {
@@ -78,9 +96,15 @@ const Home = ({ language }) => {
               return updated;
             });
           })
-          .finally(() => setIsLoading(false));
+          .finally(() => {
+            if (requestIdRef.current === thisRequestId) {
+              setIsLoading(false);
+            }
+          });
       },
     });
+
+    activeStreamRef.current = streamController;
   };
 
   const suggestions = [
