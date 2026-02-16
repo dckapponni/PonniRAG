@@ -136,15 +136,19 @@ export const askQuestionStream = (question, { onToken, onSources, onDone, onErro
           if (line.startsWith('event: ')) {
             eventType = line.slice(7).trim();
           } else if (line.startsWith('data: ') && eventType) {
-            const data = JSON.parse(line.slice(6));
-            if (eventType === 'token' && onToken) {
-              onToken(data.content);
-            } else if (eventType === 'sources' && onSources) {
-              onSources(data.sources);
-            } else if (eventType === 'done') {
-              fireDone();
-            } else if (eventType === 'error' && onError) {
-              onError(new Error(data.error));
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (eventType === 'token' && onToken && data.content) {
+                onToken(data.content);
+              } else if (eventType === 'sources' && onSources) {
+                onSources(data.sources || []);
+              } else if (eventType === 'done') {
+                fireDone();
+              } else if (eventType === 'error' && onError) {
+                onError(new Error(data.error));
+              }
+            } catch (parseError) {
+              console.warn('SSE JSON parse error, skipping line:', parseError.message);
             }
             eventType = null;
           }

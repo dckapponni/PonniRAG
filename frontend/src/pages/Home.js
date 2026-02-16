@@ -38,6 +38,7 @@ const Home = ({ language }) => {
     const streamController = askQuestionStream(question, {
       onToken: (token) => {
         if (requestIdRef.current !== thisRequestId) return;
+        if (!token || typeof token !== 'string') return;
         setMessages((prev) => {
           const updated = [...prev];
           const last = updated[updated.length - 1];
