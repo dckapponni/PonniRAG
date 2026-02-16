@@ -478,12 +478,15 @@ class EnhancedAuthorQuerySystem:
             'எழுத்தாளர்கள் யார்',
             'ஆசிரியர்கள் யார்',
             'எழுத்தாளர்கள் பட்டியல்',
+            'எழுத்தாளர்களின் பட்டியல்',
             'ஆசிரியர்கள் பட்டியல்',
+            'ஆசிரியர்களின் பட்டியல்',
             'அனைத்து எழுத்தாளர்கள்',
             'எழுதியவர்கள்',
             'எழுதிய ஆசிரியர்கள்',
             'who are the authors',
             'list all authors',
+            'list authors',
         ]
 
         if has_ponni and any(p in q for p in list_patterns):
@@ -1786,7 +1789,7 @@ Error Type: {health_status['error']}
             logger.info("Checking author query...")
             is_handled, response = handle_author_query(question, str(CSV_PATH))
 
-            if is_handled:
+            if is_handled and response and response.strip():
                 logger.info("✅ Handled as CSV author query - returning direct CSV data")
                 if return_formatted:
                     return response
@@ -1837,7 +1840,7 @@ Error Type: {health_status['error']}
         
         context_parts = []
         for idx, doc in enumerate(merged_docs[:3], 1):
-            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:400]}")
+            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:1500]}")
 
         # CSV semantic context
         csv_results = search_csv_semantic(question, top_k=3)
@@ -1935,7 +1938,7 @@ Error Type: {health_status['error']}
                 handle_author_query, question, str(CSV_PATH)
             )
 
-            if is_handled:
+            if is_handled and response and response.strip():
                 logger.info("Handled as CSV author query")
                 if return_formatted:
                     return response
@@ -1986,7 +1989,7 @@ Error Type: {health_status['error']}
 
         context_parts = []
         for idx, doc in enumerate(merged_docs[:3], 1):
-            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:400]}")
+            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:1500]}")
 
         # CSV semantic context
         csv_results = await asyncio.to_thread(search_csv_semantic, question, 3)
@@ -2063,7 +2066,7 @@ def ask_question_stream(question: str):
     if CSV_PATH.exists():
         try:
             is_handled, response = handle_author_query(question, str(CSV_PATH))
-            if is_handled:
+            if is_handled and response and response.strip():
                 yield {"type": "token", "content": response}
                 yield {"type": "sources", "sources": []}
                 return
@@ -2100,7 +2103,7 @@ def ask_question_stream(question: str):
 
         context_parts = []
         for idx, doc in enumerate(merged_docs[:3], 1):
-            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:400]}")
+            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:1500]}")
 
         csv_results = search_csv_semantic(question, top_k=3)
         csv_context = ""
