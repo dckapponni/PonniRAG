@@ -12,7 +12,7 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
       interval: 10s
       timeout: 5s
-      start_period: 10s
+      start_period: 30s
       retries: 5
     restart: unless-stopped
 
@@ -29,6 +29,8 @@ services:
     entrypoint: ["/bin/bash", "/ollama-entrypoint.sh"]
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
+      - OLLAMA_FLASH_ATTENTION=1
+      - OLLAMA_NUM_PARALLEL=1
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     deploy:
