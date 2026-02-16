@@ -472,46 +472,8 @@ class EnhancedAuthorQuerySystem:
         if any(p in q for p in topic_patterns):
             return 'topic_author'
 
-        # ✅ AUTHOR TOPICS PATTERNS - These ask "what did X write?"
-        known_authors = [
-            'கலைஞர்', 'கருணாநிதி', 'பெரியார்', 'அண்ணா', 'அண்ணாதுரை',
-            'நக்கீரன்', 'பாரதிதாசன்', 'புதுமைப்பித்தன்', 'அகிலன்', 
-            'கண்ணதாசன்', 'தங்கமணி', 'நாச்சியப்பன்', 'நாரா',  # ✅ Added common authors
-        ]
-        has_author = any(author in q for author in known_authors)
-        
-        author_action_patterns = [
-            'என்ன எழுதினார்',
-            'என்னென்ன எழுதினார்',
-            'எழுதியது என்ன',
-            'எழுதியவை',
-            'எழுதிய தலைப்பு',
-            'எழுதிய தலைப்புகள்',
-            'எழுதிய கட்டுரைகள்',
-            'எழுதிய தொடர்',  # ✅ NEW: Detect series queries
-            'எழுதிய தொடரின்',  # ✅ NEW
-            'தொடரின் பெயர்',  # ✅ NEW: "series name" pattern
-            'தொடர் பெயர்',  # ✅ NEW
-            'பற்றி எழுதினார்',
-            'எந்த தலைப்புகள்',
-            'அவர் எழுதிய',
-            'படைப்புகள்',  # ✅ CRITICAL: "works" pattern
-            'படைப்புகளை',  # ✅ CRITICAL
-            'படைப்புகளைப் பட்டியலிடுக',  # ✅ CRITICAL: "list works"
-            'பட்டியலிடுக',  # ✅ CRITICAL: "list"
-            'பட்டியல்',  # ✅ CRITICAL
-            'list of writings',
-            'articles by',
-            'works of',
-            'what did write',
-            'list works',
-            'படைப்பு'  # ✅ CRITICAL: singular "work"
-        ]
-
-        if has_author or any(p in q for p in author_action_patterns):
-            return 'author_topics'
-        
-        # LIST ALL AUTHORS PATTERNS
+        # LIST ALL AUTHORS PATTERNS — checked BEFORE author_topics
+        # to prevent broad patterns like 'பட்டியல்' from hijacking list queries
         list_patterns = [
             'எழுத்தாளர்கள் யார்',
             'ஆசிரியர்கள் யார்',
@@ -526,9 +488,48 @@ class EnhancedAuthorQuerySystem:
 
         if has_ponni and any(p in q for p in list_patterns):
             return 'list_all_authors'
-        
+
         if any(p in q for p in list_patterns):
             return 'list_all_authors'
+
+        # ✅ AUTHOR TOPICS PATTERNS - These ask "what did X write?"
+        known_authors = [
+            'கலைஞர்', 'கருணாநிதி', 'பெரியார்', 'அண்ணா', 'அண்ணாதுரை',
+            'நக்கீரன்', 'பாரதிதாசன்', 'புதுமைப்பித்தன்', 'அகிலன்',
+            'கண்ணதாசன்', 'தங்கமணி', 'நாச்சியப்பன்', 'நாரா',
+        ]
+        has_author = any(author in q for author in known_authors)
+
+        author_action_patterns = [
+            'என்ன எழுதினார்',
+            'என்னென்ன எழுதினார்',
+            'எழுதியது என்ன',
+            'எழுதியவை',
+            'எழுதிய தலைப்பு',
+            'எழுதிய தலைப்புகள்',
+            'எழுதிய கட்டுரைகள்',
+            'எழுதிய தொடர்',
+            'எழுதிய தொடரின்',
+            'தொடரின் பெயர்',
+            'தொடர் பெயர்',
+            'பற்றி எழுதினார்',
+            'எந்த தலைப்புகள்',
+            'அவர் எழுதிய',
+            'படைப்புகள்',
+            'படைப்புகளை',
+            'படைப்புகளைப் பட்டியலிடுக',
+            'பட்டியலிடுக',
+            'பட்டியல்',
+            'list of writings',
+            'articles by',
+            'works of',
+            'what did write',
+            'list works',
+            'படைப்பு',
+        ]
+
+        if has_author or any(p in q for p in author_action_patterns):
+            return 'author_topics'
 
         return 'none'
         
@@ -1473,7 +1474,7 @@ CSV உள்ளடக்கம்:
             "keep_alive": "10m",
             "options": {
                 "temperature": 0.0,
-                "num_predict": 1200,
+                "num_predict": 2048,
                 "num_ctx": 8192,
                 "num_gpu": 999,
             }
@@ -1534,7 +1535,7 @@ CSV உள்ளடக்கம்:
             "keep_alive": "10m",
             "options": {
                 "temperature": 0.0,
-                "num_predict": 1200,
+                "num_predict": 2048,
                 "num_ctx": 8192,
                 "num_gpu": 999,
             },
@@ -1596,7 +1597,7 @@ CSV உள்ளடக்கம்:
             "keep_alive": "10m",
             "options": {
                 "temperature": 0.0,
-                "num_predict": 1200,
+                "num_predict": 2048,
                 "num_ctx": 8192,
                 "num_gpu": 999,
             }
@@ -1791,7 +1792,7 @@ Error Type: {health_status['error']}
                     return response
                 return {
                     "answer": response,
-                    "sources": _csv_source(),
+                    "sources": [],
                     "query_type": "author_csv",
                     "csv_direct": True,
                 }
@@ -1806,8 +1807,8 @@ Error Type: {health_status['error']}
             authors = fetch_all_authors(client)
             answer = format_authors_tamil(authors) if authors else "எழுத்தாளர் தகவல்கள் கிடைக்கவில்லை."
             if return_formatted:
-                return format_answer_output(answer, _csv_source())
-            return {"answer": answer, "sources": _csv_source()}
+                return format_answer_output(answer, [])
+            return {"answer": answer, "sources": []}
 
         logger.info(f"Searching: {question[:60]}...")
 
@@ -1940,7 +1941,7 @@ Error Type: {health_status['error']}
                     return response
                 return {
                     "answer": response,
-                    "sources": _csv_source(),
+                    "sources": [],
                     "query_type": "author_csv",
                 }
         except Exception as e:
@@ -1953,8 +1954,8 @@ Error Type: {health_status['error']}
             authors = await asyncio.to_thread(fetch_all_authors, client)
             answer = format_authors_tamil(authors) if authors else "எழுத்தாளர் தகவல்கள் கிடைக்கவில்லை."
             if return_formatted:
-                return format_answer_output(answer, _csv_source())
-            return {"answer": answer, "sources": _csv_source()}
+                return format_answer_output(answer, [])
+            return {"answer": answer, "sources": []}
 
         logger.info(f"Searching: {question[:60]}...")
 
@@ -2064,7 +2065,7 @@ def ask_question_stream(question: str):
             is_handled, response = handle_author_query(question, str(CSV_PATH))
             if is_handled:
                 yield {"type": "token", "content": response}
-                yield {"type": "sources", "sources": _csv_source()}
+                yield {"type": "sources", "sources": []}
                 return
         except Exception as e:
             logger.error(f"CSV query error: {e}")
@@ -2077,7 +2078,7 @@ def ask_question_stream(question: str):
             authors = fetch_all_authors(client)
             answer = format_authors_tamil(authors) if authors else "எழுத்தாளர் தகவல்கள் கிடைக்கவில்லை."
             yield {"type": "token", "content": answer}
-            yield {"type": "sources", "sources": _csv_source()}
+            yield {"type": "sources", "sources": []}
             return
 
         logger.info(f"Streaming search: {question[:60]}...")
