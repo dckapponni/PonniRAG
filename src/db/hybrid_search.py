@@ -1471,7 +1471,7 @@ CSV உள்ளடக்கம்:
                 {"role": "user", "content": user_content},
             ],
             "stream": False,
-            "keep_alive": "10m",
+            "keep_alive": "24h",
             "options": {
                 "temperature": 0.0,
                 "num_predict": 2048,
@@ -1532,7 +1532,7 @@ CSV உள்ளடக்கம்:
                 {"role": "user", "content": user_content},
             ],
             "stream": False,
-            "keep_alive": "10m",
+            "keep_alive": "24h",
             "options": {
                 "temperature": 0.0,
                 "num_predict": 2048,
@@ -1594,7 +1594,7 @@ CSV உள்ளடக்கம்:
                 {"role": "user", "content": user_content},
             ],
             "stream": True,
-            "keep_alive": "10m",
+            "keep_alive": "24h",
             "options": {
                 "temperature": 0.0,
                 "num_predict": 2048,
@@ -2159,7 +2159,7 @@ def preload_ollama_model():
                 {"role": "user", "content": "hello"},
             ],
             "stream": False,
-            "keep_alive": "10m",
+            "keep_alive": "24h",
             "options": {
                 "num_predict": 1,
                 "num_gpu": 99,
