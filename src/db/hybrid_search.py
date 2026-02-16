@@ -1622,7 +1622,7 @@ CSV உள்ளடக்கம்:
 
     except Exception as e:
         logger.error(f"Ollama streaming generation failed: {e}")
-        yield ""
+        return
 
 
 def generate_extractive_answer(facts: List[Dict], question: str) -> str:
@@ -2162,7 +2162,7 @@ def preload_ollama_model():
             "keep_alive": "24h",
             "options": {
                 "num_predict": 1,
-                "num_gpu": 99,
+                "num_gpu": 999,
             }
         }
         response = requests.post(
