@@ -9,10 +9,10 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
-      interval: 10s
-      timeout: 5s
-      start_period: 30s
+      test: ["CMD-SHELL", "timeout 5 bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      start_period: 60s  # Increased from 30s to give it more time
       retries: 5
     restart: unless-stopped
 
@@ -24,8 +24,8 @@ services:
     volumes:
       - ollama_data:/root/.ollama
       - ${MODEL_PATH:-/home/ubuntu/tamil-llama-ollama}:/models/tamil-llama
-      - ./Modelfile:/models/tamil-llama/Modelfile
       - ./ollama-entrypoint.sh:/ollama-entrypoint.sh
+
     entrypoint: ["/bin/bash", "/ollama-entrypoint.sh"]
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
@@ -41,10 +41,10 @@ services:
               count: 1
               capabilities: [gpu]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
-      interval: 15s
-      timeout: 5s
-      start_period: 180s
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/127.0.0.1/11434' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 300s
       retries: 5
     restart: unless-stopped
 
