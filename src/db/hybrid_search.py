@@ -14,6 +14,7 @@ from typing import List, Dict, Tuple, Optional
 from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
 from collections import defaultdict, OrderedDict
+from difflib import SequenceMatcher
 import re
 import os
 import logging
@@ -34,6 +35,8 @@ import hashlib
 import torch
 torch.set_grad_enabled(False)
 
+FUZZY_THRESHOLD = 0.90   
+TYPO_DISTANCE   = 1 
 
 USE_CUDA = torch.cuda.is_available()
 DEVICE = "cuda" if USE_CUDA else "cpu"
@@ -145,6 +148,50 @@ def verify_files():
 
 
 verify_files()
+
+
+
+def fuzzy_match_score(a: str, b: str) -> float:
+    """
+    Return a similarity ratio in [0.0, 1.0] between two strings.
+    Uses difflib.SequenceMatcher which handles Unicode (Tamil) correctly.
+
+    Examples
+    --------
+    fuzzy_match_score("கருணாநிதி", "கருணாநிதி")  → 1.0
+    fuzzy_match_score("கருணாநீதி", "கருணாநிதி")  → ~0.94  (one char off)
+    fuzzy_match_score("hello", "helo")            → ~0.89
+    """
+    if not a or not b:
+        return 0.0
+    return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
+
+def _edit_distance_one(a: str, b: str) -> bool:
+    """
+    Return True when `a` and `b` differ by at most TYPO_DISTANCE (default 1)
+    character-level edit (insert, delete, or substitute).
+    Uses a simple DP approach; fast for short strings like names.
+    """
+    a, b = a.lower(), b.lower()
+    if abs(len(a) - len(b)) > TYPO_DISTANCE:
+        return False
+    if a == b:
+        return True
+
+    la, lb = len(a), len(b)
+    # Single-row DP
+    prev = list(range(lb + 1))
+    for i, ca in enumerate(a, 1):
+        curr = [i]
+        for j, cb in enumerate(b, 1):
+            cost = 0 if ca == cb else 1
+            curr.append(min(prev[j] + 1,      # delete
+                            curr[j - 1] + 1,   # insert
+                            prev[j - 1] + cost))  # replace
+        prev = curr
+    return prev[lb] <= TYPO_DISTANCE
+
 
 
 # ============================================================================
@@ -302,7 +349,7 @@ def normalize_author_name(name: str) -> str:
     """Normalize author names by removing prefixes and common variations."""
     if not name:
         return ""
-    
+
     prefixes_to_remove = [
         r'மு\.,?\s*',
         r'டாக்டர்\.?\s*',
@@ -312,36 +359,46 @@ def normalize_author_name(name: str) -> str:
         r'Mr\.?\s*',
         r'Mrs\.?\s*',
     ]
-    
+
     cleaned = name.strip()
     for prefix in prefixes_to_remove:
         cleaned = re.sub(prefix, '', cleaned, flags=re.IGNORECASE)
-    
+
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
     return cleaned
 
-
 def flexible_author_match(search_name: str, csv_name: str) -> bool:
-    """Flexible matching between search query and CSV author name."""
+    """
+    Flexible matching between search query and CSV author name.
+
+    Strategy (in priority order):
+    1. Exact match after normalisation            → always True
+    2. One is a substring of the other            → True
+    3. Known alias / special-case mapping         → True
+    4. Fuzzy ≥ FUZZY_THRESHOLD (90%)              → True   ← NEW
+    5. Edit-distance ≤ TYPO_DISTANCE (1 char)     → True   ← NEW
+    """
     search_normalized = normalize_author_name(search_name).lower()
-    csv_normalized = normalize_author_name(csv_name).lower()
-    
+    csv_normalized    = normalize_author_name(csv_name).lower()
+
+    # 1. Exact
     if search_normalized == csv_normalized:
         return True
-    
+
+    # 2. Substring
     if search_normalized in csv_normalized:
         return True
-    
     if csv_normalized in search_normalized:
         return True
-    
+
+    # 3. Special-case aliases (unchanged from original)
     special_cases = {
-        'கலைஞர்': ['கருணாநிதி', 'மு.,கருணாநிதி', 'மு. கருணாநிதி'],
-        'கருணாநிதி': ['கலைஞர்', 'மு.,கருணாநிதி', 'மு. கருணாநிதி'],
-        'அண்ணா': ['அண்ணாதுரை', 'சி.என்.அண்ணாதுரை'],
-        'அண்ணாதுரை': ['அண்ணா', 'சி.என்.அண்ணாதுரை'],
+        'கலைஞர்':     ['கருணாநிதி', 'மு.,கருணாநிதி', 'மு. கருணாநிதி'],
+        'கருணாநிதி':  ['கலைஞர்',    'மு.,கருணாநிதி', 'மு. கருணாநிதி'],
+        'அண்ணா':      ['அண்ணாதுரை', 'சி.என்.அண்ணாதுரை'],
+        'அண்ணாதுரை':  ['அண்ணா',     'சி.என்.அண்ணாதுரை'],
     }
-    
+
     for key, variations in special_cases.items():
         if key in search_normalized:
             for variant in variations:
@@ -351,9 +408,25 @@ def flexible_author_match(search_name: str, csv_name: str) -> bool:
             for variant in variations:
                 if normalize_author_name(variant).lower() in search_normalized:
                     return True
-    
-    return False
 
+    # 4. Fuzzy ratio ≥ 90 %
+    score = fuzzy_match_score(search_normalized, csv_normalized)
+    if score >= FUZZY_THRESHOLD:
+        logger.info(
+            f"[FUZZY-AUTHOR] '{search_normalized}' ~ '{csv_normalized}' "
+            f"score={score:.2f} ✅"
+        )
+        return True
+
+    # 5. Edit-distance ≤ 1 (catches single typo in short names)
+    if _edit_distance_one(search_normalized, csv_normalized):
+        logger.info(
+            f"[TYPO-AUTHOR] '{search_normalized}' ≈ '{csv_normalized}' "
+            f"(edit-distance ≤ {TYPO_DISTANCE}) ✅"
+        )
+        return True
+
+    return False
 
 class EnhancedAuthorQuerySystem:
     """Robust author query system with improved CSV parsing and query detection."""
@@ -693,9 +766,12 @@ class EnhancedAuthorQuerySystem:
             "total_articles": len(self.df),
             "authors": authors
         }
-    
+        
     def get_topics_by_author(self, author_name: str) -> Dict:
-        """Get all articles/topics by a specific author."""
+        """
+        Get all articles/topics by a specific author.
+        Uses flexible_author_match which now includes fuzzy + edit-distance logic.
+        """
         if self.df is None or self.df.empty:
             return {
                 "type": "author_topics",
@@ -703,36 +779,48 @@ class EnhancedAuthorQuerySystem:
                 "message": "CSV தரவு கிடைக்கவில்லை",
                 "articles": []
             }
-        
+
         matches = self.df[
-            self.df['ஆசிரியர்'].apply(lambda x: flexible_author_match(author_name, str(x)))
+            self.df['ஆசிரியர்'].apply(
+                lambda x: flexible_author_match(author_name, str(x))
+            )
         ]
-        
+
         if matches.empty:
+            # ── Fuzzy suggestion: find the closest author name ──────────────────
+            best_name, best_score = _find_closest_author(self.df, author_name)
+            suggestion = ""
+            if best_score >= 0.70:
+                suggestion = (
+                    f"நீங்கள் '{best_name}' என்பவரை குறிப்பிட்டீர்களா? "
+                    f"(ஒற்றுமை: {best_score:.0%})"
+                )
             return {
                 "type": "author_topics",
                 "success": False,
                 "author": author_name,
                 "message": f"'{author_name}' கண்டுபிடிக்க முடியவில்லை",
+                "suggestion": suggestion,
                 "articles": []
             }
-        
+
         articles = []
         for _, row in matches.iterrows():
             article = {
-                "title": row.get('தலைப்பு', ''),
+                "title":  row.get('தலைப்பு', ''),
                 "author": row.get('ஆசிரியர்', '')
             }
-            
             for col in ['ஆண்டு', 'இதழ்', 'ச.எ.', 'வ.எ.']:
                 if col in row and pd.notna(row[col]):
                     try:
-                        article[col] = int(row[col]) if col in ['ஆண்டு', 'ச.எ.', 'வ.எ.'] else str(row[col])
-                    except:
+                        article[col] = (
+                            int(row[col]) if col in ['ஆண்டு', 'ச.எ.', 'வ.எ.']
+                            else str(row[col])
+                        )
+                    except Exception:
                         article[col] = str(row[col])
-            
             articles.append(article)
-        
+
         return {
             "type": "author_topics",
             "success": True,
@@ -741,11 +829,15 @@ class EnhancedAuthorQuerySystem:
             "count": len(articles),
             "articles": articles
         }
-    
+
     def get_author_by_topic(self, topic: str) -> Dict:
         """
         Find authors who wrote about a specific topic.
-        ✅ ENHANCED: Now uses partial matching and handles common suffixes
+        Uses 4-stage matching:
+        1. Exact substring (after suffix cleaning)
+        2. All words present
+        3. Longest single word
+        4. NEW — fuzzy title match ≥ FUZZY_THRESHOLD (90%)
         """
         if self.df is None or self.df.empty:
             return {
@@ -754,101 +846,118 @@ class EnhancedAuthorQuerySystem:
                 "message": "CSV தரவு கிடைக்கவில்லை",
                 "articles": []
             }
-        
-        # ✅ NEW: Clean up common suffixes that don't appear in CSV titles
+
+        # ── Clean common suffixes ────────────────────────────────────────────────
         topic_cleaned = topic
         suffixes_to_remove = [
-            'தொடரின்',
-            'தொடர்',
-            'கதையின்',
-            'கதை',
-            'நாவலின்',
-            'நாவல்',
-            'கட்டுரையின்',
-            'கட்டுரை',
-            'கவிதையின்',
-            'கவிதை',
-            'series',
-            'story',
-            'novel',
-            'article',
-            'poem'
+            'தொடரின்', 'தொடர்', 'கதையின்', 'கதை', 'நாவலின்', 'நாவல்',
+            'கட்டுரையின்', 'கட்டுரை', 'கவிதையின்', 'கவிதை',
+            'series', 'story', 'novel', 'article', 'poem'
         ]
-        
         for suffix in suffixes_to_remove:
-            # Remove suffix if it appears at the end
             if topic_cleaned.endswith(suffix):
                 topic_cleaned = topic_cleaned[:-len(suffix)].strip()
-            # Also try with space before suffix
             if topic_cleaned.endswith(' ' + suffix):
-                topic_cleaned = topic_cleaned[:-(len(suffix)+1)].strip()
-        
-        # Remove quotes and extra spaces
+                topic_cleaned = topic_cleaned[:-(len(suffix) + 1)].strip()
+
         topic_cleaned = topic_cleaned.replace("'", "").replace('"', '').strip()
-        
-        # ✅ STRATEGY 1: Try exact match first (after cleaning)
+
+        # ── Stage 1: exact substring ─────────────────────────────────────────────
         matches = self.df[
-            self.df['தலைப்பு'].str.contains(topic_cleaned, case=False, na=False, regex=False)
+            self.df['தலைப்பு'].str.contains(
+                topic_cleaned, case=False, na=False, regex=False
+            )
         ]
-        
-        # ✅ STRATEGY 2: If no match, try word-by-word partial matching
+
+        # ── Stage 2: all words present ───────────────────────────────────────────
         if matches.empty and len(topic_cleaned.split()) > 1:
-            # Split topic into words and search for all words present
             words = topic_cleaned.split()
-            
+
             def contains_all_words(title):
                 if pd.isna(title):
                     return False
-                title_lower = str(title).lower()
-                return all(word.lower() in title_lower for word in words)
-            
+                t = str(title).lower()
+                return all(w.lower() in t for w in words)
+
             matches = self.df[self.df['தலைப்பு'].apply(contains_all_words)]
-        
-        # ✅ STRATEGY 3: If still no match, try each word individually (most lenient)
+
+        # ── Stage 3: longest single word ─────────────────────────────────────────
         if matches.empty:
             words = topic_cleaned.split()
-            if words:  # Try matching with the longest/most significant word
-                main_word = max(words, key=len)  # Get longest word
+            if words:
+                main_word = max(words, key=len)
                 matches = self.df[
-                    self.df['தலைப்பு'].str.contains(main_word, case=False, na=False, regex=False)
+                    self.df['தலைப்பு'].str.contains(
+                        main_word, case=False, na=False, regex=False
+                    )
                 ]
-        
+
+        # ── Stage 4: FUZZY title match ≥ 90% ─────────────────────────────────────
         if matches.empty:
+            fuzzy_rows = []
+            for _, row in self.df.iterrows():
+                title = str(row.get('தலைப்பு', ''))
+                if not title:
+                    continue
+                score = fuzzy_match_score(topic_cleaned, title)
+                if score >= FUZZY_THRESHOLD:
+                    logger.info(
+                        f"[FUZZY-TOPIC] '{topic_cleaned}' ~ '{title}' "
+                        f"score={score:.2f} ✅"
+                    )
+                    fuzzy_rows.append(row)
+
+            if fuzzy_rows:
+                matches = pd.DataFrame(fuzzy_rows)
+
+        # ── Nothing found ────────────────────────────────────────────────────────
+        if matches.empty:
+            # Offer the closest-matching title as a hint
+            best_title, best_score = _find_closest_title(self.df, topic_cleaned)
+            suggestion = ""
+            if best_score >= 0.70:
+                suggestion = (
+                    f"நீங்கள் '{best_title}' என்ற தலைப்பை குறிப்பிட்டீர்களா? "
+                    f"(ஒற்றுமை: {best_score:.0%})"
+                )
             return {
                 "type": "topic_author",
                 "success": False,
                 "topic": topic,
-                "cleaned_topic": topic_cleaned,  # ✅ Show what was actually searched
-                "message": f"'{topic}' தலைப்பு கண்டுபிடிக்க முடியவில்லை. தேடிய சொல்: '{topic_cleaned}'",
+                "cleaned_topic": topic_cleaned,
+                "message": (
+                    f"'{topic}' தலைப்பு கண்டுபிடிக்க முடியவில்லை. "
+                    f"தேடிய சொல்: '{topic_cleaned}'"
+                ),
+                "suggestion": suggestion,
                 "articles": [],
-                "suggestion": "தலைப்பை முழுமையாக குறிப்பிடவும் அல்லது முக்கிய சொற்களை மட்டும் பயன்படுத்தவும்"
             }
-        
+
         articles = []
         for _, row in matches.iterrows():
             article = {
-                "title": row.get('தலைப்பு', ''),
+                "title":  row.get('தலைப்பு', ''),
                 "author": row.get('ஆசிரியர்', '')
             }
-            
             for col in ['ஆண்டு', 'இதழ்', 'ச.எ.', 'வ.எ.']:
                 if col in row and pd.notna(row[col]):
                     try:
-                        article[col] = int(row[col]) if col in ['ஆண்டு', 'ச.எ.', 'வ.எ.'] else str(row[col])
-                    except:
+                        article[col] = (
+                            int(row[col]) if col in ['ஆண்டு', 'ச.எ.', 'வ.எ.']
+                            else str(row[col])
+                        )
+                    except Exception:
                         article[col] = str(row[col])
-            
             articles.append(article)
-        
+
         return {
             "type": "topic_author",
             "success": True,
             "topic": topic,
-            "cleaned_topic": topic_cleaned,  # ✅ Show what was searched
+            "cleaned_topic": topic_cleaned,
             "count": len(articles),
             "articles": articles
         }
-
 
 def format_author_list(result: Dict) -> str:
     """Format list of all authors in simple numbered list format."""
@@ -1675,48 +1784,37 @@ def generate_extractive_answer(facts: List[Dict], question: str) -> str:
 def format_sources(merged_docs: List[Dict]) -> List[Dict]:
     """
     Format source documents for display.
-
-    Prepares a list of source documents with truncated content and metadata
-    for display to the user, removing duplicates and limiting content length.
-    All documents that passed the score threshold are included.
-
-    Args:
-        merged_docs (List[Dict]): List of merged document dictionaries
-
-    Returns:
-        List[Dict]: List of formatted source dictionaries containing:
-            - volume: Document volume number
-            - heading: Article title/heading
-            - doc_issue: Issue number
-            - content: Truncated content (max 1500 chars)
-            - word_count: Total word count of full document
-            - chunks_merged: Number of chunks merged
-            - score: Relevance score
+    Returns at most TOP_SOURCES_LIMIT (3) unique sources, highest-scored first.
     """
+    TOP_SOURCES_LIMIT = 3   # ← only change from original
+
     sources = []
     seen_hashes = set()
 
     for doc in merged_docs:
+        if len(sources) >= TOP_SOURCES_LIMIT:
+            break
+
         content_hash = hash(doc["content"][:200])
         if content_hash in seen_hashes:
             continue
         seen_hashes.add(content_hash)
-        
+
         content = doc["content"]
         if len(content) > 1500:
             content = content[:1500].rsplit(' ', 1)[0] + "..."
-        
+
         sources.append({
-            "volume": doc["volume"],
-            "heading": doc["heading"],
-            "doc_issue": doc["doc_issue"],
-            "author_name": doc.get("author_name", ""),
-            "content": content,
-            "word_count": doc["word_count"],
+            "volume":        doc["volume"],
+            "heading":       doc["heading"],
+            "doc_issue":     doc["doc_issue"],
+            "author_name":   doc.get("author_name", ""),
+            "content":       content,
+            "word_count":    doc["word_count"],
             "chunks_merged": doc["chunk_count"],
-            "score": doc["score"],
+            "score":         doc["score"],
         })
-    
+
     return sources
 
 
