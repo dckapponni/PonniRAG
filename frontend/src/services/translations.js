@@ -27,6 +27,10 @@ const translations = {
     show_less: "குறைவாக காட்டு",
     open_pdf: "PDF-ஐ புதிய தாவலில் திற",
     error_message: "மன்னிக்கவும், பிழை ஏற்பட்டது",
+    loading_pdf: "PDF ஏற்றுகிறது...",
+    error_loading_pdf: "PDF ஏற்றுவதில் பிழை",
+    pdf_not_available: "இந்த இதழுக்கு PDF கிடைக்கவில்லை.",
+    no_images: "இந்த தொகுதிக்கு படங்கள் இல்லை",
   },
   en: {
     app_title: "Ponni Archive",
@@ -56,6 +60,10 @@ const translations = {
     show_less: "Show Less",
     open_pdf: "Open PDF in new tab",
     error_message: "Sorry, an error occurred",
+    loading_pdf: "Loading PDF...",
+    error_loading_pdf: "Error loading PDF",
+    pdf_not_available: "PDF not available for this issue.",
+    no_images: "No images configured for this volume",
   },
 };
 

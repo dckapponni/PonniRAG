@@ -197,7 +197,7 @@ const Issues = ({ language }) => {
 
       {issues.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '2rem', color: '#666' }}>
-          <p>No images configured for this volume</p>
+          <p>{t('no_images')}</p>
         </div>
       ) : (
         <div className="issues-grid">

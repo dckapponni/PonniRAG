@@ -1689,6 +1689,7 @@ def format_sources(merged_docs: List[Dict]) -> List[Dict]:
             "volume": doc["volume"],
             "heading": doc["heading"],
             "doc_issue": doc["doc_issue"],
+            "author_name": doc.get("author_name", ""),
             "content": content,
             "word_count": doc["word_count"],
             "chunks_merged": doc["chunk_count"],
