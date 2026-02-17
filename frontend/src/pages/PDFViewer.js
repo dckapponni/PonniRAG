@@ -44,10 +44,10 @@ const PDFViewer = ({ language }) => {
       {loading ? (
         <div className="loading-spinner">
           <div className="spinner"></div>
-          <span>Loading PDF...</span>
+          <span>{t('loading_pdf')}</span>
         </div>
       ) : error ? (
-        <p>Error loading PDF: {error}</p>
+        <p>{t('error_loading_pdf')}: {error}</p>
       ) : pdfData && pdfData.found ? (
         <>
           <div className="pdf-container">
@@ -67,7 +67,7 @@ const PDFViewer = ({ language }) => {
           </a>
         </>
       ) : (
-        <p>PDF not available for this issue.</p>
+        <p>{t('pdf_not_available')}</p>
       )}
     </div>
   );

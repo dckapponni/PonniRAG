@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { getTranslation } from '../services/translations';
 
 const SourceCard = ({ source, index, language }) => {
@@ -8,7 +9,7 @@ const SourceCard = ({ source, index, language }) => {
   const docIssue = source.doc_issue || source.payload?.metadata?.doc_issue;
   const volume = source.volume || source.payload?.metadata?.volume;
   const heading = source.heading || source.payload?.metadata?.heading;
-  const author = source.author || source.payload?.metadata?.author;
+  const author = source.author_name || source.payload?.metadata?.author_name;
   const content = source.content || source.payload?.content || '';
 
   const metaParts = [];
@@ -39,25 +40,35 @@ const SourceCard = ({ source, index, language }) => {
 };
 
 const Sources = ({ sources, language }) => {
+  const [isOpen, setIsOpen] = useState(false);
   const t = (key) => getTranslation(language, key);
 
   if (!sources || sources.length === 0) return null;
 
   return (
     <div className="sources-container">
-      <div className="sources-header">
+      <div
+        className="sources-header"
+        onClick={() => setIsOpen(!isOpen)}
+        style={{ cursor: 'pointer', userSelect: 'none' }}
+        role="button"
+        aria-expanded={isOpen}
+      >
         <span>{t('sources_title')} — {sources.length}</span>
+        <span>{isOpen ? '▲' : '▼'}</span>
       </div>
-      <div className="sources-list">
-        {sources.map((source, index) => (
-          <SourceCard
-            key={index}
-            source={source}
-            index={index}
-            language={language}
-          />
-        ))}
-      </div>
+      {isOpen && (
+        <div className="sources-list">
+          {sources.map((source, index) => (
+            <SourceCard
+              key={index}
+              source={source}
+              index={index}
+              language={language}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 };
@@ -71,7 +82,11 @@ const ChatMessage = ({ message, language }) => {
         {isUser ? '👤' : '🤖'}
       </div>
       <div className="chat-message-content">
-        <div>{message.content}</div>
+        {isUser ? (
+          <div>{message.content}</div>
+        ) : (
+          <ReactMarkdown>{message.content}</ReactMarkdown>
+        )}
         {!isUser && message.sources && (
           <Sources sources={message.sources} language={language} />
         )}

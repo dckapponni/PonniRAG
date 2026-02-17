@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { getTranslation } from '../services/translations';
 import { askQuestion, askQuestionStream } from '../services/api';
 import ChatMessage from '../components/ChatMessage';
@@ -12,6 +12,12 @@ const Home = ({ language }) => {
   // Track active stream to abort on new submit and guard stale callbacks
   const activeStreamRef = useRef(null);
   const requestIdRef = useRef(0);
+  const messagesEndRef = useRef(null);
+
+  // Auto-scroll to bottom on new messages
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   const handleSuggestionClick = (prompt) => {
     handleSubmit(prompt);
@@ -159,12 +165,13 @@ const Home = ({ language }) => {
           {messages.map((message, index) => (
             <ChatMessage key={index} message={message} language={language} />
           ))}
-          {isLoading && (
+          {isLoading && messages.length > 0 && messages[messages.length - 1]?.content === '' && (
             <div className="loading-spinner">
               <div className="spinner"></div>
               <span>{t('searching')}</span>
             </div>
           )}
+          <div ref={messagesEndRef} />
         </div>
       )}
       <ChatInput onSubmit={handleSubmit} isLoading={isLoading} language={language} />
