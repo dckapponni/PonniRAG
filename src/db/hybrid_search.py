@@ -1856,70 +1856,42 @@ PONNI_ABOUT_CONTEXT = """பொன்னி இதழ் பற்றிய ப�
 
 பொன்னி இதழ் ஒரு கலை இலக்கிய இதழாக மட்டுமின்றி புரட்சி இதழாகவே இருந்திருக்கிறது. 1947 முதல் 1955 வரையிலான தமிழகத்தின் காலக் கண்ணாடியாகப் பொன்னி இதழ் விளங்குகிறது."""
 
-TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இதழ் தொடர்பான கேள்விகளுக்கு பதிலளிக்கும் ஒரு தமிழ் நிபுணர்.
+TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இதழ் தொடர்பான கேள்விகளுக்கு பதிலளிக்கும் தமிழ் நிபுணர்.
 
-உங்கள் பணி:
-1. கொடுக்கப்பட்ட சூழல் (context) மற்றும் கேள்வியின் அடிப்படையில் விரிவான பதில் எழுதுக
-2. பதில் 200 முதல் 500 சொற்கள் வரை இருக்க வேண்டும்
-3. தெளிவான, எளிமையான, நடைமுறை தமிழில் எழுதுக
-4. சூழலில் உள்ள தகவல்களை மட்டுமே பயன்படுத்துக – கற்பனையாக எதையும் சேர்க்காதீர்கள்
-5. பதில் வாசிப்பதற்கு மிகவும் எளிதாகவும், நன்கு கட்டமைக்கப்பட்டதாகவும் இருக்க வேண்டும்
-6. பதில் தொடங்கும் போதும் முடியும் போதும் எந்தச் சொலும் துண்டிக்கப்பட்டதாக இருக்கக் கூடாது
-7. பதிலை எழுதி முடிக்கும் போது, கட்டாயமாக ஒரு முடிவு வாக்கியத்துடன் நிறுத்த வேண்டும். பதில் நடுவில் திடீரென நிற்கக் கூடாது
+விதிகள்:
+1. சூழலில் (context) உள்ள தகவல்களை மட்டும் பயன்படுத்துக, கற்பனை சேர்க்காதீர்கள்
+2. தெளிவான எளிய தமிழில் 200-400 சொற்கள் எழுதுக
+3. முதல் வாக்கியத்தில் நேரடி பதில் கூறுக
+4. புள்ளிகள் தனி வரியில், பத்திகளுக்கிடையே இடைவெளி வைக்கவும்
+5. பதிலை முடிவு வாக்கியத்துடன் நிறுத்தவும், நடுவில் நிற்கக்கூடாது
+6. CSV தகவலையும் ஆவண சூழலையும் இணைத்து பதிலளிக்கவும்
+7. "சூழலின் படி" போன்ற சொற்களை பயன்படுத்த வேண்டாம்
 
-விவரிப்பு வகை கேள்விகளுக்கான விதி:
-- பயனர் விவரிப்பு வகையான கேள்வி கேட்டால் (எ.கா. "விளக்குக", "விவரி", "என்ன?", "எப்படி?"), மிக அதிக தொடர்புடைய முதல் ஆவணத்தின் உள்ளடக்கத்தை சுருக்கமாக விவரித்து, ஆதாரங்களுடன் பதிலளிக்கவும்
-- முதல் ஆவணத்தின் முக்கிய கருத்துகளை தெளிவாக சுருக்கி, அதன் பின்னர் மற்ற ஆவணங்களிலிருந்து கூடுதல் தகவல்களை சேர்க்கவும்
+கீழே கொடுக்கப்பட்ட கேள்வி மற்றும் சூழலின் அடிப்படையில் பதிலளிக்கவும்."""
 
-பொன்னி இதழ் பற்றிய கேள்விகளுக்கான விதி (மிக முக்கியம்):
-- கேள்வி பொன்னி இதழைப் பற்றியதாக இருந்தால், கீழே கொடுக்கப்பட்ட "பொன்னி பின்னணி தகவல்" பகுதியை **முதன்மையாக** பயன்படுத்தி பதிலளிக்கவும்
-- பின்வரும் வகையான கேள்விகள் அனைத்தும் பொன்னி இதழ் பற்றிய கேள்விகள்:
-  * பொன்னி இதழ் என்ன? / பொன்னி பற்றி கூறுக / பொன்னி இதழின் வரலாறு
-  * பொன்னி காலவரிசை / timeline / எப்போது தொடங்கியது / எப்போது நிறுத்தப்பட்டது
-  * பொன்னி நிறுவனர் / யார் தொடங்கினர் / founder / who started ponni
-  * பொன்னி எவ்வளவு காலம் இயங்கியது / how long did ponni run
-  * பொன்னி தொகுதிகள் / volumes / எத்தனை இதழ்கள்
-  * பொன்னி முக்கியத்துவம் / significance / importance / சிறப்பு
-  * பொன்னியில் யார் எழுதினர் / who wrote in ponni / contributors / எழுத்தாளர்கள்
-  * பொன்னி உள்ளடக்கம் / content types / என்ன வகையான படைப்புகள்
-  * பொன்னி திராவிட இயக்கம் / Dravidian movement / பங்களிப்பு
-  * what is ponni / about ponni / ponni magazine / ponni history
-  * ponni timeline / ponni founding / ponni duration / ponni volumes
-- இந்த வகையான கேள்விகளுக்கு, ஆவண சூழலை (document context) விட பொன்னி பின்னணி தகவலுக்கு முன்னுரிமை கொடுக்கவும்
-- பொன்னி பின்னணி தகவலுடன் ஆவண சூழலையும் இணைத்து முழுமையான பதிலை எழுதுக
 
-========================
-பொன்னி பின்னணி தகவல்:
-""" + PONNI_ABOUT_CONTEXT + """
-========================
+_PONNI_META_KEYWORDS = [
+    # Tamil
+    "பொன்னி இதழ்", "பொன்னி பற்றி", "பொன்னி களஞ்சியம்",
+    "பொன்னி காலவரிசை", "பொன்னி வரலாறு", "பொன்னி தொடங்க",
+    "பொன்னி நிறுவ", "பொன்னி எப்போது", "பொன்னி யார்",
+    "பொன்னி தொகுதி", "பொன்னி முக்கிய", "பொன்னி சிறப்பு",
+    "பொன்னி நோக்கம்", "பொன்னி பங்களிப்பு", "பொன்னி எழுத்தாளர்",
+    "பொன்னி ஆசிரியர்", "பொன்னி உள்ளடக்கம்", "பொன்னி திராவிட",
+    "பொன்னி நிறுத்த", "பொன்னி மாதம்", "பொன்னியில் யார்",
+    "பொன்னியின்", "பொன்னி அட்டை",
+    # English
+    "ponni magazine", "ponni journal", "about ponni", "ponni history",
+    "ponni timeline", "ponni founding", "ponni founder", "ponni started",
+    "ponni duration", "ponni volumes", "ponni significance", "ponni contributors",
+    "who started ponni", "when did ponni", "what is ponni", "how long did ponni",
+]
 
-மிக முக்கியமான வடிவமைப்பு விதிகள் (Formatting Rules):
-- கேள்வி **புள்ளிவாரியான (points-wise)** பதிலை எதிர்பார்க்குமானால்:
-  * ஒவ்வொரு புள்ளியும் தனித்தனி வரியில் எழுதப்பட வேண்டும்
-  * ஒரு புள்ளி முடிந்தவுடன் அடுத்த புள்ளி புதிய வரியில் தொடங்க வேண்டும்
-  * புள்ளிகளுக்கிடையே சரியான வரி இடைவெளி இருக்க வேண்டும்
-  * ஒரே புள்ளியில் பல கருத்துகளை கலக்கக் கூடாது
 
-- கேள்வி **பத்திவாரியான (paragraph-wise)** பதிலை எதிர்பார்க்குமானால்:
-  * ஒவ்வொரு பத்தியும் தனித்தனி வரியில் இருக்க வேண்டும்
-  * ஒவ்வொரு பத்தியின் முன்பும் பின்பும் ஒரு காலி வரி (spacing) இருக்க வேண்டும்
-  * மிக நீளமான ஒரே பத்தியாக எழுதக்கூடாது
-  * ஒவ்வொரு பத்தியும் ஒரு முக்கிய கருத்தை மட்டும் விளக்க வேண்டும்
-
-எழுதும் முறை:
-- முதல் வாக்கியத்தில் கேள்விக்கான நேரடியான பதிலை தெளிவாக கூறுக
-- அதன் பின்னர் விவரங்கள், விளக்கங்கள், எடுத்துக்காட்டுகளை ஒழுங்காக எழுதுக
-- தேவையான இடங்களில் துணைத்தலைப்புகளை பயன்படுத்தலாம்
-- இறுதியில் சுருக்கமான முடிவுரை எழுதலாம்
-
-கவனிக்க வேண்டியவை:
-- CSV உள்ளடக்கத்தை பயன்படுத்தாமல் பதில் எழுதக்கூடாது.
-- CSV தகவல் தொடர்பில்லையெனில் அதனை தெளிவாக குறிப்பிட வேண்டும்.
-- சூழலில் இல்லாத தகவல்களை எதையும் எழுதாதீர்கள்
-- "சூழலின் படி", "ஆதாரத்தின் படி" போன்ற சொற்களை பயன்படுத்த வேண்டாம்
-- வாசிப்பவரின் கண்களுக்கு சோர்வு வராத வகையில் பதிலை அமைக்க வேண்டும்
-
-இப்போது, கீழே கொடுக்கப்பட்ட கேள்வி மற்றும் சூழலின் அடிப்படையில், மேலுள்ள அனைத்து விதிகளையும் கட்டாயமாக பின்பற்றி, தெளிவாகவும் வாசிக்க எளிதாகவும் விரிவான பதிலை எழுதுக."""
+def _is_ponni_meta_question(question: str) -> bool:
+    """Detect if a question is about the Ponni magazine itself (not its articles)."""
+    q_lower = question.lower().strip()
+    return any(kw in q_lower for kw in _PONNI_META_KEYWORDS)
 
 
 def _truncate_at_sentence_boundary(text: str) -> str:
@@ -1969,7 +1941,7 @@ CSV உள்ளடக்கம்:
             "options": {
                 "temperature": 0.0,
                 "num_predict": 4096,
-                "num_ctx": 16384,
+                "num_ctx": 8192,
                 "num_gpu": 999,
             }
         }
@@ -2035,7 +2007,7 @@ CSV உள்ளடக்கம்:
             "options": {
                 "temperature": 0.0,
                 "num_predict": 4096,
-                "num_ctx": 16384,
+                "num_ctx": 8192,
                 "num_gpu": 999,
             },
         }
@@ -2102,7 +2074,7 @@ CSV உள்ளடக்கம்:
             "options": {
                 "temperature": 0.0,
                 "num_predict": 4096,
-                "num_ctx": 16384,
+                "num_ctx": 8192,
                 "num_gpu": 999,
             }
         }
@@ -2333,8 +2305,11 @@ Error Type: {health_status['error']}
         logger.info(f"Merged into {len(merged_docs)} documents")
 
         context_parts = []
+        if _is_ponni_meta_question(question):
+            context_parts.insert(0, f"பொன்னி பின்னணி தகவல்:\n{PONNI_ABOUT_CONTEXT}")
+            logger.info("Ponni meta-question detected — injecting about context")
         for idx, doc in enumerate(merged_docs[:3], 1):
-            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:1200]}")
+            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:800]}")
 
         # CSV semantic context
         csv_results = search_csv_semantic(question, top_k=3)
@@ -2475,8 +2450,11 @@ Error Type: {health_status['error']}
             return {"answer": answer, "sources": []}
 
         context_parts = []
+        if _is_ponni_meta_question(question):
+            context_parts.insert(0, f"பொன்னி பின்னணி தகவல்:\n{PONNI_ABOUT_CONTEXT}")
+            logger.info("Ponni meta-question detected (async) — injecting about context")
         for idx, doc in enumerate(merged_docs[:3], 1):
-            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:1200]}")
+            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:800]}")
 
         # CSV semantic context
         csv_results = await asyncio.to_thread(search_csv_semantic, question, 3)
@@ -2582,8 +2560,11 @@ def ask_question_stream(question: str):
         logger.info(f"Merged into {len(merged_docs)} documents")
 
         context_parts = []
+        if _is_ponni_meta_question(question):
+            context_parts.insert(0, f"பொன்னி பின்னணி தகவல்:\n{PONNI_ABOUT_CONTEXT}")
+            logger.info("Ponni meta-question detected (stream) — injecting about context")
         for idx, doc in enumerate(merged_docs[:3], 1):
-            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:1200]}")
+            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:800]}")
 
         csv_results = search_csv_semantic(question, top_k=3)
         csv_context = ""
@@ -2645,7 +2626,7 @@ def preload_ollama_model():
             "keep_alive": "24h",
             "options": {
                 "num_predict": 1,
-                "num_ctx": 16384,
+                "num_ctx": 8192,
                 "num_gpu": 999,
             }
         }
