@@ -1,0 +1,31 @@
+id,question,human_answer,category,notes
+ponni_gt_01,பொன்னி இதழை யார் தொடங்கினர்?,,magazine_facts,Founders of Ponni magazine
+ponni_gt_02,பொன்னி இதழ் எப்போது தொடங்கப்பட்டது?,,magazine_facts,Founding date
+ponni_gt_03,பொன்னி இதழ் எத்தனை ஆண்டுகள் இயங்கியது?,,magazine_facts,Duration of publication
+ponni_gt_04,பொன்னி இதழில் எத்தனை தொகுதிகள் வெளியாகின?,,magazine_facts,Total number of volumes
+ponni_gt_05,பொன்னி இதழின் காலவரிசை என்ன?,,timeline,Timeline of publication
+ponni_gt_06,பொன்னி இதழ் மாதம் எத்தனை இதழ்கள் வெளியிட்டது?,,magazine_facts,Monthly vs bimonthly frequency
+ponni_gt_07,பொன்னி இதழின் நோக்கம் என்ன?,,magazine_facts,Purpose and mission of the magazine
+ponni_gt_08,பாரதிதாசன் பொன்னியில் ஏன் எழுதினார்?,,authors,"Why Bharathidasan wrote in Ponni (Kuyil ban)"
+ponni_gt_09,கண்ணதாசன் பொன்னி இதழ் பற்றி என்ன கூறினார்?,,authors,Kannadasan's quote about Ponni from Vanavaasam
+ponni_gt_10,பொன்னி இதழில் எழுதிய முக்கிய ஆசிரியர்கள் யார்?,,authors,Key authors and contributors
+ponni_gt_11,தந்தை பெரியார் பொன்னியில் எழுதியுள்ளாரா?,,authors,Periyar's contribution to Ponni
+ponni_gt_12,கலைஞர் கருணாநிதி பொன்னியில் எழுதியுள்ளாரா?,,authors,Karunanidhi's contribution
+ponni_gt_13,பாரதிதாசன் பரம்பரை கவிஞர்கள் என்றால் என்ன?,,literary_content,Bharathidasan Paramparai poets
+ponni_gt_14,பொன்னியில் என்ன வகையான படைப்புகள் வெளியாகின?,,literary_content,Types of literary works published
+ponni_gt_15,பொன்னியில் சிறுகதைகள் வெளியாகியுள்ளனவா?,,literary_content,Short stories in Ponni
+ponni_gt_16,பொன்னியில் கவிதைகள் வெளியாகியுள்ளனவா?,,literary_content,Poetry in Ponni
+ponni_gt_17,பொன்னியில் நாடகங்கள் வெளியிடப்பட்டனவா?,,literary_content,Plays published in Ponni
+ponni_gt_18,பொன்னியில் உலக இலக்கியங்கள் அறிமுகம் செய்யப்பட்டனவா?,,literary_content,World literature introductions
+ponni_gt_19,பொன்னி இதழ் திராவிட இயக்கத்திற்கு எவ்வாறு பங்களித்தது?,,social_history,Contribution to Dravidian movement
+ponni_gt_20,பொன்னி இதழில் இந்தி எதிர்ப்பு பற்றி எழுதப்பட்டதா?,,political_history,Anti-Hindi imposition writings
+ponni_gt_21,பொன்னி இதழில் மாநில சுயாட்சி பற்றிய கருத்துகள் இடம்பெற்றனவா?,,political_history,State autonomy discussions
+ponni_gt_22,பொன்னி இதழில் தனித்தமிழ் பற்று பற்றி எழுதப்பட்டதா?,,political_history,Pure Tamil movement
+ponni_gt_23,போராட்டச் செய்தி நாட்குறிப்பு என்றால் என்ன?,,political_history,"Ka. Appadurai's freedom struggle diary section"
+ponni_gt_24,புதுமைப்பித்தன் நினைவுகள் பொன்னியில் வெளிவந்ததா?,,literary_content,"Pudumaipithan memories by his wife Kamala"
+ponni_gt_25,பொன்னி இதழின் அட்டைப்படம் எப்படி இருந்தது?,,magazine_facts,Cover design - colour covers
+ponni_gt_26,வேண்டாத ஆசை கட்டுரையின் ஆசிரியர் யார்?,,specific_article,Specific article author query
+ponni_gt_27,பொன்னி முதல் தொகுதியில் என்ன கட்டுரைகள் வெளியாகின?,,specific_article,Volume 1 contents
+ponni_gt_28,பொன்னியில் பெண்ணியம் பற்றிய கட்டுரைகள் உள்ளனவா?,,social_history,Feminism in Ponni
+ponni_gt_29,பொன்னியில் மார்க்சியம் பற்றிய கட்டுரைகள் உள்ளனவா?,,social_history,Marxism in Ponni
+ponni_gt_30,பொன்னி இதழ் ஏன் நிறுத்தப்பட்டது?,,magazine_facts,Why did Ponni stop publishing
