@@ -1519,6 +1519,7 @@ TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இத�
 4. சூழலில் உள்ள தகவல்களை மட்டுமே பயன்படுத்துக – கற்பனையாக எதையும் சேர்க்காதீர்கள்
 5. பதில் வாசிப்பதற்கு மிகவும் எளிதாகவும், நன்கு கட்டமைக்கப்பட்டதாகவும் இருக்க வேண்டும்
 6. பதில் தொடங்கும் போதும் முடியும் போதும் எந்தச் சொலும் துண்டிக்கப்பட்டதாக இருக்கக் கூடாது
+7. பதிலை எழுதி முடிக்கும் போது, கட்டாயமாக ஒரு முடிவு வாக்கியத்துடன் நிறுத்த வேண்டும். பதில் நடுவில் திடீரென நிற்கக் கூடாது
 
 விவரிப்பு வகை கேள்விகளுக்கான விதி:
 - பயனர் விவரிப்பு வகையான கேள்வி கேட்டால் (எ.கா. "விளக்குக", "விவரி", "என்ன?", "எப்படி?"), மிக அதிக தொடர்புடைய முதல் ஆவணத்தின் உள்ளடக்கத்தை சுருக்கமாக விவரித்து, ஆதாரங்களுடன் பதிலளிக்கவும்
@@ -1575,6 +1576,20 @@ TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இத�
 இப்போது, கீழே கொடுக்கப்பட்ட கேள்வி மற்றும் சூழலின் அடிப்படையில், மேலுள்ள அனைத்து விதிகளையும் கட்டாயமாக பின்பற்றி, தெளிவாகவும் வாசிக்க எளிதாகவும் விரிவான பதிலை எழுதுக."""
 
 
+def _truncate_at_sentence_boundary(text: str) -> str:
+    """Truncate text at the last complete sentence if it ends mid-sentence."""
+    if not text:
+        return text
+    stripped = text.rstrip()
+    if stripped and stripped[-1] in '.?!।':
+        return stripped
+    last_boundary = max(stripped.rfind('. '), stripped.rfind('.'), stripped.rfind('? '), stripped.rfind('?'),
+                        stripped.rfind('! '), stripped.rfind('!'), stripped.rfind('।'))
+    if last_boundary > len(stripped) * 0.5:
+        return stripped[:last_boundary + 1].rstrip()
+    return stripped
+
+
 def generate_llm_answer(question: str, context: str, csv_context: str, max_words: int = 500) -> str:
     """
     Generate LLM answer using Ollama /api/chat.
@@ -1624,7 +1639,12 @@ CSV உள்ளடக்கம்:
         data = response.json()
         answer = data.get("message", {}).get("content", "").strip()
 
-        answer = re.sub(r'\s+', ' ', answer)
+        answer = re.sub(r'[^\S\n]+', ' ', answer)
+        answer = re.sub(r'\n{3,}', '\n\n', answer)
+
+        if data.get("done_reason") == "length":
+            answer = _truncate_at_sentence_boundary(answer)
+            logger.info("Response hit token limit — truncated at sentence boundary")
 
         word_count = len(re.findall(r'[\u0B80-\u0BFF]+|\w+', answer))
         logger.info(f"Ollama answer generated: {word_count} words")
@@ -1685,7 +1705,12 @@ CSV உள்ளடக்கம்:
         data = response.json()
         answer = data.get("message", {}).get("content", "").strip()
 
-        answer = re.sub(r'\s+', ' ', answer)
+        answer = re.sub(r'[^\S\n]+', ' ', answer)
+        answer = re.sub(r'\n{3,}', '\n\n', answer)
+
+        if data.get("done_reason") == "length":
+            answer = _truncate_at_sentence_boundary(answer)
+            logger.info("Async response hit token limit — truncated at sentence boundary")
 
         word_count = len(re.findall(r'[\u0B80-\u0BFF]+|\w+', answer))
         logger.info(f"Ollama async answer generated: {word_count} words")
@@ -1744,11 +1769,21 @@ CSV உள்ளடக்கம்:
         )
         response.raise_for_status()
 
+        accumulated = ""
+        # ~3000 chars ≈ 80% of 4096 tokens for Tamil text
+        CHAR_THRESHOLD = 3000
+
         for line in response.iter_lines():
             if line:
                 data = json.loads(line)
                 token = data.get("message", {}).get("content", "")
                 if token:
+                    accumulated += token
+                    # Past threshold: check if we just completed a sentence
+                    if len(accumulated) > CHAR_THRESHOLD and accumulated.rstrip()[-1] in '.?!।':
+                        yield token
+                        logger.info("Streaming: stopping at sentence boundary near token limit")
+                        break
                     yield token
                 if data.get("done", False):
                     break
