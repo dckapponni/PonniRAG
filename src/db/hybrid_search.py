@@ -613,6 +613,11 @@ class _PatternBank:
         'கட்டுரை எழுதிய ஆசிரியர்',
         'கட்டுரை எழுதியவர் யார்',
         'கட்டுரை எழுதியவர்',
+        'பற்றிய படைப்புகள்',
+        'பற்றிய கட்டுரைகள்',
+        'தொடர்பான படைப்புகள்',
+        'தொடர்பான கட்டுரைகள்',
+        'பற்றி படைப்புகள்',
         # English
         'who wrote', 'who is the author', 'author of', 'written by',
         'who composed', 'composer of', 'who penned', 'penned by',
@@ -667,7 +672,7 @@ class _PatternBank:
         'இராமநாதன்', 'கிருஷ்ணாமூர்த்தி', 'நா.கிருஷ்ணாமூர்த்தி',
         'கமலா', 'விருத்தாசலம்', 'கமலா விருத்தாசலம்',
         'வாணிதாசன்', 'சுரதா', 'திரு.வி.க', 'முருகு',
-        'பெரியண்ணன்', 'அப்பாதுரை', 'மு. அண்ணாமலை',
+        'பெரியண்ணன்', 'அப்பாதுரை', 'மு. அண்ணாமலை','அப்பாதுரை', 'அப்பாத்துரை', 'கா.அப்பாத்துரை',
         'மு.வ', 'மு வ', 'தி.க.சீனிவாசன்',
     ]
 
@@ -685,6 +690,8 @@ class _PatternBank:
         'எழுத்தாளரின் பெயர் என்ன', 'எழுத்தாளரின் பெயர்',
         'படைத்தவரின் பெயர் என்ன', 'படைத்தவரின் பெயர்',
         'யார் படைத்தார்', 'படைத்தவர் யார்',
+        'என்பதின்', 'என்பதன்', 'என்பதை', 'என்பது',
+        'என்னும்', 'என்ற', 'எனும்', 'என்பதில்',
         'ஆசிரியர் என்ன', 'ஆசிரியர் எவர்',
         'கட்டுரையின் ஆசிரியர்', 'கதையின் ஆசிரியர்',
         'கவிதையின் ஆசிரியர்', 'பாடலின் ஆசிரியர்',
@@ -698,6 +705,9 @@ class _PatternBank:
         'யார் இந்த கதை எழுதினார்', 'யார் இந்த கவிதை எழுதினார்',
         'யார் இந்த கட்டுரை எழுதினார்',
         'யார் எழுதிய', 'எழுதியவர்', 'எழுதியவரின்',
+        'பற்றிய படைப்புகள்',
+        'பற்றிய கட்டுரைகள்',
+        'பற்றி படைப்புகள்',
         # Section-listing noise
         'எனும் பகுதியில் எழுதிய ஆசிரியர் பெயர்களைப் பட்டியலிடுக',
         'என்னும் பகுதியில் எழுதிய ஆசிரியர் பெயர்களைப் பட்டியலிடுக',
@@ -779,7 +789,7 @@ class _PatternBank:
     # Noise single tokens to drop (topic extraction)
     TOPIC_NOISE_TOKENS = {
         'என', 'யார்', 'இல்', 'பற்றி', 'குறித்து', 'பற்றிய',
-        'எழுதிய', 'இயற்றிய', 'யாவை', 'என்ன', 'என்னும்',
+        'எழுதிய', 'இயற்றிய', 'யாவை', 'என்ன', 'என்னும்','என்பதின்', 'என்பதன்', 'என்பதை', 'என்பது','என்பதில்',
         'என்ற', 'என்பதை', 'கதையை', 'கவிதையை', 'பாடலை',
         # Standalone words that leak after phrase-stripping
         'கட்டுரை', 'ஆசிரியர்', 'எழுத்தாளர்',
@@ -794,6 +804,10 @@ class _PatternBank:
         'பெரியார்':            'பெரியார்',
         'அண்ணா':               'அண்ணாதுரை',
         'அண்ணாதுரை':           'அண்ணாதுரை',
+        'அப்பாத்துரை':   'கா.அப்பாத்துரை',
+        'அப்பாதுரை':    'கா.அப்பாத்துரை',
+        'கா.அப்பாத்துரை': 'கா.அப்பாத்துரை',
+        'கா அப்பாத்துரை': 'கா.அப்பாத்துரை',
         'நக்கீரன்':            'நக்கீரன்',
         'பாரதிதாசன்':          'பாரதிதாசன்',
         'பாவேந்தர்':           'பாரதிதாசன்',
@@ -955,11 +969,23 @@ class EnhancedAuthorQuerySystem:
         if (has_known_author or has_initials_name) and has_author_action:
             return 'author_topics'
 
-        # Softer fallback: name present + "எழுதிய" / "படைப்பு" / "இயற்றிய"
+        # Softer fallback: name present + writing-related keyword
         if (has_known_author or has_initials_name) and (
             'எழுதிய' in q or 'படைப்பு' in q or 'இயற்றிய' in q or 'படைத்த' in q
         ):
             return 'author_topics'
+
+        # 4. Topic → Author fallback: "X பற்றிய படைப்புகள்/கட்டுரைகள்" style
+        #    No author name present, but topic + content-type word => topic_author
+        topic_content_patterns = [
+            'பற்றிய படைப்புகள்', 'பற்றிய கட்டுரைகள்', 'பற்றிய கவிதைகள்',
+            'பற்றிய கதைகள்', 'பற்றி படைப்புகள்', 'பற்றி கட்டுரைகள்',
+            'தொடர்பான படைப்புகள்', 'தொடர்பான கட்டுரைகள்',
+            'குறித்த படைப்புகள்', 'குறித்த கட்டுரைகள்',
+            'சார்ந்த படைப்புகள்', 'சார்ந்த கட்டுரைகள்',
+        ]
+        if any(p in q for p in topic_content_patterns):
+            return 'topic_author'
 
         return 'none'
 
@@ -984,19 +1010,25 @@ class EnhancedAuthorQuerySystem:
         # ── AUTHOR TOPICS: extract AUTHOR NAME ───────────────────────────────
         if query_type == 'author_topics':
 
-            # 0. Strip Tamil possessive/genitive suffixes using Tamil-safe helper.
-            #    FIXED: replaced \b-based regex with (?=\s|$) aware helper.
-            #    e.g. "பாரதிதாசனின்"      -> "பாரதிதாசன்"
-            #         "கிருஷ்ணாமூர்த்தியின்" -> "கிருஷ்ணாமூர்த்தி"
-            #         "கண்ணதாசனின்"        -> "கண்ணதாசன்"
+            # 0. Canonical map lookup BEFORE suffix stripping
+            #    (some names like அப்பாத்துரை get wrongly stripped by யை rule)
+            q_lower_raw = q.lower()
+            for pattern, canonical in _PatternBank.AUTHOR_CANONICAL.items():
+                if pattern in q_lower_raw:
+                    logger.info(f"[CANONICAL-PRESUFFIX] matched '{pattern}' → '{canonical}'")
+                    return canonical
+
+            # 1. Strip Tamil possessive/genitive suffixes
             q_stripped = _strip_tamil_possessive_suffixes(q)
 
-            # 1. Canonical map lookup (use suffix-stripped form)
+            # 2. Canonical map lookup again (post-strip, for நின்/ரின்/யின் suffixed names)
             q_lower = q_stripped.lower()
             for pattern, canonical in _PatternBank.AUTHOR_CANONICAL.items():
                 if pattern in q_lower:
                     logger.info(f"[CANONICAL] matched '{pattern}' → '{canonical}'")
                     return canonical
+
+            # ... rest of extraction unchanged
 
             # 2. Strip all noise phrases (longest first)
             noise = sorted(_PatternBank.AUTHOR_NOISE_PHRASES, key=len, reverse=True)
@@ -1194,16 +1226,17 @@ class EnhancedAuthorQuerySystem:
             "articles": articles
         }
 
-    # -------------------------------------------------------------------------
+# -------------------------------------------------------------------------
     def get_author_by_topic(self, topic: str) -> Dict:
         """
         Find authors who wrote about a specific topic.
-        5-stage matching:
-        1. Exact substring (after suffix cleaning)
-        2. All words present
-        3. Longest single word (min 4 chars)
-        4. Fuzzy title match >= FUZZY_THRESHOLD
-        5. Any meaningful token found in title
+        Matching stages:
+        1.  Exact substring (after suffix cleaning)
+        2.  All words present
+        2b. Majority-word match (>= 60%, min 2 meaningful words, result set <= 8)
+        3.  Longest Tamil word (>= 6 chars, result set <= 10)
+        4.  Fuzzy title match >= 0.80  (looser than global FUZZY_THRESHOLD=0.95)
+        5.  ALL long tokens (>= 5 chars) must match — AND logic
         """
         if self.df is None or self.df.empty:
             return {
@@ -1220,7 +1253,7 @@ class EnhancedAuthorQuerySystem:
                 r'\s*' + re.escape(suffix) + r'\s*$', '',
                 topic_cleaned.strip(), flags=re.IGNORECASE
             )
-        # Also apply Tamil possessive suffix stripping on topic_cleaned
+        # Strip Tamil possessive suffixes
         topic_cleaned = _strip_tamil_possessive_suffixes(topic_cleaned)
         topic_cleaned = (topic_cleaned
                          .replace("'", "").replace('"', '')
@@ -1245,14 +1278,14 @@ class EnhancedAuthorQuerySystem:
                 articles.append(article)
             return articles
 
-        # Stage 1: exact substring
+        # ── Stage 1: exact substring ─────────────────────────────────────────
         matches = self.df[
             self.df['தலைப்பு'].str.contains(
                 topic_cleaned, case=False, na=False, regex=False
             )
         ]
 
-        # Stage 2: all words present
+        # ── Stage 2: all words present ───────────────────────────────────────
         if matches.empty and len(topic_cleaned.split()) > 1:
             words = topic_cleaned.split()
             matches = self.df[
@@ -1261,19 +1294,61 @@ class EnhancedAuthorQuerySystem:
                 )
             ]
 
-        # Stage 3: longest single word (min 4 chars)
+        # ── Stage 2b: majority-word match ────────────────────────────────────
+        # Only counts meaningful words (>= 3 chars) so short particles like
+        # "இது", "தான்" don't drive false matches.
+        # Result-set cap of 8 prevents broad hits from common words.
+        if matches.empty and len(topic_cleaned.split()) > 2:
+            meaningful_words = [w for w in topic_cleaned.split() if len(w) >= 3]
+            if len(meaningful_words) >= 2:
+                min_matches = max(2, int(len(meaningful_words) * 0.6))
+                majority_rows = []
+                for _, row in self.df.iterrows():
+                    title = str(row.get('தலைப்பு', ''))
+                    if not title:
+                        continue
+                    # Split title into tokens — prevents "இது" matching "இதுதான்"
+                    title_tokens = set(re.findall(r'[\u0B80-\u0BFF]+|[a-zA-Z]+', title.lower()))
+                    matched_count = sum(
+                        1 for w in meaningful_words
+                        if w.lower() in title_tokens  # exact token, not substring
+                    )
+                    if matched_count >= min_matches:
+                        majority_rows.append(row)
+                if majority_rows and len(majority_rows) <= 8:
+                    matches = pd.DataFrame(majority_rows)
+                    logger.info(
+                        f"[MAJORITY-MATCH] {len(majority_rows)} rows "
+                        f"(min_words={min_matches}, words={meaningful_words})"
+                    )
+
+        # ── Stage 3: longest Tamil word (>= 6 chars), result set <= 10 ───────
+        # FIXED from min 4 chars: common words like "பிறந்த" (6 chars) were
+        # matching hundreds of titles. Now requires truly specific Tamil words
+        # AND caps the result set to confirm specificity.
         if matches.empty:
             words = topic_cleaned.split()
             if words:
-                main_word = max(words, key=len)
-                if len(main_word) >= 4:
-                    matches = self.df[
+                # Only consider words made of Tamil Unicode characters, min 6 chars
+                tamil_words = [w for w in words if re.search(r'[\u0B80-\u0BFF]{6,}', w)]
+                if tamil_words:
+                    main_word = max(tamil_words, key=len)
+                    candidate = self.df[
                         self.df['தலைப்பு'].str.contains(
                             main_word, case=False, na=False, regex=False
                         )
                     ]
+                    if not candidate.empty and len(candidate) <= 10:
+                        matches = candidate
+                        logger.info(
+                            f"[LONGEST-WORD] '{main_word}' → {len(candidate)} results"
+                        )
 
-        # Stage 4: fuzzy title match >= FUZZY_THRESHOLD
+        # ── Stage 4: fuzzy title match >= 0.80 ──────────────────────────────
+        # Uses 0.80 (not the global FUZZY_THRESHOLD of 0.95) so that near-miss
+        # titles like "காதல் பிறந்த கதை" (89%) match "காதில் பிறந்த கதை",
+        # and "இது தான் புராணம்" (≈97%) matches "இது தான் பூராணம்".
+        TOPIC_FUZZY_THRESHOLD = 0.80
         if matches.empty:
             fuzzy_rows = []
             for _, row in self.df.iterrows():
@@ -1281,30 +1356,47 @@ class EnhancedAuthorQuerySystem:
                 if not title:
                     continue
                 score = fuzzy_match_score(topic_cleaned, title)
-                if score >= FUZZY_THRESHOLD:
+                if score >= TOPIC_FUZZY_THRESHOLD:
                     logger.info(
-                        f"[FUZZY-TOPIC] '{topic_cleaned}' ~ '{title}' "
-                        f"score={score:.2f} ✅"
+                        f"[FUZZY-TOPIC] '{topic_cleaned}' ~ '{title}' score={score:.2f} ✅"
                     )
-                    fuzzy_rows.append(row)
+                    fuzzy_rows.append((row, score))
             if fuzzy_rows:
-                matches = pd.DataFrame(fuzzy_rows)
+                # Sort by score descending so best matches appear first
+                fuzzy_rows.sort(key=lambda x: x[1], reverse=True)
+                matches = pd.DataFrame([r for r, _ in fuzzy_rows])
 
-        # Stage 5: any meaningful token found in title
+        # ── Stage 5: ALL long tokens (>= 5 chars) must match — AND logic ─────
+        # FIXED from OR logic: previously the first matching token won, letting
+        # common words like "பிறந்த" match everything. Now ALL long tokens must
+        # be present simultaneously.
         if matches.empty:
-            tokens = [t for t in topic_cleaned.split() if len(t) >= 4]
-            for token in tokens:
+            tokens = [t for t in topic_cleaned.split() if len(t) >= 5]
+            if len(tokens) >= 2:
                 candidate = self.df[
-                    self.df['தலைப்பு'].str.contains(
-                        token, case=False, na=False, regex=False
+                    self.df['தலைப்பு'].apply(
+                        lambda t: pd.notna(t) and all(
+                            tok.lower() in str(t).lower() for tok in tokens
+                        )
                     )
                 ]
                 if not candidate.empty:
                     matches = candidate
-                    logger.info(f"[TOKEN-MATCH] matched via token '{token}'")
-                    break
+                    logger.info(f"[MULTI-TOKEN-AND] tokens={tokens}")
+            elif len(tokens) == 1 and len(tokens[0]) >= 7:
+                # Single very long token — only accept if result set is small (specific)
+                candidate = self.df[
+                    self.df['தலைப்பு'].str.contains(
+                        tokens[0], case=False, na=False, regex=False
+                    )
+                ]
+                if not candidate.empty and len(candidate) <= 5:
+                    matches = candidate
+                    logger.info(
+                        f"[SINGLE-LONG-TOKEN] '{tokens[0]}' → {len(candidate)} results"
+                    )
 
-        # Nothing found
+        # ── Nothing found ────────────────────────────────────────────────────
         if matches.empty:
             best_title, best_score = _find_closest_title(self.df, topic_cleaned)
             suggestion = ""
@@ -1856,42 +1948,70 @@ PONNI_ABOUT_CONTEXT = """பொன்னி இதழ் பற்றிய ப�
 
 பொன்னி இதழ் ஒரு கலை இலக்கிய இதழாக மட்டுமின்றி புரட்சி இதழாகவே இருந்திருக்கிறது. 1947 முதல் 1955 வரையிலான தமிழகத்தின் காலக் கண்ணாடியாகப் பொன்னி இதழ் விளங்குகிறது."""
 
-TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இதழ் தொடர்பான கேள்விகளுக்கு பதிலளிக்கும் தமிழ் நிபுணர்.
+TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இதழ் தொடர்பான கேள்விகளுக்கு பதிலளிக்கும் ஒரு தமிழ் நிபுணர்.
 
-விதிகள்:
-1. சூழலில் (context) உள்ள தகவல்களை மட்டும் பயன்படுத்துக, கற்பனை சேர்க்காதீர்கள்
-2. தெளிவான எளிய தமிழில் 200-400 சொற்கள் எழுதுக
-3. முதல் வாக்கியத்தில் நேரடி பதில் கூறுக
-4. புள்ளிகள் தனி வரியில், பத்திகளுக்கிடையே இடைவெளி வைக்கவும்
-5. பதிலை முடிவு வாக்கியத்துடன் நிறுத்தவும், நடுவில் நிற்கக்கூடாது
-6. CSV தகவலையும் ஆவண சூழலையும் இணைத்து பதிலளிக்கவும்
-7. "சூழலின் படி" போன்ற சொற்களை பயன்படுத்த வேண்டாம்
+உங்கள் பணி:
+1. கொடுக்கப்பட்ட சூழல் (context) மற்றும் கேள்வியின் அடிப்படையில் விரிவான பதில் எழுதுக
+2. பதில் 200 முதல் 500 சொற்கள் வரை இருக்க வேண்டும்
+3. தெளிவான, எளிமையான, நடைமுறை தமிழில் எழுதுக
+4. சூழலில் உள்ள தகவல்களை மட்டுமே பயன்படுத்துக – கற்பனையாக எதையும் சேர்க்காதீர்கள்
+5. பதில் வாசிப்பதற்கு மிகவும் எளிதாகவும், நன்கு கட்டமைக்கப்பட்டதாகவும் இருக்க வேண்டும்
+6. பதில் தொடங்கும் போதும் முடியும் போதும் எந்தச் சொலும் துண்டிக்கப்பட்டதாக இருக்கக் கூடாது
+7. பதிலை எழுதி முடிக்கும் போது, கட்டாயமாக ஒரு முடிவு வாக்கியத்துடன் நிறுத்த வேண்டும். பதில் நடுவில் திடீரென நிற்கக் கூடாது
 
-கீழே கொடுக்கப்பட்ட கேள்வி மற்றும் சூழலின் அடிப்படையில் பதிலளிக்கவும்."""
+விவரிப்பு வகை கேள்விகளுக்கான விதி:
+- பயனர் விவரிப்பு வகையான கேள்வி கேட்டால் (எ.கா. "விளக்குக", "விவரி", "என்ன?", "எப்படி?"), மிக அதிக தொடர்புடைய முதல் ஆவணத்தின் உள்ளடக்கத்தை சுருக்கமாக விவரித்து, ஆதாரங்களுடன் பதிலளிக்கவும்
+- முதல் ஆவணத்தின் முக்கிய கருத்துகளை தெளிவாக சுருக்கி, அதன் பின்னர் மற்ற ஆவணங்களிலிருந்து கூடுதல் தகவல்களை சேர்க்கவும்
 
+பொன்னி இதழ் பற்றிய கேள்விகளுக்கான விதி (மிக முக்கியம்):
+- கேள்வி பொன்னி இதழைப் பற்றியதாக இருந்தால், கீழே கொடுக்கப்பட்ட "பொன்னி பின்னணி தகவல்" பகுதியை **முதன்மையாக** பயன்படுத்தி பதிலளிக்கவும்
+- பின்வரும் வகையான கேள்விகள் அனைத்தும் பொன்னி இதழ் பற்றிய கேள்விகள்:
+  * பொன்னி இதழ் என்ன? / பொன்னி பற்றி கூறுக / பொன்னி இதழின் வரலாறு
+  * பொன்னி காலவரிசை / timeline / எப்போது தொடங்கியது / எப்போது நிறுத்தப்பட்டது
+  * பொன்னி நிறுவனர் / யார் தொடங்கினர் / founder / who started ponni
+  * பொன்னி எவ்வளவு காலம் இயங்கியது / how long did ponni run
+  * பொன்னி தொகுதிகள் / volumes / எத்தனை இதழ்கள்
+  * பொன்னி முக்கியத்துவம் / significance / importance / சிறப்பு
+  * பொன்னியில் யார் எழுதினர் / who wrote in ponni / contributors / எழுத்தாளர்கள்
+  * பொன்னி உள்ளடக்கம் / content types / என்ன வகையான படைப்புகள்
+  * பொன்னி திராவிட இயக்கம் / Dravidian movement / பங்களிப்பு
+  * what is ponni / about ponni / ponni magazine / ponni history
+  * ponni timeline / ponni founding / ponni duration / ponni volumes
+- இந்த வகையான கேள்விகளுக்கு, ஆவண சூழலை (document context) விட பொன்னி பின்னணி தகவலுக்கு முன்னுரிமை கொடுக்கவும்
+- பொன்னி பின்னணி தகவலுடன் ஆவண சூழலையும் இணைத்து முழுமையான பதிலை எழுதுக
 
-_PONNI_META_KEYWORDS = [
-    # Tamil
-    "பொன்னி இதழ்", "பொன்னி பற்றி", "பொன்னி களஞ்சியம்",
-    "பொன்னி காலவரிசை", "பொன்னி வரலாறு", "பொன்னி தொடங்க",
-    "பொன்னி நிறுவ", "பொன்னி எப்போது", "பொன்னி யார்",
-    "பொன்னி தொகுதி", "பொன்னி முக்கிய", "பொன்னி சிறப்பு",
-    "பொன்னி நோக்கம்", "பொன்னி பங்களிப்பு", "பொன்னி எழுத்தாளர்",
-    "பொன்னி ஆசிரியர்", "பொன்னி உள்ளடக்கம்", "பொன்னி திராவிட",
-    "பொன்னி நிறுத்த", "பொன்னி மாதம்", "பொன்னியில் யார்",
-    "பொன்னியின்", "பொன்னி அட்டை",
-    # English
-    "ponni magazine", "ponni journal", "about ponni", "ponni history",
-    "ponni timeline", "ponni founding", "ponni founder", "ponni started",
-    "ponni duration", "ponni volumes", "ponni significance", "ponni contributors",
-    "who started ponni", "when did ponni", "what is ponni", "how long did ponni",
-]
+========================
+பொன்னி பின்னணி தகவல்:
+""" + PONNI_ABOUT_CONTEXT + """
+========================
 
+மிக முக்கியமான வடிவமைப்பு விதிகள் (Formatting Rules):
+- கேள்வி **புள்ளிவாரியான (points-wise)** பதிலை எதிர்பார்க்குமானால்:
+  * ஒவ்வொரு புள்ளியும் தனித்தனி வரியில் எழுதப்பட வேண்டும்
+  * ஒரு புள்ளி முடிந்தவுடன் அடுத்த புள்ளி புதிய வரியில் தொடங்க வேண்டும்
+  * புள்ளிகளுக்கிடையே சரியான வரி இடைவெளி இருக்க வேண்டும்
+  * ஒரே புள்ளியில் பல கருத்துகளை கலக்கக் கூடாது
 
-def _is_ponni_meta_question(question: str) -> bool:
-    """Detect if a question is about the Ponni magazine itself (not its articles)."""
-    q_lower = question.lower().strip()
-    return any(kw in q_lower for kw in _PONNI_META_KEYWORDS)
+- கேள்வி **பத்திவாரியான (paragraph-wise)** பதிலை எதிர்பார்க்குமானால்:
+  * ஒவ்வொரு பத்தியும் தனித்தனி வரியில் இருக்க வேண்டும்
+  * ஒவ்வொரு பத்தியின் முன்பும் பின்பும் ஒரு காலி வரி (spacing) இருக்க வேண்டும்
+  * மிக நீளமான ஒரே பத்தியாக எழுதக்கூடாது
+  * ஒவ்வொரு பத்தியும் ஒரு முக்கிய கருத்தை மட்டும் விளக்க வேண்டும்
+
+எழுதும் முறை:
+- முதல் வாக்கியத்தில் கேள்விக்கான நேரடியான பதிலை தெளிவாக கூறுக
+- அதன் பின்னர் விவரங்கள், விளக்கங்கள், எடுத்துக்காட்டுகளை ஒழுங்காக எழுதுக
+- தேவையான இடங்களில் துணைத்தலைப்புகளை பயன்படுத்தலாம்
+- இறுதியில் சுருக்கமான முடிவுரை எழுதலாம்
+
+கவனிக்க வேண்டியவை:
+- CSV உள்ளடக்கத்தை பயன்படுத்தாமல் பதில் எழுதக்கூடாது.
+- CSV தகவல் தொடர்பில்லையெனில் அதனை தெளிவாக குறிப்பிட வேண்டும்.
+- சூழலில் இல்லாத தகவல்களை எதையும் எழுதாதீர்கள்
+- "சூழலின் படி", "ஆதாரத்தின் படி" போன்ற சொற்களை பயன்படுத்த வேண்டாம்
+- வாசிப்பவரின் கண்களுக்கு சோர்வு வராத வகையில் பதிலை அமைக்க வேண்டும்
+
+இப்போது, கீழே கொடுக்கப்பட்ட கேள்வி மற்றும் சூழலின் அடிப்படையில், மேலுள்ள அனைத்து விதிகளையும் கட்டாயமாக பின்பற்றி, தெளிவாகவும் வாசிக்க எளிதாகவும் விரிவான பதிலை எழுதுக."""
 
 
 def _truncate_at_sentence_boundary(text: str) -> str:
@@ -1939,11 +2059,12 @@ CSV உள்ளடக்கம்:
             "stream": False,
             "keep_alive": "24h",
             "options": {
-                "temperature": 0.0,
+                "temperature": 0.1,
+                "repeat_penalty": 1.2,
                 "num_predict": 4096,
-                "num_ctx": 8192,
-                "num_gpu": 999,
-            }
+                "num_ctx":     8192,
+                "num_gpu":     999,
+            },
         }
 
         response = requests.post(
@@ -2007,7 +2128,7 @@ CSV உள்ளடக்கம்:
             "options": {
                 "temperature": 0.0,
                 "num_predict": 4096,
-                "num_ctx": 8192,
+                "num_ctx":     8192,
                 "num_gpu": 999,
             },
         }
@@ -2072,9 +2193,10 @@ CSV உள்ளடக்கம்:
             "stream": True,
             "keep_alive": "24h",
             "options": {
-                "temperature": 0.0,
+                "temperature": 0.1,
+                "repeat_penalty": 1.2,
                 "num_predict": 4096,
-                "num_ctx": 8192,
+                "num_ctx":     8192,
                 "num_gpu": 999,
             }
         }
@@ -2305,11 +2427,8 @@ Error Type: {health_status['error']}
         logger.info(f"Merged into {len(merged_docs)} documents")
 
         context_parts = []
-        if _is_ponni_meta_question(question):
-            context_parts.insert(0, f"பொன்னி பின்னணி தகவல்:\n{PONNI_ABOUT_CONTEXT}")
-            logger.info("Ponni meta-question detected — injecting about context")
         for idx, doc in enumerate(merged_docs[:3], 1):
-            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:800]}")
+            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:1200]}")
 
         # CSV semantic context
         csv_results = search_csv_semantic(question, top_k=3)
@@ -2450,11 +2569,8 @@ Error Type: {health_status['error']}
             return {"answer": answer, "sources": []}
 
         context_parts = []
-        if _is_ponni_meta_question(question):
-            context_parts.insert(0, f"பொன்னி பின்னணி தகவல்:\n{PONNI_ABOUT_CONTEXT}")
-            logger.info("Ponni meta-question detected (async) — injecting about context")
         for idx, doc in enumerate(merged_docs[:3], 1):
-            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:800]}")
+            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:1200]}")
 
         # CSV semantic context
         csv_results = await asyncio.to_thread(search_csv_semantic, question, 3)
@@ -2560,11 +2676,8 @@ def ask_question_stream(question: str):
         logger.info(f"Merged into {len(merged_docs)} documents")
 
         context_parts = []
-        if _is_ponni_meta_question(question):
-            context_parts.insert(0, f"பொன்னி பின்னணி தகவல்:\n{PONNI_ABOUT_CONTEXT}")
-            logger.info("Ponni meta-question detected (stream) — injecting about context")
         for idx, doc in enumerate(merged_docs[:3], 1):
-            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:800]}")
+            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:1200]}")
 
         csv_results = search_csv_semantic(question, top_k=3)
         csv_context = ""
@@ -2625,7 +2738,7 @@ def preload_ollama_model():
             "stream": False,
             "keep_alive": "24h",
             "options": {
-                "num_predict": 1,
+                "num_predict": 4096,
                 "num_ctx": 8192,
                 "num_gpu": 999,
             }
