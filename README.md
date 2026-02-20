@@ -1,6 +1,6 @@
 # Ponni RAG
 
-**Ponni RAG** is an intelligent Retrieval-Augmented Generation system designed for Tamil literary documents. It uses a hybrid search approach that combines semantic vector search and keyword-based retrieval to deliver accurate, context-aware results from large collections of Tamil PDF and DOCX files. The system extracts and indexes individual literary articles while preserving author and structural metadata. Integrated Large Language Models (LLMs) generate responses grounded strictly in the Ponni dataset. Additionally, the system provides an option to view the original PDF content of each Ponni article volume directly.
+**Ponni RAG** is an intelligent Retrieval-Augmented Generation system designed for Tamil literary documents. It uses a hybrid search approach that combines semantic vector search and keyword-based retrieval to deliver accurate, context-aware results from large collections of Tamil PDF and DOCX files. The system extracts and indexes individual literary articles while preserving author and structural metadata. Every query — whether it matches structured CSV data (authors, topics, issue counts) or requires vector search — is routed through Google's Gemini 2.5 Flash API with context-specific prompts to generate natural Tamil responses grounded strictly in the Ponni dataset. Additionally, the system provides an option to view the original PDF content of each Ponni article volume directly.
 
 ## Architecture Diagram:
 ![solution flow](assets/image.png)
@@ -30,7 +30,7 @@
 
 |      | Feature         | Summary       |
 | :--- | :---:           | :---          |
-| ⚙️  | **Architecture**  | <ul><li>Hybrid search system combining semantic vector search and keyword-based retrieval (`hybrid_search.py`)</li><li>Utilizes Qdrant vector database for efficient similarity search and document retrieval (`qdrant_indexer.py`)</li><li>AWS S3 integration for scalable document storage and retrieval (`s3_utils.py`)</li></ul> |
+| ⚙️  | **Architecture**  | <ul><li>Hybrid search system combining semantic vector search and keyword-based retrieval (`hybrid_search.py`)</li><li>Dual-prompt LLM pipeline: lightweight CSV summarization prompt for structured queries, full document prompt with Ponni context for vector search queries</li><li>Utilizes Qdrant vector database for efficient similarity search and document retrieval (`qdrant_indexer.py`)</li><li>AWS S3 integration for scalable document storage and retrieval (`s3_utils.py`)</li></ul> |
 | 🔩 | **Code Quality**  | <ul><li>Modular design with separate modules for extraction (`text_extraction.py`), article separation (`article_seperation.py`), and search (`hybrid_search.py`)</li><li>Centralized configuration settings in `config/config.py` for consistency and easy modification</li><li>Comprehensive test coverage with unit and integration tests</li></ul> |
 | 🔌 | **Integrations**  | <ul><li>Integrates with `AWS S3` for efficient storage and retrieval of documents and processed data</li><li>Utilizes `Qdrant` vector database for semantic search and similarity matching</li><li>Streamlit-based interactive UI for querying and visualization (`streamlit_app.py`)</li></ul> |
 | 🧩 | **Modularity**    | <ul><li>Separate modules for text extraction (`text_extraction.py`), content processing (`content_extraction.py`), and text processing (`text_processing.py`)</li><li>Article separation and pattern matching encapsulated in `article_seperation.py` and `article_patterns.py`</li><li>Configuration settings isolated in `config/config.py`</li><li>Comprehensive test suites for quality assessment in `tests/`</li></ul> |
@@ -69,7 +69,12 @@
 │   │   ├── qdrant_indexer.py
 │   │   ├── streamlit_app.py
 │   │   └── summary.csv
-│   └── tests/
+│   ├── tests/
+│   └── evaluation/
+│       ├── evaluate.py          # Evaluation pipeline & CLI
+│       ├── metrics.py           # Semantic, BLEU, ROUGE, BERTScore
+│       ├── dataset.py           # Dataset loading (JSON/CSV)
+│       └── ground_truth_template.csv
 ├── docker-compose.yml           # Multi-service orchestration
 ├── Dockerfile                   # Streamlit container
 ├── Dockerfile.api               # FastAPI container
@@ -134,7 +139,7 @@
             <table>
             <tr>
                 <td><b><a href='db/hybrid_search.py'>hybrid_search.py</a></b></td>
-                <td>- Hybrid search engine combining semantic vector search with keyword-based retrieval<br>- Implements advanced scoring algorithms to merge and rank results from multiple search strategies<br>- Provides configurable weighting between semantic and lexical search for optimal precision and recall<br>- Supports metadata filtering, result re-ranking, and result aggregation.</td>
+                <td>- Hybrid search engine combining semantic vector search with keyword-based retrieval<br>- All queries route through Gemini LLM with context-specific prompts: a lightweight CSV prompt for structured data (authors, topics, issues) and a full document prompt for vector search results<br>- CSV-retrieved data is passed as evidence to the LLM for natural summarization, with raw data preserved as source attribution<br>- Embedding model auto-detects GPU/CPU and applies device-specific optimizations (TF32 on CUDA, thread tuning on CPU)</td>
             </tr>
             <tr>
                 <td><b><a href='db/pdf_links.py'>pdf_links.py</a></b></td>
@@ -260,10 +265,11 @@ This module provides utility functions for managing document storage and process
 
 Before getting started with Ponni RAG, ensure your runtime environment meets the following requirements:
 
-- **Programming Language:** Python 3.11.7
+- **Programming Language:** Python 3.9+
 - **Required Services:**
   - AWS S3 (for document storage)
   - Qdrant Vector Database (local or cloud instance)
+  - Gemini API key ([get one here](https://ai.google.dev/))
   - CUDA-compatible GPU (optional, for faster embedding generation)
 
 ### Installation
@@ -298,12 +304,11 @@ pip install -r requirements.txt
 
 6. Configure environment variables:
 ```sh
-# Create .env file with required credentials
-export AWS_ACCESS_KEY_ID=<your-access-key>
-export AWS_SECRET_ACCESS_KEY=<your-secret-key>
-export AWS_S3_BUCKET=<your-bucket-name>
-export QDRANT_URL=<qdrant-url>
-export QDRANT_API_KEY=<qdrant-api-key>
+cp .env.example .env
+# Edit .env with your credentials:
+#   AWS_ACCESS_KEY_ID=<your-access-key>
+#   AWS_SECRET_ACCESS_KEY=<your-secret-key>
+#   GEMINI_API_KEY=<your-gemini-api-key>
 ```
 
 ### Usage
@@ -337,18 +342,22 @@ npm start
 
 ## Docker Deployment
 
-The application can be deployed using Docker Compose, which orchestrates four services: Qdrant (vector database), FastAPI (REST API), React (modern frontend), and Streamlit (legacy UI).
+The application can be deployed using Docker Compose, which orchestrates three services: Qdrant (vector database), FastAPI (REST API + Gemini LLM), and React (frontend). LLM inference uses the Gemini API — no local GPU required.
 
 ### Services Architecture
 
 ```
-┌───────────────────────────────────────────────────────────────────────────┐
-│                           Docker Compose                                   │
-├─────────────────┬─────────────────┬─────────────────┬─────────────────────┤
-│     Qdrant      │     FastAPI     │      React      │     Streamlit       │
-│   :6333/6334    │      :8000      │      :3000      │       :8501         │
-│  Vector Store   │    REST API     │   Frontend UI   │    Legacy UI        │
-└─────────────────┴─────────────────┴─────────────────┴─────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│                      Docker Compose                        │
+├─────────────────┬─────────────────┬────────────────────────┤
+│     Qdrant      │     FastAPI     │         React          │
+│   :6333/6334    │      :8000      │         :3000          │
+│  Vector Store   │  REST API +     │      Frontend UI       │
+│                 │  Gemini LLM     │                        │
+└─────────────────┴─────────────────┴────────────────────────┘
+                          │
+                    Gemini 2.5 Flash API
+                   (Google Cloud, external)
 ```
 
 ### Quick Start with Docker Compose
@@ -356,7 +365,7 @@ The application can be deployed using Docker Compose, which orchestrates four se
 1. **Configure environment variables:**
 ```sh
 cp .env.docker.example .env.docker
-# Edit .env.docker with your AWS credentials
+# Edit .env.docker with your AWS credentials and Gemini API key
 ```
 
 2. **Build and start all services:**
@@ -393,7 +402,6 @@ Once running, the services are available at:
 | FastAPI Docs | http://localhost:8000/docs | Swagger API documentation |
 | FastAPI Health | http://localhost:8000/health | API health check endpoint |
 | Qdrant Dashboard | http://localhost:6333/dashboard | Vector database dashboard |
-| Qdrant API | http://localhost:6333 | Qdrant REST API |
 
 ### API Endpoints
 
@@ -401,14 +409,19 @@ The FastAPI service exposes the following endpoints:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/health` | Health check |
-| `POST` | `/api/ask` | Ask a question (with LLM) |
+| `GET` | `/health` | Health check (API + Qdrant) |
+| `POST` | `/api/ask` | Ask a question (Gemini LLM) |
+| `POST` | `/api/ask/stream` | Streaming answer via SSE |
 | `GET` | `/api/search?q=<query>` | Search the archive |
 | `GET` | `/api/authors` | List all authors |
 | `GET` | `/api/authors/{name}/articles` | Get articles by author |
 | `GET` | `/api/topics/search?topic=<topic>` | Search by topic |
+| `GET` | `/api/issues/stats` | Issue statistics |
 | `GET` | `/api/library/volumes` | List all volumes |
 | `GET` | `/api/library/volumes/{id}/issues` | Get issues for a volume |
+| `GET` | `/api/library/volumes/{id}/issues/{issue}/pdf` | Get PDF link |
+| `GET` | `/api/cache/stats` | Cache hit/miss stats |
+| `POST` | `/api/cache/clear` | Clear response cache |
 
 ### Building Individual Images
 
@@ -429,7 +442,7 @@ docker build -t ponni-frontend -f frontend/Dockerfile ./frontend
 
 ### GPU Support
 
-For NVIDIA GPU support, ensure you have the NVIDIA Container Toolkit installed and update the `docker-compose.yml` to include:
+LLM inference uses the Gemini API (cloud) — no local GPU is required. A GPU is only beneficial for faster embedding generation with `intfloat/multilingual-e5-large`. The embedding model automatically detects GPU availability at startup: on CUDA-capable hardware it enables TF32 acceleration; on CPU-only systems it optimizes PyTorch thread allocation for best throughput. For NVIDIA GPU support on the API container, ensure you have the NVIDIA Container Toolkit installed and add to `docker-compose.yml`:
 
 ```yaml
 services:
@@ -495,9 +508,9 @@ frontend/
 | Service | URL | Description |
 |---------|-----|-------------|
 | React Frontend | http://localhost:3000 | Modern React UI |
-| Streamlit | http://localhost:8501 | Legacy Streamlit UI |
-| FastAPI | http://localhost:8000 | REST API backend |
+| FastAPI | http://localhost:8000 | REST API backend (+ Gemini LLM) |
 | Qdrant | http://localhost:6333 | Vector database |
+| Streamlit | http://localhost:8501 | Legacy Streamlit UI |
 
 ---
 

@@ -7,6 +7,7 @@ from typing import Dict, List
 import re
 from collections import Counter
 
+import torch
 import boto3
 from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient, models
@@ -32,9 +33,25 @@ COLLECTION_NAME = Path(__file__).stem
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+torch.set_grad_enabled(False)
+USE_CUDA = torch.cuda.is_available()
+DEVICE = "cuda" if USE_CUDA else "cpu"
+
+if USE_CUDA:
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+else:
+    try:
+        torch.set_num_threads(max(1, (os.cpu_count() or 4) - 1))
+        torch.set_num_interop_threads(2)
+    except RuntimeError:
+        pass  # Already configured by another module
+
+logger.info(f"Using device: {DEVICE}")
+
 s3 = boto3.client("s3")
 
-dense_model = SentenceTransformer(EMBEDDING_MODEL)
+dense_model = SentenceTransformer(EMBEDDING_MODEL, device=DEVICE)
 
 
 def dense_embed_doc(text: str) -> List[float]:
