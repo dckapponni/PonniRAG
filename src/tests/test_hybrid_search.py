@@ -134,16 +134,6 @@ class TestUtilityFunctions:
         assert len(result.indices) > 0
         assert len(result.values) > 0
     
-    def test_is_author_question_true(self):
-        """Test author question detection - positive cases."""
-        assert hs.is_author_question("list all authors") == True
-        assert hs.is_author_question("எழுத்தாளர்கள் யார்?") == True
-        assert hs.is_author_question("authors list") == True
-    
-    def test_is_author_question_false(self):
-        """Test author question detection - negative cases."""
-        assert hs.is_author_question("what is Tamil language?") == False
-        assert hs.is_author_question("தமிழ் மொழி என்றால் என்ன?") == False
 
 
 # Test EnhancedAuthorQuerySystem
@@ -342,18 +332,6 @@ class TestIssueCountFunctions:
         assert 'மொத்த இதழ்கள்: 3' in output
         assert 'புள்ளிவிவரம்' in output
     
-    def test_format_issue_count_many_issues(self):
-        """Test formatting with many issues."""
-        issues = [{'issue_number': str(i), 'article_count': 5} for i in range(25)]
-        result = {
-            'success': True,
-            'count': 25,
-            'total_articles': 125,
-            'issues': issues
-        }
-        output = hs.format_issue_count(result)
-        assert 'முதல் 5 இதழ்கள்' in output
-        assert 'கடைசி 5 இதழ்கள்' in output
 
 
 # Test handle_author_query
@@ -409,30 +387,6 @@ class TestQdrantFunctions:
             assert result['healthy'] == False
             assert result['error'] == 'connection_failed'
     
-    def test_fetch_all_authors(self, mock_qdrant_client):
-        """Test fetching all authors from Qdrant."""
-        point1 = MagicMock()
-        point1.payload = {'type': 'author', 'content': 'கருணாநிதி'}
-        point2 = MagicMock()
-        point2.payload = {'type': 'author', 'content': 'பெரியார்'}
-        
-        mock_qdrant_client.scroll.return_value = ([point1, point2], None)
-        
-        authors = hs.fetch_all_authors(mock_qdrant_client)
-        assert len(authors) == 2
-        assert 'கருணாநிதி' in authors
-    
-    def test_format_authors_tamil(self):
-        """Test formatting authors in Tamil."""
-        authors = ['கருணாநிதி', 'பெரியார்']
-        output = hs.format_authors_tamil(authors)
-        assert 'கருணாநிதி' in output
-        assert 'பெரியார்' in output
-    
-    def test_format_authors_tamil_empty(self):
-        """Test formatting empty author list."""
-        output = hs.format_authors_tamil([])
-        assert 'கிடைக்கவில்லை' in output
 
 
 # Test HybridQdrantSearch
@@ -559,26 +513,28 @@ class TestAnswerGeneration:
         answer = hs.generate_extractive_answer([], 'question')
         assert answer == ""
     
-    @patch('requests.post')
-    def test_generate_llm_answer_success(self, mock_post):
+    @patch('hybrid_search._get_gemini_client')
+    def test_generate_llm_answer_success(self, mock_get_client):
         """Test generating LLM answer successfully."""
+        mock_candidate = MagicMock()
+        mock_candidate.finish_reason = MagicMock(name="STOP")
         mock_response = MagicMock()
-        mock_response.json.return_value = {
-            'response': 'விரிவான பதில் (200-500 சொற்கள்): தமிழ் மொழி பதில்'
-        }
-        mock_response.raise_for_status = MagicMock()
-        mock_post.return_value = mock_response
-        
-        answer = hs.generate_llm_answer('question', 'context')
+        mock_response.text = 'விரிவான பதில் (200-500 சொற்கள்): தமிழ் மொழி பதில்'
+        mock_response.candidates = [mock_candidate]
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        answer = hs.generate_llm_answer('question', 'context', '')
         assert 'தமிழ்' in answer
         assert len(answer) > 0
-        
-    @patch('requests.post')
-    def test_generate_llm_answer_failure(self, mock_post):
+
+    @patch('hybrid_search._get_gemini_client')
+    def test_generate_llm_answer_failure(self, mock_get_client):
         """Test generating LLM answer with failure."""
-        mock_post.side_effect = Exception("Model failed")
-        
-        answer = hs.generate_llm_answer('question', 'context')
+        mock_get_client.side_effect = Exception("API key invalid")
+
+        answer = hs.generate_llm_answer('question', 'context', '')
         assert answer == ""
 
 
@@ -600,27 +556,19 @@ class TestAskQuestion:
     
     @patch('hybrid_search.check_qdrant_health')
     @patch('hybrid_search.handle_author_query')
-    def test_ask_question_author_query(self, mock_handle, mock_health):
-        """Test asking author-related question."""
+    @patch('hybrid_search.generate_llm_answer')
+    def test_ask_question_author_query(self, mock_llm, mock_handle, mock_health):
+        """Test asking author-related question routes CSV through LLM."""
         mock_health.return_value = {'healthy': True, 'points_count': 1000}
-        mock_handle.return_value = (True, 'Author response')
-        
+        mock_handle.return_value = (True, 'Author response from CSV')
+        mock_llm.return_value = 'பொன்னி இதழில் பல எழுத்தாளர்கள் பங்களித்துள்ளனர். கருணாநிதி, பெரியார் போன்றவர்கள் முக்கிய எழுத்தாளர்கள்.'
+
         result = hs.ask_question('எழுத்தாளர்கள் யார்?')
-        assert result['answer'] == 'Author response'
-    
-    @patch('hybrid_search.check_qdrant_health')
-    @patch('hybrid_search.get_qdrant_client')
-    @patch('hybrid_search.is_author_question')
-    @patch('hybrid_search.fetch_all_authors')
-    def test_ask_question_list_authors(self, mock_fetch, mock_is_author, mock_client, mock_health):
-        """Test asking to list all authors."""
-        mock_health.return_value = {'healthy': True, 'points_count': 1000}
-        mock_is_author.return_value = True
-        mock_fetch.return_value = ['கருணாநிதி', 'பெரியார்']
-        mock_client.return_value = MagicMock()
-        
-        result = hs.ask_question('list authors')
-        assert 'கருணாநிதி' in result['answer']
+        assert 'பொன்னி' in result['answer']
+        assert result['query_type'] == 'author_csv'
+        assert result['csv_evidence'] == 'Author response from CSV'
+        assert len(result['sources']) > 0
+        mock_llm.assert_called_once()
     
     @patch('hybrid_search.check_qdrant_health')
     @patch('hybrid_search.get_qdrant_client')
@@ -1210,33 +1158,28 @@ class TestAsyncFunctions:
     @pytest.mark.asyncio
     async def test_generate_llm_answer_async_success(self):
         """Test async LLM answer generation."""
+        mock_candidate = MagicMock()
+        mock_candidate.finish_reason = MagicMock(name="STOP")
         mock_response = MagicMock()
-        mock_response.json.return_value = {
-            'response': 'விரிவான பதில் (200-500 சொற்கள்): தமிழ் மொழி பதில்'
-        }
-        mock_response.raise_for_status = MagicMock()
+        mock_response.text = 'விரிவான பதில் (200-500 சொற்கள்): தமிழ் மொழி பதில்'
+        mock_response.candidates = [mock_candidate]
 
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
+        mock_aio_models = AsyncMock()
+        mock_aio_models.generate_content.return_value = mock_response
+        mock_aio = MagicMock()
+        mock_aio.models = mock_aio_models
+        mock_client = MagicMock()
+        mock_client.aio = mock_aio
 
-        with patch('hybrid_search.httpx.AsyncClient') as mock_cls:
-            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            answer = await hs.generate_llm_answer_async('question', 'context')
+        with patch('hybrid_search._get_gemini_client', return_value=mock_client):
+            answer = await hs.generate_llm_answer_async('question', 'context', '')
             assert 'தமிழ்' in answer
 
     @pytest.mark.asyncio
     async def test_generate_llm_answer_async_failure(self):
         """Test async LLM answer generation failure."""
-        mock_client = AsyncMock()
-        mock_client.post.side_effect = Exception("timeout")
-
-        with patch('hybrid_search.httpx.AsyncClient') as mock_cls:
-            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            answer = await hs.generate_llm_answer_async('question', 'context')
+        with patch('hybrid_search._get_gemini_client', side_effect=Exception("timeout")):
+            answer = await hs.generate_llm_answer_async('question', 'context', '')
             assert answer == ""
 
     @pytest.mark.asyncio

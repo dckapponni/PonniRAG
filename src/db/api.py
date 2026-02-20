@@ -30,7 +30,7 @@ from hybrid_search import (
     CSV_PATH,
     _author_system_cache,
     _author_system_lock,
-    preload_ollama_model,
+    validate_gemini_api,
     _response_cache,
 )
 
@@ -178,8 +178,8 @@ async def lifespan(app: FastAPI):
                 _author_system_cache[csv_path] = EnhancedAuthorQuerySystem(csv_path)
         logger.info("Author query system cached at startup")
 
-    # Preload Ollama model into GPU memory
-    preload_ollama_model()
+    # Validate Gemini API key
+    validate_gemini_api()
 
     yield
 

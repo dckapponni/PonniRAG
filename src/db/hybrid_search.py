@@ -1,16 +1,7 @@
 """
-Hybrid Search Module for Tamil Document Processing - OPTIMIZED FOR STREAMLIT
-Provides vector and keyword-based search with LLM-powered answer generation.
-
-KEY FIXES:
-1. Uses @st.cache_resource for persistent model caching
-2. Loads models on CPU to avoid CUDA OOM
-3. Models persist across Streamlit reruns
-4. Silent loading during queries (spinners only on first load)
-5. Faster response times (< 5 seconds after initial load)
-6. FIXED: Increased LLM response size to prevent truncation
-7. FIXED: Tamil suffix stripping now uses Tamil-safe regex (no \b boundary)
-8. FIXED: வின் suffix properly stripped from topic titles (e.g. திறக்குமாவின் → திறக்குமா)
+Hybrid Search Module for Tamil Document Processing.
+Provides vector and keyword-based search with Gemini LLM-powered answer generation.
+Embedding model loads on GPU if available, falls back to optimized CPU.
 """
 from typing import List, Dict, Tuple, Optional
 from qdrant_client import QdrantClient
@@ -34,8 +25,9 @@ import threading
 import httpx
 import time
 import hashlib
-import torch
-torch.set_grad_enabled(False)
+
+from google import genai
+from google.genai import types as genai_types
 
 FUZZY_THRESHOLD = 0.95
 TYPO_DISTANCE   = 1
@@ -46,6 +38,13 @@ DEVICE = "cuda" if USE_CUDA else "cpu"
 if USE_CUDA:
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
+else:
+    # CPU optimizations: use all but one core for torch, 2 for interop
+    try:
+        torch.set_num_threads(max(1, (os.cpu_count() or 4) - 1))
+        torch.set_num_interop_threads(2)
+    except RuntimeError:
+        pass  # Already configured by another module
 
 QDRANT_HOST = os.getenv("QDRANT_HOST", "qdrant")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
@@ -53,8 +52,9 @@ COLLECTION_NAME = "qdrant_indexer"
 EMBEDDING_MODEL = "intfloat/multilingual-e5-large"
 BASE_DIR = Path(__file__).resolve().parent.parent
 CSV_PATH = BASE_DIR / "data" / "summary.csv"
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434")
-OLLAMA_MODEL = "tamil-llama"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+_gemini_client = None
 SCORE_THRESHOLD = 0.8  # Minimum cosine similarity for dense vector search
 
 _embed_lock = threading.Lock()
@@ -251,9 +251,9 @@ def get_embed_model():
     This ensures the model loads ONCE and persists across all reruns.
     Spinner is disabled - will only show during preload_models().
     """
-    logger.info("🔄 Loading embedding model (this happens only once)...")
-    model = SentenceTransformer(EMBEDDING_MODEL, device="cpu")
-    logger.info("✅ Embedding model loaded and cached")
+    logger.info(f"Loading embedding model on {DEVICE} (this happens only once)...")
+    model = SentenceTransformer(EMBEDDING_MODEL, device=DEVICE)
+    logger.info(f"Embedding model loaded on {DEVICE} and cached")
     return model
 
 
@@ -1696,8 +1696,8 @@ def get_start_year() -> str:
 
 def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
     """
-    Returns CSV data directly without LLM processing.
-    This prevents hallucinations for author/topic queries.
+    Returns raw CSV data for author/topic queries.
+    The caller passes this data to the LLM for summarization.
     """
     if detect_start_year_query(question):
         logger.info("Detected start year query")
@@ -2013,6 +2013,17 @@ TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இத�
 
 இப்போது, கீழே கொடுக்கப்பட்ட கேள்வி மற்றும் சூழலின் அடிப்படையில், மேலுள்ள அனைத்து விதிகளையும் கட்டாயமாக பின்பற்றி, தெளிவாகவும் வாசிக்க எளிதாகவும் விரிவான பதிலை எழுதுக."""
 
+_CSV_SYSTEM_PROMPT = """நீங்கள் பொன்னி இதழ் கட்டுரை தரவுத்தளத்தின் தகவல்களை சுருக்கமாக வழங்கும் தமிழ் உதவியாளர்.
+
+உங்கள் பணி:
+1. கொடுக்கப்பட்ட தரவுத்தள தகவலின் அடிப்படையில் கேள்விக்கு தமிழில் பதிலளிக்கவும்
+2. தரவுத்தளத்தில் உள்ள தகவல்களை மட்டுமே பயன்படுத்துக – கற்பனையாக எதையும் சேர்க்காதீர்கள்
+3. எண்கள், பெயர்கள், தலைப்புகள் போன்ற உண்மைத் தகவல்களை மாற்றாமல் அப்படியே பயன்படுத்துக
+4. பதிலை தெளிவாகவும் வாசிக்க எளிதாகவும் இயல்பான தமிழ் நடையில் எழுதுக
+5. பட்டியல் வகை தகவல்களுக்கு புள்ளிவாரியாக எழுதுக
+6. பதில் 100 முதல் 300 சொற்கள் வரை இருக்க வேண்டும்
+7. பதிலை ஒரு முடிவு வாக்கியத்துடன் நிறுத்த வேண்டும்"""
+
 
 def _truncate_at_sentence_boundary(text: str) -> str:
     """Truncate text at the last complete sentence if it ends mid-sentence."""
@@ -2028,212 +2039,160 @@ def _truncate_at_sentence_boundary(text: str) -> str:
     return stripped
 
 
-def generate_llm_answer(question: str, context: str, csv_context: str, max_words: int = 500) -> str:
-    """
-    Generate LLM answer using Ollama /api/chat.
-    Uses system message for KV prefix caching of the static prompt.
-    """
-    try:
-        user_content = f"""கேள்வி:
+def _get_gemini_client():
+    """Get or create the Gemini API client (singleton)."""
+    global _gemini_client
+    if _gemini_client is None:
+        if not GEMINI_API_KEY:
+            raise ValueError("GEMINI_API_KEY environment variable is not set")
+        _gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+    return _gemini_client
+
+
+def _gemini_generation_config(system_instruction: str = None):
+    """Return Gemini generation config with the given system instruction."""
+    return genai_types.GenerateContentConfig(
+        system_instruction=system_instruction or TAMIL_ANSWER_SYSTEM_PROMPT,
+        temperature=0.0,
+        max_output_tokens=2048,
+        top_p=0.9,
+    )
+
+
+def _build_user_content(question: str, context: str, csv_context: str) -> str:
+    """Build the user prompt for vector-search queries. Omits empty sections."""
+    parts = [f"கேள்வி:\n{question}\n"]
+
+    if csv_context and csv_context.strip():
+        parts.append(f"========================\nCSV உள்ளடக்கம்:\n{csv_context}\n========================\n")
+
+    if context and context.strip():
+        parts.append(f"========================\nஆவண சூழல்:\n{context}\n========================\n")
+
+    parts.append("விரிவான பதில் (200-500 சொற்கள்):")
+    return "\n".join(parts)
+
+
+def _build_csv_user_content(question: str, csv_data: str) -> str:
+    """Build a focused user prompt for CSV-only queries."""
+    return f"""கேள்வி:
 {question}
 
 ========================
-CSV உள்ளடக்கம்:
-{csv_context}
+கட்டுரை தரவுத்தள தகவல்:
+{csv_data}
 ========================
 
-========================
-ஆவண சூழல்:
-{context}
-========================
-
-விரிவான பதில் (200-500 சொற்கள்):
+மேலே கொடுக்கப்பட்ட தரவுத்தள தகவலின் அடிப்படையில் பதில் (100-300 சொற்கள்):
 """
 
-        payload = {
-            "model": OLLAMA_MODEL,
-            "messages": [
-                {"role": "system", "content": MIL_ANSWER_SYSTEM_PROMPT},
-                {"role": "user", "content": user_content},
-            ],
-            "stream": False,
-            "keep_alive": "24h",
-            "options": {
-                "temperature": 0.0,
-                "repeat_penalty": 1.15,
-                "repeat_last_n": 256,
-                "num_predict": 4096,
-                "num_ctx":      16384,
-                "num_gpu":     999,
-            },
-        }
 
-        response = requests.post(
-            f"{OLLAMA_HOST}/api/chat",
-            json=payload,
-            timeout=300
+def generate_llm_answer(
+    question: str, context: str, csv_context: str, max_words: int = 500,
+    user_content: str = None, system_prompt: str = None,
+) -> str:
+    """
+    Generate LLM answer using Gemini API (synchronous).
+    Pass user_content/system_prompt to override defaults (e.g. for CSV queries).
+    """
+    try:
+        client = _get_gemini_client()
+        if user_content is None:
+            user_content = _build_user_content(question, context, csv_context)
+
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=user_content,
+            config=_gemini_generation_config(system_prompt),
         )
 
-        response.raise_for_status()
-
-        data = response.json()
-        answer = data.get("message", {}).get("content", "").strip()
+        answer = (response.text or "").strip()
 
         answer = re.sub(r'[^\S\n]+', ' ', answer)
         answer = re.sub(r'\n{3,}', '\n\n', answer)
 
-        if data.get("done_reason") == "length":
+        # Check if response was truncated due to token limit
+        if (response.candidates and
+                response.candidates[0].finish_reason and
+                str(response.candidates[0].finish_reason) == "MAX_TOKENS"):
             answer = _truncate_at_sentence_boundary(answer)
             logger.info("Response hit token limit — truncated at sentence boundary")
 
         word_count = len(re.findall(r'[\u0B80-\u0BFF]+|\w+', answer))
-        logger.info(f"Ollama answer generated: {word_count} words")
+        logger.info(f"Gemini answer generated: {word_count} words")
 
         return answer
 
     except Exception as e:
-        logger.error(f"Ollama generation failed: {e}")
+        logger.error(f"Gemini generation failed: {e}")
         return ""
 
 
-async def generate_llm_answer_async(question: str, context: str, csv_context: str, max_words: int = 500) -> str:
+async def generate_llm_answer_async(
+    question: str, context: str, csv_context: str, max_words: int = 500,
+    user_content: str = None, system_prompt: str = None,
+) -> str:
     """
-    Async version of generate_llm_answer using httpx and /api/chat.
-    Uses system message for KV prefix caching of the static prompt.
+    Async version of generate_llm_answer using Gemini API.
+    Pass user_content/system_prompt to override defaults (e.g. for CSV queries).
     """
     try:
-        user_content = f"""கேள்வி:
-{question}
+        client = _get_gemini_client()
+        if user_content is None:
+            user_content = _build_user_content(question, context, csv_context)
 
-========================
-CSV உள்ளடக்கம்:
-{csv_context}
-========================
+        response = await client.aio.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=user_content,
+            config=_gemini_generation_config(system_prompt),
+        )
 
-========================
-ஆவண சூழல்:
-{context}
-========================
-
-விரிவான பதில் (200-500 சொற்கள்):
-"""
-
-        payload = {
-            "model": OLLAMA_MODEL,
-            "messages": [
-                {"role": "system", "content": TAMIL_ANSWER_SYSTEM_PROMPT},
-                {"role": "user", "content": user_content},
-            ],
-            "stream": False,
-            "keep_alive": "24h",
-            "options": {
-                "temperature": 0.0,
-                "repeat_penalty": 1.15,
-                "repeat_last_n": 256,
-                "num_predict": 4096,
-                "num_ctx":      16384,
-                "num_gpu": 999,
-            },
-        }
-
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{OLLAMA_HOST}/api/chat",
-                json=payload,
-                timeout=300.0,
-            )
-            response.raise_for_status()
-
-        data = response.json()
-        answer = data.get("message", {}).get("content", "").strip()
+        answer = (response.text or "").strip()
 
         answer = re.sub(r'[^\S\n]+', ' ', answer)
         answer = re.sub(r'\n{3,}', '\n\n', answer)
 
-        if data.get("done_reason") == "length":
+        if (response.candidates and
+                response.candidates[0].finish_reason and
+                str(response.candidates[0].finish_reason) == "MAX_TOKENS"):
             answer = _truncate_at_sentence_boundary(answer)
             logger.info("Async response hit token limit — truncated at sentence boundary")
 
         word_count = len(re.findall(r'[\u0B80-\u0BFF]+|\w+', answer))
-        logger.info(f"Ollama async answer generated: {word_count} words")
+        logger.info(f"Gemini async answer generated: {word_count} words")
 
         return answer
 
     except Exception as e:
-        logger.error(f"Ollama async generation failed: {e}")
+        logger.error(f"Gemini async generation failed: {e}")
         return ""
 
 
-def generate_llm_answer_stream(question: str, context: str, csv_context: str):
+def generate_llm_answer_stream(
+    question: str, context: str, csv_context: str,
+    user_content: str = None, system_prompt: str = None,
+):
     """
-    Generate LLM answer using Ollama /api/chat with streaming.
-    Uses system message for KV prefix caching of the static prompt.
-    Yields individual token strings as they arrive from Ollama.
+    Generate LLM answer using Gemini API with streaming.
+    Yields individual token strings as they arrive.
+    Pass user_content/system_prompt to override defaults (e.g. for CSV queries).
     """
     try:
-        user_content = f"""கேள்வி:
-{question}
+        client = _get_gemini_client()
+        if user_content is None:
+            user_content = _build_user_content(question, context, csv_context)
 
-========================
-CSV உள்ளடக்கம்:
-{csv_context}
-========================
-
-========================
-ஆவண சூழல்:
-{context}
-========================
-
-விரிவான பதில் (200-500 சொற்கள்):
-"""
-
-        payload = {
-            "model": OLLAMA_MODEL,
-            "messages": [
-                {"role": "system", "content": TAMIL_ANSWER_SYSTEM_PROMPT},
-                {"role": "user", "content": user_content},
-            ],
-            "stream": True,
-            "keep_alive": "24h",
-            "options": {
-                "temperature": 0.0,
-                "repeat_penalty": 1.15,
-                "repeat_last_n": 256,
-                "num_predict": 4096,
-                "num_ctx":      16384,
-                "num_gpu": 999,
-            }
-        }
-
-        response = requests.post(
-            f"{OLLAMA_HOST}/api/chat",
-            json=payload,
-            timeout=300,
-            stream=True,
-        )
-        response.raise_for_status()
-
-        accumulated = ""
-        # ~3000 chars ≈ 80% of 4096 tokens for Tamil text
-        CHAR_THRESHOLD = 3000
-
-        for line in response.iter_lines():
-            if line:
-                data = json.loads(line)
-                token = data.get("message", {}).get("content", "")
-                if token:
-                    accumulated += token
-                    # Past threshold: check if we just completed a sentence
-                    if len(accumulated) > CHAR_THRESHOLD and accumulated.rstrip()[-1] in '.?!।':
-                        yield token
-                        logger.info("Streaming: stopping at sentence boundary near token limit")
-                        break
-                    yield token
-                if data.get("done", False):
-                    break
+        for chunk in client.models.generate_content_stream(
+            model=GEMINI_MODEL,
+            contents=user_content,
+            config=_gemini_generation_config(system_prompt),
+        ):
+            token = chunk.text
+            if token:
+                yield token
 
     except Exception as e:
-        logger.error(f"Ollama streaming generation failed: {e}")
+        logger.error(f"Gemini streaming generation failed: {e}")
         return
 
 
@@ -2386,18 +2345,33 @@ Error Type: {health_status['error']}
     if CSV_PATH.exists():
         try:
             logger.info("Checking author query...")
-            is_handled, response = handle_author_query(question, str(CSV_PATH))
+            is_handled, csv_response = handle_author_query(question, str(CSV_PATH))
 
-            if is_handled and response and response.strip():
-                logger.info("✅ Handled as CSV author query - returning direct CSV data")
-                if return_formatted:
-                    return response
-                return {
-                    "answer": response,
-                    "sources": [],
+            if is_handled and csv_response and csv_response.strip():
+                logger.info("CSV query matched - passing to LLM for summarization")
+                t0 = time.time()
+                csv_content = _build_csv_user_content(question, csv_response)
+                llm_answer = generate_llm_answer(
+                    question, context="", csv_context="",
+                    user_content=csv_content, system_prompt=_CSV_SYSTEM_PROMPT,
+                )
+                logger.info(f"[TIMING] gemini_llm (csv): {time.time() - t0:.2f}s")
+
+                if not llm_answer or len(llm_answer) < 50:
+                    llm_answer = csv_response  # fallback to raw CSV data
+
+                sources = _csv_source()
+                result = {
+                    "answer": llm_answer,
+                    "sources": sources,
                     "query_type": "author_csv",
-                    "csv_direct": True,
+                    "csv_evidence": csv_response,
                 }
+                _response_cache.put(question, result)
+
+                if return_formatted:
+                    return format_answer_output(llm_answer, sources)
+                return result
         except Exception as e:
             logger.error(f"CSV query error: {e}")
 
@@ -2432,7 +2406,7 @@ Error Type: {health_status['error']}
 
         context_parts = []
         for idx, doc in enumerate(merged_docs[:3], 1):
-            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:800]}")
+            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:1500]}")
 
         # CSV semantic context
         csv_results = search_csv_semantic(question, top_k=3)
@@ -2445,7 +2419,7 @@ Error Type: {health_status['error']}
         if csv_results:
             csv_context = "\n".join([f"{idx}. {row}" for idx, row in enumerate(csv_results, 1)])
         else:
-            csv_context = "தொடர்புடைய CSV தகவல் இல்லை."
+            csv_context = ""
 
         context = "\n\n".join(context_parts)
 
@@ -2453,7 +2427,7 @@ Error Type: {health_status['error']}
         if use_llm:
             t0 = time.time()
             answer = generate_llm_answer(question, context, csv_context)
-            logger.info(f"[TIMING] ollama_llm: {time.time() - t0:.2f}s")
+            logger.info(f"[TIMING] gemini_llm: {time.time() - t0:.2f}s")
 
         if not answer or len(answer) < 150:
             logger.warning("LLM failed, using extractive answer")
@@ -2488,7 +2462,7 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
     Async version of ask_question for FastAPI concurrent request handling.
 
     Uses asyncio.to_thread for sync I/O operations (Qdrant, embeddings) and
-    httpx async client for Ollama LLM calls. This allows multiple user requests
+    Gemini async LLM calls. This allows multiple user requests
     to be processed concurrently without blocking the event loop.
     """
     t_start = time.time()
@@ -2526,19 +2500,35 @@ Error Type: {health_status['error']}
     if CSV_PATH.exists():
         try:
             logger.info("Checking author query...")
-            is_handled, response = await asyncio.to_thread(
+            is_handled, csv_response = await asyncio.to_thread(
                 handle_author_query, question, str(CSV_PATH)
             )
 
-            if is_handled and response and response.strip():
-                logger.info("Handled as CSV author query")
-                if return_formatted:
-                    return response
-                return {
-                    "answer": response,
-                    "sources": [],
+            if is_handled and csv_response and csv_response.strip():
+                logger.info("CSV query matched - passing to LLM for summarization")
+                t0 = time.time()
+                csv_content = _build_csv_user_content(question, csv_response)
+                llm_answer = await generate_llm_answer_async(
+                    question, context="", csv_context="",
+                    user_content=csv_content, system_prompt=_CSV_SYSTEM_PROMPT,
+                )
+                logger.info(f"[TIMING] async gemini_llm (csv): {time.time() - t0:.2f}s")
+
+                if not llm_answer or len(llm_answer) < 50:
+                    llm_answer = csv_response  # fallback to raw CSV data
+
+                sources = _csv_source()
+                result = {
+                    "answer": llm_answer,
+                    "sources": sources,
                     "query_type": "author_csv",
+                    "csv_evidence": csv_response,
                 }
+                _response_cache.put(question, result)
+
+                if return_formatted:
+                    return format_answer_output(llm_answer, sources)
+                return result
         except Exception as e:
             logger.error(f"CSV query error: {e}")
 
@@ -2574,7 +2564,7 @@ Error Type: {health_status['error']}
 
         context_parts = []
         for idx, doc in enumerate(merged_docs[:3], 1):
-            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:800]}")
+            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:1500]}")
 
         # CSV semantic context
         csv_results = await asyncio.to_thread(search_csv_semantic, question, 3)
@@ -2587,7 +2577,7 @@ Error Type: {health_status['error']}
         if csv_results:
             csv_context = "\n".join([f"{idx}. {row}" for idx, row in enumerate(csv_results, 1)])
         else:
-            csv_context = "தொடர்புடைய CSV தகவல் இல்லை."
+            csv_context = ""
 
         context = "\n\n".join(context_parts)
 
@@ -2595,7 +2585,7 @@ Error Type: {health_status['error']}
         if use_llm:
             t0 = time.time()
             answer = await generate_llm_answer_async(question, context, csv_context)
-            logger.info(f"[TIMING] async ollama_llm: {time.time() - t0:.2f}s")
+            logger.info(f"[TIMING] async gemini_llm: {time.time() - t0:.2f}s")
 
         if not answer or len(answer) < 100:
             logger.warning("LLM failed, using extractive answer")
@@ -2647,13 +2637,29 @@ def ask_question_stream(question: str):
         return
     # --- END CACHE LOOKUP ---
 
-    # 2. Check CSV queries first
+    # 2. Check CSV queries first — stream LLM summary of CSV data
     if CSV_PATH.exists():
         try:
-            is_handled, response = handle_author_query(question, str(CSV_PATH))
-            if is_handled and response and response.strip():
-                yield {"type": "token", "content": response}
-                yield {"type": "sources", "sources": []}
+            is_handled, csv_response = handle_author_query(question, str(CSV_PATH))
+            if is_handled and csv_response and csv_response.strip():
+                logger.info("CSV query matched - streaming LLM summary")
+                csv_content = _build_csv_user_content(question, csv_response)
+                accumulated = []
+                for token in generate_llm_answer_stream(
+                    question, context="", csv_context="",
+                    user_content=csv_content, system_prompt=_CSV_SYSTEM_PROMPT,
+                ):
+                    accumulated.append(token)
+                    yield {"type": "token", "content": token}
+
+                full_answer = "".join(accumulated)
+                if len(full_answer) < 50:
+                    yield {"type": "token", "content": csv_response}
+                    full_answer = csv_response
+
+                sources = _csv_source()
+                _response_cache.put(question, {"answer": full_answer, "sources": sources})
+                yield {"type": "sources", "sources": sources}
                 return
         except Exception as e:
             logger.error(f"CSV query error: {e}")
@@ -2681,14 +2687,14 @@ def ask_question_stream(question: str):
 
         context_parts = []
         for idx, doc in enumerate(merged_docs[:3], 1):
-            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:800]}")
+            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:1500]}")
 
         csv_results = search_csv_semantic(question, top_k=3)
         csv_context = ""
         if csv_results:
             csv_context = "\n".join([f"{idx}. {row}" for idx, row in enumerate(csv_results, 1)])
         else:
-            csv_context = "தொடர்புடைய CSV தகவல் இல்லை."
+            csv_context = ""
 
         context = "\n\n".join(context_parts)
 
@@ -2725,37 +2731,25 @@ def ask_question_stream(question: str):
         yield {"type": "sources", "sources": []}
 
 
-def preload_ollama_model():
+def validate_gemini_api():
     """
-    Warm up the Ollama LLM via /api/chat with the full system prompt.
-    Loads the model into GPU memory AND pre-caches the system prompt KV state
-    so the first real query reuses it.
+    Validate that the Gemini API key is configured and working.
+    Called at startup to fail fast if misconfigured.
     """
-    logger.info("Preloading Ollama model and system prompt KV cache...")
+    if not GEMINI_API_KEY:
+        logger.warning("GEMINI_API_KEY not set — LLM generation will be unavailable")
+        return
+    logger.info(f"Validating Gemini API key (model: {GEMINI_MODEL})...")
     try:
-        payload = {
-            "model": OLLAMA_MODEL,
-            "messages": [
-                {"role": "system", "content": TAMIL_ANSWER_SYSTEM_PROMPT},
-                {"role": "user", "content": "hello"},
-            ],
-            "stream": False,
-            "keep_alive": "24h",
-            "options": {
-                "num_predict": 4096,
-                "num_ctx":  16384,
-                "num_gpu": 999,
-            }
-        }
-        response = requests.post(
-            f"{OLLAMA_HOST}/api/chat",
-            json=payload,
-            timeout=120
+        client = _get_gemini_client()
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents="hello",
+            config=genai_types.GenerateContentConfig(max_output_tokens=5),
         )
-        response.raise_for_status()
-        logger.info("Ollama model and system prompt KV cache preloaded successfully")
+        logger.info("Gemini API validated successfully")
     except Exception as e:
-        logger.warning(f"Ollama model preload failed (non-fatal): {e}")
+        logger.warning(f"Gemini API validation failed (non-fatal): {e}")
 
 
 def preload_models():
@@ -2776,9 +2770,9 @@ def preload_models():
         _ = get_qdrant_client()
         st.success("Qdrant connected")
 
-    with st.spinner("Loading Ollama LLM..."):
-        preload_ollama_model()
-        st.success("Ollama LLM loaded")
+    with st.spinner("Validating Gemini API..."):
+        validate_gemini_api()
+        st.success("Gemini API validated")
 
     logger.info("=" * 60)
     logger.info("ALL MODELS READY - APP IS READY TO SERVE")

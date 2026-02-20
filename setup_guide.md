@@ -1,6 +1,6 @@
 # PonniRAG Deployment Guide
 
-Step-by-step instructions to deploy PonniRAG on an AWS EC2 GPU instance using Docker Compose.
+Step-by-step instructions to deploy PonniRAG on an AWS EC2 instance using Docker Compose.
 
 ---
 
@@ -9,13 +9,12 @@ Step-by-step instructions to deploy PonniRAG on an AWS EC2 GPU instance using Do
 1. [Architecture Overview](#1-architecture-overview)
 2. [AWS Setup](#2-aws-setup)
 3. [EC2 Instance Setup](#3-ec2-instance-setup)
-4. [Download the LLM Model](#4-download-the-llm-model)
-5. [Clone and Configure](#5-clone-and-configure)
-6. [Deploy with Docker Compose](#6-deploy-with-docker-compose)
-7. [Index Documents (First-Time Only)](#7-index-documents-first-time-only)
-8. [Verification](#8-verification)
-9. [Monitoring and Maintenance](#9-monitoring-and-maintenance)
-10. [Troubleshooting](#10-troubleshooting)
+4. [Clone and Configure](#4-clone-and-configure)
+5. [Deploy with Docker Compose](#5-deploy-with-docker-compose)
+6. [Index Documents (First-Time Only)](#6-index-documents-first-time-only)
+7. [Verification](#7-verification)
+8. [Monitoring and Maintenance](#8-monitoring-and-maintenance)
+9. [Troubleshooting](#9-troubleshooting)
 
 ---
 
@@ -23,7 +22,7 @@ Step-by-step instructions to deploy PonniRAG on an AWS EC2 GPU instance using Do
 
 ```
                      ┌──────────────────────────────────────────┐
-                     │              EC2 (g4dn.xlarge)           │
+                     │              EC2 Instance                 │
   User Browser ──────┤                                          │
    port 3000         │  ┌──────────┐       ┌──────────────────┐ │
          ├───────────┼─►│  nginx   │──/api─►│  FastAPI (8000)  │ │
@@ -32,20 +31,24 @@ Step-by-step instructions to deploy PonniRAG on an AWS EC2 GPU instance using Do
          │           │                       │              │    │
          │           │                ┌──────┘              │    │
          │           │                ▼                     ▼    │
-         │           │  ┌──────────────────┐  ┌───────────────┐ │
-         │           │  │  Qdrant (6333)   │  │ Ollama (11434)│ │
-         │           │  │  vector database │  │ Tamil-Llama 7B│ │
-         │           │  └──────────────────┘  │ T4 GPU        │ │
-         │           │                        └───────────────┘ │
+         │           │  ┌──────────────────┐    Gemini 2.5 Flash │
+         │           │  │  Qdrant (6333)   │    API (external)   │
+         │           │  │  vector database │                     │
+         │           │  └──────────────────┘                     │
          │           └──────────────────────────────────────────┘
 ```
 
 | Container | Port | Resource | Purpose |
 |-----------|------|----------|---------|
 | nginx (frontend) | 3000 → 80 | ~100 MB RAM | Serves React app, proxies `/api` to FastAPI |
-| FastAPI (api) | 8000 | ~4 GB RAM | REST API, embedding model, hybrid search |
+| FastAPI (api) | 8000 | ~4 GB RAM | REST API, embedding model, hybrid search, Gemini LLM calls |
 | Qdrant | 6333 | ~1 GB RAM | Vector database for document storage |
-| Ollama | 11434 | ~6 GB VRAM | Hosts Tamil-Llama 7B (q8_0) on GPU |
+
+LLM inference uses the **Gemini 2.5 Flash API** (external, cloud-hosted) — no local GPU or model download is required. A GPU is only beneficial for faster embedding generation with `intfloat/multilingual-e5-large`; the system auto-detects GPU availability and optimizes accordingly.
+
+**Query routing:** All queries go through Gemini with context-specific prompts:
+- **CSV queries** (authors, topics, issues) — lightweight `_CSV_SYSTEM_PROMPT`, only database evidence in context
+- **Vector search queries** — full `TAMIL_ANSWER_SYSTEM_PROMPT` with Ponni background, document chunks (1500 chars × 3 docs), and CSV semantic matches
 
 ---
 
@@ -94,11 +97,13 @@ Name: `PonniRAG-SG`
 |---------|-------|
 | Name | `PonniRAG-Server` |
 | AMI | Ubuntu Server 22.04 LTS (HVM), x86_64 |
-| Instance type | **g4dn.xlarge** (4 vCPU, 16 GB RAM, T4 16 GB VRAM) |
+| Instance type | **t3.xlarge** (4 vCPU, 16 GB RAM) — no GPU required |
 | Key pair | Select or create one |
 | Security group | `PonniRAG-SG` |
-| Storage | 50 GB gp3 |
+| Storage | 30 GB gp3 |
 | IAM instance profile | `PonniRAG-EC2-Role` |
+
+> **GPU optional:** If you want faster embedding generation, use a **g4dn.xlarge** (T4 GPU) instead. The embedding model auto-detects CUDA and uses it when available. LLM inference always uses the Gemini API regardless.
 
 For cost optimization, see [inference_recommendation_guide.md](inference_recommendation_guide.md) — spot instances can reduce cost by 60-70%.
 
@@ -153,7 +158,9 @@ docker --version
 docker compose version
 ```
 
-### 3.3 Install NVIDIA Drivers + Container Toolkit
+### 3.3 Install NVIDIA Drivers + Container Toolkit (GPU instances only)
+
+Skip this section if using a CPU-only instance (e.g., t3.xlarge).
 
 ```bash
 # Install NVIDIA driver
@@ -184,32 +191,9 @@ docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi
 
 ---
 
-## 4. Download the LLM Model
+## 4. Clone and Configure
 
-The Tamil-Llama 7B q8_0 GGUF file (~7 GB) must be downloaded before deployment. The Modelfile references it at `/models/tamil-llama/tamil-llama-7b-v0.1-q8_0.gguf`.
-
-```bash
-# Create model directory
-mkdir -p /home/ubuntu/tamil-llama-ollama
-
-# Download the GGUF model (from Hugging Face or your storage)
-# Option A: From Hugging Face
-cd /home/ubuntu/tamil-llama-ollama
-wget https://huggingface.co/abhinand/tamil-llama-7b-instruct-v0.1-GGUF/resolve/main/tamil-llama-7b-v0.1-q8_0.gguf
-
-# Option B: From your S3 bucket (if previously uploaded)
-aws s3 cp s3://ponni-dev/models/tamil-llama-7b-v0.1-q8_0.gguf /home/ubuntu/tamil-llama-ollama/
-
-# Verify the file exists
-ls -lh /home/ubuntu/tamil-llama-ollama/
-# Should show: tamil-llama-7b-v0.1-q8_0.gguf (~7 GB)
-```
-
----
-
-## 5. Clone and Configure
-
-### 5.1 Clone the Repository
+### 4.1 Clone the Repository
 
 ```bash
 cd ~
@@ -218,14 +202,14 @@ cd PonniRAG
 git checkout frontend
 ```
 
-### 5.2 Create Environment File
+### 4.2 Create Environment File
 
 ```bash
 cp .env.docker.example .env.docker
 nano .env.docker
 ```
 
-Fill in your AWS credentials (or omit if using the IAM role attached to the instance):
+Fill in your credentials:
 
 ```bash
 # AWS S3 Configuration
@@ -237,78 +221,61 @@ AWS_DEFAULT_REGION=ap-south-1
 QDRANT_HOST=qdrant
 QDRANT_PORT=6333
 
-# GPU
-CUDA_VISIBLE_DEVICES=0
+# Gemini API (required)
+GEMINI_API_KEY=your-gemini-api-key-here
+GEMINI_MODEL=gemini-2.5-flash
 ```
 
-### 5.3 Verify Key Files Exist
+> Get a Gemini API key at [https://ai.google.dev/](https://ai.google.dev/)
+
+### 4.3 Verify Key Files Exist
 
 ```bash
 # These files are required by docker-compose.yml
-ls -la Modelfile                # Ollama model config (num_ctx=8192, num_predict=1200)
-ls -la ollama-entrypoint.sh     # Auto-creates tamil-llama model on startup
 ls -la Dockerfile.api           # FastAPI container build
 ls -la frontend/Dockerfile      # React + nginx container build
 ls -la frontend/nginx.conf      # nginx config (proxies /api to FastAPI)
 ```
 
-### 5.4 (Optional) Custom Model Path
-
-If you placed the model GGUF somewhere other than `/home/ubuntu/tamil-llama-ollama`, set the `MODEL_PATH` variable:
-
-```bash
-# In .env.docker or export directly
-export MODEL_PATH=/path/to/your/model/directory
-```
-
-The docker-compose.yml uses `${MODEL_PATH:-/home/ubuntu/tamil-llama-ollama}` — it defaults to `/home/ubuntu/tamil-llama-ollama` if `MODEL_PATH` is not set.
-
 ---
 
-## 6. Deploy with Docker Compose
+## 5. Deploy with Docker Compose
 
-### 6.1 Build and Start
+### 5.1 Build and Start
 
 ```bash
 cd ~/PonniRAG
 docker compose up --build -d
 ```
 
-### 6.2 Startup Sequence
+### 5.2 Startup Sequence
 
 Docker Compose uses healthchecks to enforce the correct startup order:
 
 ```
 1. qdrant starts      → healthcheck: GET /healthz every 10s
-2. ollama starts      → healthcheck: GET /api/tags every 15s (180s start period)
-   └─ entrypoint.sh runs:
-      a. Starts ollama serve in background
-      b. Waits for server to be ready
-      c. Creates tamil-llama model from Modelfile (first run only)
-3. api starts         → only after qdrant AND ollama are healthy
+2. api starts         → only after qdrant is healthy
    └─ Downloads embedding model on first run (~2.3 GB, one-time)
-   └─ Preloads Ollama model via /api/chat (warms KV cache for system prompt)
-4. frontend starts    → only after api is up
+   └─ Validates Gemini API key on startup
+   └─ Auto-detects GPU/CPU for embedding model
+3. frontend starts    → only after api is up
 ```
 
-### 6.3 Watch the Logs
+### 5.3 Watch the Logs
 
 ```bash
 # Follow all service logs
 docker compose logs -f
 
 # Or watch a specific service
-docker compose logs -f ollama    # Watch model creation
 docker compose logs -f api       # Watch embedding model download + API startup
 ```
 
-**First startup takes 5-10 minutes** because:
-- Ollama creates the `tamil-llama` model from the GGUF file
-- FastAPI downloads the `intfloat/multilingual-e5-large` embedding model (~2.3 GB)
+**First startup takes 3-5 minutes** because FastAPI downloads the `intfloat/multilingual-e5-large` embedding model (~2.3 GB).
 
 Subsequent startups take ~30-60 seconds.
 
-### 6.4 Verify All Containers Are Running
+### 5.4 Verify All Containers Are Running
 
 ```bash
 docker compose ps
@@ -319,16 +286,15 @@ Expected output:
 ```
 NAME             SERVICE    STATUS                  PORTS
 qdrant           qdrant     Up (healthy)            0.0.0.0:6333->6333/tcp
-ollama           ollama     Up (healthy)            0.0.0.0:11434->11434/tcp
 ponni-api        api        Up (healthy)            0.0.0.0:8000->8000/tcp
 ponni-frontend   frontend   Up                      0.0.0.0:3000->80/tcp
 ```
 
-All services should show `Up`. Qdrant, Ollama, and API should show `(healthy)`.
+All services should show `Up`. Qdrant and API should show `(healthy)`.
 
 ---
 
-## 7. Index Documents (First-Time Only)
+## 6. Index Documents (First-Time Only)
 
 If this is a fresh deployment (no existing Qdrant data), you need to index the Tamil documents:
 
@@ -350,9 +316,9 @@ If you attached a separate EBS volume with existing Qdrant data, or are using Do
 
 ---
 
-## 8. Verification
+## 7. Verification
 
-### 8.1 Health Checks
+### 7.1 Health Checks
 
 ```bash
 # API health (from the EC2 instance)
@@ -365,13 +331,18 @@ curl http://localhost:6333/healthz
 curl http://localhost:3000/health
 ```
 
-### 8.2 Test the API
+### 7.2 Test the API
 
 ```bash
-# Ask a question
+# Ask a question (vector search + Gemini LLM)
 curl -X POST http://localhost:8000/api/ask \
   -H "Content-Type: application/json" \
   -d '{"question": "பொன்னி இதழ் பற்றி கூறுக", "use_llm": true}'
+
+# Ask a CSV query (routed through Gemini with CSV-specific prompt)
+curl -X POST http://localhost:8000/api/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "எழுத்தாளர்கள் யார்?", "use_llm": true}'
 
 # Check cache stats (should show 0 hits after first query)
 curl http://localhost:8000/api/cache/stats
@@ -380,12 +351,9 @@ curl http://localhost:8000/api/cache/stats
 curl -X POST http://localhost:8000/api/ask \
   -H "Content-Type: application/json" \
   -d '{"question": "பொன்னி இதழ் பற்றி கூறுக", "use_llm": true}'
-
-# Cache stats should now show 1 hit
-curl http://localhost:8000/api/cache/stats
 ```
 
-### 8.3 Test Streaming
+### 7.3 Test Streaming
 
 ```bash
 curl -N -X POST http://localhost:8000/api/ask/stream \
@@ -395,7 +363,7 @@ curl -N -X POST http://localhost:8000/api/ask/stream \
 
 You should see SSE events streaming in (`event: token`, `event: sources`, `event: done`).
 
-### 8.4 Access from Browser
+### 7.4 Access from Browser
 
 Open in your browser: `http://<EC2-PUBLIC-IP>:3000`
 
@@ -403,22 +371,22 @@ All API calls from the frontend go through nginx on the same origin, so no CORS 
 
 ---
 
-## 9. Monitoring and Maintenance
+## 8. Monitoring and Maintenance
 
-### 9.1 Resource Monitoring
+### 8.1 Resource Monitoring
 
 ```bash
 # Live container resource usage
 docker stats
 
-# GPU utilization
+# GPU utilization (if GPU instance)
 nvidia-smi
 
 # Disk usage
 df -h
 ```
 
-### 9.2 Cache Management
+### 8.2 Cache Management
 
 ```bash
 # View cache hit rate
@@ -429,7 +397,7 @@ curl http://localhost:8000/api/cache/stats
 curl -X POST http://localhost:8000/api/cache/clear
 ```
 
-### 9.3 Updating the Application
+### 8.3 Updating the Application
 
 ```bash
 cd ~/PonniRAG
@@ -439,7 +407,7 @@ docker compose up --build -d
 
 Only containers with changed images will be rebuilt.
 
-### 9.4 Auto-Start on Reboot
+### 8.4 Auto-Start on Reboot
 
 ```bash
 # Docker is already configured to start on boot. Containers with
@@ -447,7 +415,7 @@ Only containers with changed images will be rebuilt.
 sudo systemctl enable docker
 ```
 
-### 9.5 Log Rotation
+### 8.5 Log Rotation
 
 Docker logs can grow large. Configure log rotation:
 
@@ -468,18 +436,18 @@ sudo systemctl restart docker
 
 ---
 
-## 10. Troubleshooting
+## 9. Troubleshooting
 
-### Ollama fails to create model
+### Gemini API errors
 
 ```bash
-docker compose logs ollama
+docker compose logs api | grep -i gemini
 ```
 
 Common causes:
-- GGUF file not found at the mounted path — verify `ls /home/ubuntu/tamil-llama-ollama/*.gguf`
-- Insufficient disk space — the model creation copies data to `/root/.ollama`
-- GPU not available — check `nvidia-smi` inside the container: `docker compose exec ollama nvidia-smi`
+- `GEMINI_API_KEY` not set or invalid — check `.env.docker`
+- API quota exceeded — check your [Google AI Studio](https://ai.google.dev/) usage dashboard
+- Network connectivity — ensure the EC2 instance has outbound HTTPS access
 
 ### API starts but queries fail
 
@@ -489,8 +457,8 @@ docker compose logs api
 
 Common causes:
 - Embedding model still downloading (first run) — wait for `"Loaded model intfloat/multilingual-e5-large"` in logs
-- Qdrant collection not indexed — run the indexer (Section 7)
-- Ollama not ready — check `curl http://localhost:11434/api/tags` shows `tamil-llama`
+- Qdrant collection not indexed — run the indexer (Section 6)
+- Gemini API key invalid — look for `"Gemini API validated successfully"` in startup logs
 
 ### Frontend shows blank page or API errors
 
