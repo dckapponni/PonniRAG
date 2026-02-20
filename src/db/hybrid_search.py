@@ -1979,7 +1979,7 @@ TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இத�
   * ponni timeline / ponni founding / ponni duration / ponni volumes
 - இந்த வகையான கேள்விகளுக்கு, ஆவண சூழலை (document context) விட பொன்னி பின்னணி தகவலுக்கு முன்னுரிமை கொடுக்கவும்
 - பொன்னி பின்னணி தகவலுடன் ஆவண சூழலையும் இணைத்து முழுமையான பதிலை எழுதுக
-
+- கேள்வி "செய்திகள்", "பற்றி", "விவரம்" போன்றதாக இருந்தால்,மொழி பகுப்பாய்வு அல்லது இலக்கண விளக்கம் எழுதக்கூடாது.ஆவணங்களில் உள்ள தகவலை மட்டும் சுருக்கமாக விளக்க வேண்டும்.
 ========================
 பொன்னி பின்னணி தகவல்:
 """ + PONNI_ABOUT_CONTEXT + """
@@ -2053,16 +2053,17 @@ CSV உள்ளடக்கம்:
         payload = {
             "model": OLLAMA_MODEL,
             "messages": [
-                {"role": "system", "content": TAMIL_ANSWER_SYSTEM_PROMPT},
+                {"role": "system", "content": MIL_ANSWER_SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
             ],
             "stream": False,
             "keep_alive": "24h",
             "options": {
-                "temperature": 0.1,
-                "repeat_penalty": 1.2,
+                "temperature": 0.0,
+                "repeat_penalty": 1.15,
+                "repeat_last_n": 256,
                 "num_predict": 4096,
-                "num_ctx":     8192,
+                "num_ctx":      16384,
                 "num_gpu":     999,
             },
         }
@@ -2127,8 +2128,10 @@ CSV உள்ளடக்கம்:
             "keep_alive": "24h",
             "options": {
                 "temperature": 0.0,
+                "repeat_penalty": 1.15,
+                "repeat_last_n": 256,
                 "num_predict": 4096,
-                "num_ctx":     8192,
+                "num_ctx":      16384,
                 "num_gpu": 999,
             },
         }
@@ -2193,10 +2196,11 @@ CSV உள்ளடக்கம்:
             "stream": True,
             "keep_alive": "24h",
             "options": {
-                "temperature": 0.1,
-                "repeat_penalty": 1.2,
+                "temperature": 0.0,
+                "repeat_penalty": 1.15,
+                "repeat_last_n": 256,
                 "num_predict": 4096,
-                "num_ctx":     8192,
+                "num_ctx":      16384,
                 "num_gpu": 999,
             }
         }
@@ -2428,7 +2432,7 @@ Error Type: {health_status['error']}
 
         context_parts = []
         for idx, doc in enumerate(merged_docs[:3], 1):
-            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:1200]}")
+            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:800]}")
 
         # CSV semantic context
         csv_results = search_csv_semantic(question, top_k=3)
@@ -2570,7 +2574,7 @@ Error Type: {health_status['error']}
 
         context_parts = []
         for idx, doc in enumerate(merged_docs[:3], 1):
-            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:1200]}")
+            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:800]}")
 
         # CSV semantic context
         csv_results = await asyncio.to_thread(search_csv_semantic, question, 3)
@@ -2677,7 +2681,7 @@ def ask_question_stream(question: str):
 
         context_parts = []
         for idx, doc in enumerate(merged_docs[:3], 1):
-            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:1200]}")
+            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:800]}")
 
         csv_results = search_csv_semantic(question, top_k=3)
         csv_context = ""
@@ -2739,7 +2743,7 @@ def preload_ollama_model():
             "keep_alive": "24h",
             "options": {
                 "num_predict": 4096,
-                "num_ctx": 8192,
+                "num_ctx":  16384,
                 "num_gpu": 999,
             }
         }
