@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import os
@@ -80,13 +81,23 @@ def dense_embed_query(text: str) -> List[float]:
     return dense_model.encode(f"query: {text}", normalize_embeddings=True).tolist()
 
 
+def _deterministic_token_hash(token: str) -> int:
+    """Deterministic token hash using MD5, consistent across processes.
+
+    Python's built-in hash() is randomized per process (PYTHONHASHSEED),
+    which causes sparse vectors at query time to mismatch those created
+    at indexing time.  MD5 is deterministic and fast for this use case.
+    """
+    return int(hashlib.md5(token.encode("utf-8")).hexdigest(), 16) % (2**31)
+
+
 def sparse_embed(text: str) -> models.SparseVector:
     """
     Generate BM25-style sparse embedding for text.
-    
+
     Args:
         text (str): Text to embed
-        
+
     Returns:
         models.SparseVector: Sparse vector with token indices and frequencies
     """
@@ -97,7 +108,7 @@ def sparse_embed(text: str) -> models.SparseVector:
     values: List[float] = []
 
     for token, freq in counts.items():
-        idx = abs(hash(token)) % (2**31)
+        idx = _deterministic_token_hash(token)
         indices.append(idx)
         values.append(float(freq))
 
