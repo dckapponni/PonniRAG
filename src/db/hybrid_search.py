@@ -1990,8 +1990,15 @@ TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இத�
 6. பதில் தொடங்கும் போதும் முடியும் போதும் எந்தச் சொலும் துண்டிக்கப்பட்டதாக இருக்கக் கூடாது
 7. பதிலை எழுதி முடிக்கும் போது, கட்டாயமாக ஒரு முடிவு வாக்கியத்துடன் நிறுத்த வேண்டும். பதில் நடுவில் திடீரென நிற்கக் கூடாது
 
+நேரடி கேள்விகளுக்கான விதி (மிக முக்கியம்):
+- கேள்வி "யார்", "என்ன", "எப்போது", "எங்கே", "ஏன்", "எப்படி", "எவ்வளவு", "எத்தனை" போன்ற நேரடி தகவல் கேள்வியாக இருந்தால்:
+  * முதல் வாக்கியத்திலேயே கேள்விக்கான நேரடி பதிலை தெளிவாகக் கூறுக (எ.கா. "இந்தக் கட்டுரையை எழுதியவர் ...")
+  * கேள்வி கேட்பதை மறக்காமல், அதற்கான குறிப்பிட்ட தகவலை சூழலிலிருந்து கண்டுபிடித்து பதிலளிக்கவும்
+  * பொதுவான சுருக்கம் எழுதாதீர்கள் — கேள்வியில் கேட்கப்பட்ட குறிப்பிட்ட தகவலை மட்டும் முன்னிலைப்படுத்துக
+  * பதிலை நேரடியாக தொடங்குக — அறிமுகம் அல்லது பின்னணி விளக்கத்துடன் தொடங்க வேண்டாம்
+
 விவரிப்பு வகை கேள்விகளுக்கான விதி:
-- பயனர் விவரிப்பு வகையான கேள்வி கேட்டால் (எ.கா. "விளக்குக", "விவரி", "என்ன?", "எப்படி?"), அனைத்து ஆவணங்களின் உள்ளடக்கத்தையும் ஒருங்கிணைத்து, சுருக்கமாக விவரித்து, ஆதாரங்களுடன் பதிலளிக்கவும்
+- பயனர் விவரிப்பு வகையான கேள்வி கேட்டால் (எ.கா. "விளக்குக", "விவரி", "சுருக்கமாக கூறுக"), அனைத்து ஆவணங்களின் உள்ளடக்கத்தையும் ஒருங்கிணைத்து, சுருக்கமாக விவரித்து, ஆதாரங்களுடன் பதிலளிக்கவும்
 - ஒவ்வொரு ஆவணத்தின் முக்கிய கருத்துகளையும் தெளிவாக சுருக்கி, முழுமையான பதிலை எழுதுக
 
 சுருக்கம் / தலைப்பு சார்ந்த கேள்விகளுக்கான விதி (மிக முக்கியம்):
@@ -2085,18 +2092,40 @@ def _get_gemini_client():
     return _gemini_client
 
 
-def _gemini_generation_config(system_instruction: str = None):
+def _gemini_generation_config(system_instruction: str = None, disable_thinking: bool = False):
     """Return Gemini generation config with the given system instruction."""
+    thinking_config = None
+    if disable_thinking:
+        thinking_config = genai_types.ThinkingConfig(thinking_budget=0)
     return genai_types.GenerateContentConfig(
         system_instruction=system_instruction or TAMIL_ANSWER_SYSTEM_PROMPT,
         temperature=0.0,
         max_output_tokens=2048,
         top_p=0.9,
+        thinking_config=thinking_config,
     )
 
 
+_WH_PATTERNS = [
+    'யார்', 'என்ன', 'எப்போது', 'எங்கே', 'எது', 'ஏன்', 'எப்படி',
+    'எவ்வளவு', 'எத்தனை',
+    'who', 'what', 'when', 'where', 'which', 'why', 'how',
+]
+
+
+def _is_wh_question(question: str) -> bool:
+    """Return True if the question is a wh/how type needing a direct answer."""
+    q = question.lower()
+    return any(p in q for p in _WH_PATTERNS)
+
+
 def _build_user_content(question: str, context: str, csv_context: str) -> str:
-    """Build the user prompt for vector-search queries. Omits empty sections."""
+    """Build the user prompt for vector-search queries. Omits empty sections.
+
+    Repeats the question after the context block so the model attends to the
+    question from both sides of the context (improves answer relevance,
+    inspired by arxiv 2512.14982).
+    """
     parts = [f"கேள்வி:\n{question}\n"]
 
     if csv_context and csv_context.strip():
@@ -2105,7 +2134,18 @@ def _build_user_content(question: str, context: str, csv_context: str) -> str:
     if context and context.strip():
         parts.append(f"========================\nஆவண சூழல்:\n{context}\n========================\n")
 
-    parts.append("விரிவான பதில் (200-500 சொற்கள்):")
+    # Repeat the question after context so it's fresh in the model's attention
+    parts.append(f"கேள்வி: {question}")
+
+    if _is_wh_question(question):
+        parts.append(
+            "மேலே உள்ள சூழலைப் பயன்படுத்தி, கேள்விக்கான நேரடியான பதிலை "
+            "முதல் வாக்கியத்தில் தெளிவாகக் கூறுக. பின்னர் ஆதாரங்களுடன் "
+            "விளக்கவும் (100-300 சொற்கள்):"
+        )
+    else:
+        parts.append("விரிவான பதில் (200-500 சொற்கள்):")
+
     return "\n".join(parts)
 
 
@@ -2132,6 +2172,7 @@ def _build_csv_user_content(question: str, csv_data: str) -> str:
 def generate_llm_answer(
     question: str, context: str, csv_context: str, max_words: int = 500,
     user_content: str = None, system_prompt: str = None,
+    disable_thinking: bool = False,
 ) -> str:
     """
     Generate LLM answer using Gemini API (synchronous).
@@ -2145,7 +2186,7 @@ def generate_llm_answer(
         response = client.models.generate_content(
             model=GEMINI_MODEL,
             contents=user_content,
-            config=_gemini_generation_config(system_prompt),
+            config=_gemini_generation_config(system_prompt, disable_thinking=disable_thinking),
         )
 
         answer = (response.text or "").strip()
@@ -2166,13 +2207,14 @@ def generate_llm_answer(
         return answer
 
     except Exception as e:
-        logger.error(f"Gemini generation failed: {e}")
+        logger.error(f"Gemini generation failed: {e}", exc_info=True)
         return ""
 
 
 async def generate_llm_answer_async(
     question: str, context: str, csv_context: str, max_words: int = 500,
     user_content: str = None, system_prompt: str = None,
+    disable_thinking: bool = False,
 ) -> str:
     """
     Async version of generate_llm_answer using Gemini API.
@@ -2186,7 +2228,7 @@ async def generate_llm_answer_async(
         response = await client.aio.models.generate_content(
             model=GEMINI_MODEL,
             contents=user_content,
-            config=_gemini_generation_config(system_prompt),
+            config=_gemini_generation_config(system_prompt, disable_thinking=disable_thinking),
         )
 
         answer = (response.text or "").strip()
@@ -2206,13 +2248,14 @@ async def generate_llm_answer_async(
         return answer
 
     except Exception as e:
-        logger.error(f"Gemini async generation failed: {e}")
+        logger.error(f"Gemini async generation failed: {e}", exc_info=True)
         return ""
 
 
 def generate_llm_answer_stream(
     question: str, context: str, csv_context: str,
     user_content: str = None, system_prompt: str = None,
+    disable_thinking: bool = False,
 ):
     """
     Generate LLM answer using Gemini API with streaming.
@@ -2227,14 +2270,14 @@ def generate_llm_answer_stream(
         for chunk in client.models.generate_content_stream(
             model=GEMINI_MODEL,
             contents=user_content,
-            config=_gemini_generation_config(system_prompt),
+            config=_gemini_generation_config(system_prompt, disable_thinking=disable_thinking),
         ):
             token = chunk.text
             if token:
                 yield token
 
     except Exception as e:
-        logger.error(f"Gemini streaming generation failed: {e}")
+        logger.error(f"Gemini streaming generation failed: {e}", exc_info=True)
         return
 
 
@@ -2484,6 +2527,7 @@ Error Type: {health_status['error']}
                 llm_summary = generate_llm_answer(
                     question, context="", csv_context="",
                     user_content=csv_content, system_prompt=_CSV_SYSTEM_PROMPT,
+                    disable_thinking=True,
                 )
                 logger.info(f"[TIMING] gemini_llm (csv): {time.time() - t0:.2f}s")
                 logger.info(f"CSV LLM gist length: {len(llm_summary or '')} chars")
@@ -2642,6 +2686,7 @@ Error Type: {health_status['error']}
                 llm_summary = await generate_llm_answer_async(
                     question, context="", csv_context="",
                     user_content=csv_content, system_prompt=_CSV_SYSTEM_PROMPT,
+                    disable_thinking=True,
                 )
                 logger.info(f"[TIMING] async gemini_llm (csv): {time.time() - t0:.2f}s")
                 logger.info(f"CSV LLM gist length: {len(llm_summary or '')} chars")
@@ -2780,6 +2825,7 @@ def ask_question_stream(question: str):
                 for token in generate_llm_answer_stream(
                     question, context="", csv_context="",
                     user_content=csv_content, system_prompt=_CSV_SYSTEM_PROMPT,
+                    disable_thinking=True,
                 ):
                     accumulated.append(token)
                     yield {"type": "token", "content": token}
@@ -2787,10 +2833,19 @@ def ask_question_stream(question: str):
                 llm_summary = "".join(accumulated)
                 logger.info(f"CSV streaming gist length: {len(llm_summary)} chars")
                 if len(llm_summary) < 20:
-                    # Gist too short/empty — emit fallback header
-                    fallback = "கட்டுரை தரவுத்தளத்திலிருந்து பெறப்பட்ட தகவல்கள்:"
-                    yield {"type": "token", "content": fallback}
-                    llm_summary = ""
+                    # Streaming failed — try sync fallback
+                    logger.warning("CSV streaming gist too short, trying sync fallback")
+                    llm_summary = generate_llm_answer(
+                        question, context="", csv_context="",
+                        user_content=csv_content, system_prompt=_CSV_SYSTEM_PROMPT,
+                        disable_thinking=True,
+                    )
+                    if llm_summary and len(llm_summary) >= 20:
+                        yield {"type": "token", "content": llm_summary}
+                    else:
+                        fallback = "கட்டுரை தரவுத்தளத்திலிருந்து பெறப்பட்ட தகவல்கள்:"
+                        yield {"type": "token", "content": fallback}
+                        llm_summary = ""
 
                 # Append raw CSV data separator + data after the streamed summary
                 csv_suffix = _csv_data_suffix(csv_response)
