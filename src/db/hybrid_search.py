@@ -2092,7 +2092,11 @@ def _get_gemini_client():
     return _gemini_client
 
 
-def _gemini_generation_config(system_instruction: str = None, disable_thinking: bool = False):
+def _gemini_generation_config(
+    system_instruction: str = None,
+    disable_thinking: bool = False,
+    max_output_tokens: int = 4096,
+):
     """Return Gemini generation config with the given system instruction."""
     thinking_config = None
     if disable_thinking:
@@ -2100,7 +2104,7 @@ def _gemini_generation_config(system_instruction: str = None, disable_thinking: 
     return genai_types.GenerateContentConfig(
         system_instruction=system_instruction or TAMIL_ANSWER_SYSTEM_PROMPT,
         temperature=0.0,
-        max_output_tokens=2048,
+        max_output_tokens=max_output_tokens,
         top_p=0.9,
         thinking_config=thinking_config,
     )
@@ -2119,7 +2123,9 @@ def _is_wh_question(question: str) -> bool:
     return any(p in q for p in _WH_PATTERNS)
 
 
-def _build_user_content(question: str, context: str, csv_context: str) -> str:
+def _build_user_content(
+    question: str, context: str, csv_context: str, context_doc_count: int = 0,
+) -> str:
     """Build the user prompt for vector-search queries. Omits empty sections.
 
     Repeats the question after the context block so the model attends to the
@@ -2138,14 +2144,22 @@ def _build_user_content(question: str, context: str, csv_context: str) -> str:
     parts.append(f"கேள்வி: {question}")
 
     if _is_wh_question(question):
-        parts.append(
+        closing = (
             "மேலே உள்ள சூழலைப் பயன்படுத்தி, கேள்விக்கான நேரடியான பதிலை "
             "முதல் வாக்கியத்தில் தெளிவாகக் கூறுக. பின்னர் ஆதாரங்களுடன் "
             "விளக்கவும் (100-300 சொற்கள்):"
         )
     else:
-        parts.append("விரிவான பதில் (200-500 சொற்கள்):")
+        closing = "விரிவான பதில் (200-500 சொற்கள்):"
 
+    if context_doc_count > 1:
+        closing = (
+            f"மேலே {context_doc_count} ஆவணங்கள் கொடுக்கப்பட்டுள்ளன. "
+            f"அனைத்து ஆவணங்களின் தகவல்களையும் ஒருங்கிணைத்து பதிலளிக்கவும். "
+            f"ஒரே ஆவணத்தை மட்டும் சுருக்காதீர்கள்.\n{closing}"
+        )
+
+    parts.append(closing)
     return "\n".join(parts)
 
 
@@ -2172,7 +2186,7 @@ def _build_csv_user_content(question: str, csv_data: str) -> str:
 def generate_llm_answer(
     question: str, context: str, csv_context: str, max_words: int = 500,
     user_content: str = None, system_prompt: str = None,
-    disable_thinking: bool = False,
+    disable_thinking: bool = False, context_doc_count: int = 0,
 ) -> str:
     """
     Generate LLM answer using Gemini API (synchronous).
@@ -2181,7 +2195,10 @@ def generate_llm_answer(
     try:
         client = _get_gemini_client()
         if user_content is None:
-            user_content = _build_user_content(question, context, csv_context)
+            user_content = _build_user_content(
+                question, context, csv_context,
+                context_doc_count=context_doc_count,
+            )
 
         response = client.models.generate_content(
             model=GEMINI_MODEL,
@@ -2214,7 +2231,7 @@ def generate_llm_answer(
 async def generate_llm_answer_async(
     question: str, context: str, csv_context: str, max_words: int = 500,
     user_content: str = None, system_prompt: str = None,
-    disable_thinking: bool = False,
+    disable_thinking: bool = False, context_doc_count: int = 0,
 ) -> str:
     """
     Async version of generate_llm_answer using Gemini API.
@@ -2223,7 +2240,10 @@ async def generate_llm_answer_async(
     try:
         client = _get_gemini_client()
         if user_content is None:
-            user_content = _build_user_content(question, context, csv_context)
+            user_content = _build_user_content(
+                question, context, csv_context,
+                context_doc_count=context_doc_count,
+            )
 
         response = await client.aio.models.generate_content(
             model=GEMINI_MODEL,
@@ -2255,7 +2275,7 @@ async def generate_llm_answer_async(
 def generate_llm_answer_stream(
     question: str, context: str, csv_context: str,
     user_content: str = None, system_prompt: str = None,
-    disable_thinking: bool = False,
+    disable_thinking: bool = False, context_doc_count: int = 0,
 ):
     """
     Generate LLM answer using Gemini API with streaming.
@@ -2265,7 +2285,10 @@ def generate_llm_answer_stream(
     try:
         client = _get_gemini_client()
         if user_content is None:
-            user_content = _build_user_content(question, context, csv_context)
+            user_content = _build_user_content(
+                question, context, csv_context,
+                context_doc_count=context_doc_count,
+            )
 
         for chunk in client.models.generate_content_stream(
             model=GEMINI_MODEL,
@@ -2375,7 +2398,7 @@ def build_context_from_docs(
     relevant_docs: List[Dict],
     max_context_chars: int = 15000,
     max_context_docs: int = 15,
-) -> str:
+) -> Tuple[str, int]:
     """
     Build LLM context using excerpts from the top relevant documents.
 
@@ -2383,25 +2406,31 @@ def build_context_from_docs(
     LLM context is capped at max_context_docs (default 15) to ensure each
     document gets enough characters (~1000 each) for meaningful analysis.
     Documents are already sorted by score, so the top N are the most relevant.
+
+    Returns:
+        (context_string, doc_count) — the formatted context and the number of
+        documents included, so callers can embed the count in the user prompt.
     """
     if not relevant_docs:
-        return ""
+        return "", 0
 
     # Cap docs sent to LLM — evidence can be larger, context must be focused
     context_docs = relevant_docs[:max_context_docs]
     n = len(context_docs)
     per_doc_limit = max(500, max_context_chars // n)
 
-    context_parts = []
+    context_parts = [
+        f"[{n} ஆவணங்கள் — ஒவ்வொன்றின் தகவலையும் பயன்படுத்தவும்]\n"
+    ]
     for idx, doc in enumerate(context_docs, 1):
         excerpt = doc["content"][:per_doc_limit]
         title = doc.get("heading", "")
-        header = f"ஆவணம் {idx}"
+        header = f"ஆவணம் {idx}/{n}"
         if title:
             header += f" — {title}"
         context_parts.append(f"{header}:\n{excerpt}")
 
-    return "\n\n".join(context_parts)
+    return "\n\n".join(context_parts), n
 
 
 def format_sources(merged_docs: List[Dict]) -> List[Dict]:
@@ -2585,7 +2614,7 @@ Error Type: {health_status['error']}
         logger.info(f"Selected {len(relevant_docs)} relevant documents for context")
 
         # Build context with equal excerpts from all relevant docs
-        context = build_context_from_docs(relevant_docs)
+        context, context_doc_count = build_context_from_docs(relevant_docs)
 
         # CSV semantic context
         csv_results = search_csv_semantic(question, top_k=3)
@@ -2601,7 +2630,10 @@ Error Type: {health_status['error']}
         answer = ""
         if use_llm:
             t0 = time.time()
-            answer = generate_llm_answer(question, context, csv_context)
+            answer = generate_llm_answer(
+                question, context, csv_context,
+                context_doc_count=context_doc_count,
+            )
             logger.info(f"[TIMING] gemini_llm: {time.time() - t0:.2f}s")
 
         if not answer or len(answer) < 150:
@@ -2745,7 +2777,7 @@ Error Type: {health_status['error']}
         logger.info(f"Selected {len(relevant_docs)} relevant documents for context")
 
         # Build context with equal excerpts from all relevant docs
-        context = build_context_from_docs(relevant_docs)
+        context, context_doc_count = build_context_from_docs(relevant_docs)
 
         # CSV semantic context
         csv_results = await asyncio.to_thread(search_csv_semantic, question, 3)
@@ -2761,7 +2793,10 @@ Error Type: {health_status['error']}
         answer = ""
         if use_llm:
             t0 = time.time()
-            answer = await generate_llm_answer_async(question, context, csv_context)
+            answer = await generate_llm_answer_async(
+                question, context, csv_context,
+                context_doc_count=context_doc_count,
+            )
             logger.info(f"[TIMING] async gemini_llm: {time.time() - t0:.2f}s")
 
         if not answer or len(answer) < 100:
@@ -2884,7 +2919,7 @@ def ask_question_stream(question: str):
         logger.info(f"Selected {len(relevant_docs)} relevant documents for context")
 
         # Build context with equal excerpts from all relevant docs
-        context = build_context_from_docs(relevant_docs)
+        context, context_doc_count = build_context_from_docs(relevant_docs)
 
         csv_results = search_csv_semantic(question, top_k=3)
         csv_context = ""
@@ -2894,7 +2929,10 @@ def ask_question_stream(question: str):
         # Stream LLM tokens and accumulate for caching
         token_count = 0
         accumulated_tokens = []
-        for token in generate_llm_answer_stream(question, context, csv_context):
+        for token in generate_llm_answer_stream(
+            question, context, csv_context,
+            context_doc_count=context_doc_count,
+        ):
             token_count += 1
             accumulated_tokens.append(token)
             yield {"type": "token", "content": token}
