@@ -1761,6 +1761,23 @@ def _csv_source(csv_data: str) -> List[Dict]:
     }]
 
 
+def _csv_data_suffix(csv_data: str) -> str:
+    """Format the raw CSV data as a suffix to append after the LLM summary."""
+    return f"\n\n---\n\n**தரவுத்தள தகவல்:**\n\n{csv_data}"
+
+
+def _combine_csv_answer(llm_summary: str, csv_data: str) -> str:
+    """Combine LLM gist with raw CSV data appended below.
+
+    If the LLM summary is empty (failed), returns just the CSV data
+    with a header.
+    """
+    suffix = _csv_data_suffix(csv_data)
+    if llm_summary and llm_summary.strip():
+        return llm_summary.strip() + suffix
+    return csv_data
+
+
 
 
 
@@ -1959,14 +1976,14 @@ TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இத�
 7. பதிலை எழுதி முடிக்கும் போது, கட்டாயமாக ஒரு முடிவு வாக்கியத்துடன் நிறுத்த வேண்டும். பதில் நடுவில் திடீரென நிற்கக் கூடாது
 
 விவரிப்பு வகை கேள்விகளுக்கான விதி:
-- பயனர் விவரிப்பு வகையான கேள்வி கேட்டால் (எ.கா. "விளக்குக", "விவரி", "என்ன?", "எப்படி?"), மிக அதிக தொடர்புடைய முதல் ஆவணத்தின் உள்ளடக்கத்தை சுருக்கமாக விவரித்து, ஆதாரங்களுடன் பதிலளிக்கவும்
-- முதல் ஆவணத்தின் முக்கிய கருத்துகளை தெளிவாக சுருக்கி, அதன் பின்னர் மற்ற ஆவணங்களிலிருந்து கூடுதல் தகவல்களை சேர்க்கவும்
+- பயனர் விவரிப்பு வகையான கேள்வி கேட்டால் (எ.கா. "விளக்குக", "விவரி", "என்ன?", "எப்படி?"), அனைத்து ஆவணங்களின் உள்ளடக்கத்தையும் ஒருங்கிணைத்து, சுருக்கமாக விவரித்து, ஆதாரங்களுடன் பதிலளிக்கவும்
+- ஒவ்வொரு ஆவணத்தின் முக்கிய கருத்துகளையும் தெளிவாக சுருக்கி, முழுமையான பதிலை எழுதுக
 
 சுருக்கம் / தலைப்பு சார்ந்த கேள்விகளுக்கான விதி (மிக முக்கியம்):
-- கேள்வி ஒரு குறிப்பிட்ட தலைப்பு, கட்டுரை, அல்லது கருத்தை சுருக்கமாகக் கூற கேட்டால், ஆவண சூழலில் கொடுக்கப்பட்ட முழு உள்ளடக்கத்தையும் பகுப்பாய்வு செய்து சுருக்கமாக எழுதுக
+- கேள்வி ஒரு குறிப்பிட்ட தலைப்பு, கட்டுரை, அல்லது கருத்தை சுருக்கமாகக் கூற கேட்டால், ஆவண சூழலில் கொடுக்கப்பட்ட அனைத்து ஆவணங்களின் உள்ளடக்கத்தையும் பகுப்பாய்வு செய்து சுருக்கமாக எழுதுக
 - சூழலில் உள்ள அனைத்து முக்கிய கருத்துகள், வாதங்கள், மற்றும் தகவல்களை உள்ளடக்கிய முழுமையான சுருக்கத்தை வழங்குக
 - "போதுமான தகவல் இல்லை" என்று கூறாதீர்கள் — சூழலில் உள்ள தகவல்களைக் கொண்டு எவ்வளவு முடியுமோ அவ்வளவு விரிவாக பதிலளிக்கவும்
-- முதல் ஆவணத்தில் அதிக உள்ளடக்கம் கொடுக்கப்பட்டிருக்கும், அதை முழுமையாக பயன்படுத்துக
+- அனைத்து ஆவணங்களிலிருந்தும் சம அளவில் தகவல்கள் கொடுக்கப்பட்டிருக்கும், ஒவ்வொரு ஆவணத்தின் முக்கிய கருத்துகளையும் பயன்படுத்துக
 
 பொன்னி இதழ் பற்றிய கேள்விகளுக்கான விதி (மிக முக்கியம்):
 - கேள்வி பொன்னி இதழைப் பற்றியதாக இருந்தால், கீழே கொடுக்கப்பட்ட "பொன்னி பின்னணி தகவல்" பகுதியை **முதன்மையாக** பயன்படுத்தி பதிலளிக்கவும்
@@ -2079,7 +2096,12 @@ def _build_user_content(question: str, context: str, csv_context: str) -> str:
 
 
 def _build_csv_user_content(question: str, csv_data: str) -> str:
-    """Build a focused user prompt for CSV-only queries."""
+    """Build a focused user prompt for CSV-only queries.
+
+    Instructs the LLM to produce a brief gist/summary of the CSV data
+    without repeating the raw data verbatim.  The raw data is appended
+    to the answer separately after LLM generation.
+    """
     return f"""கேள்வி:
 {question}
 
@@ -2088,7 +2110,8 @@ def _build_csv_user_content(question: str, csv_data: str) -> str:
 {csv_data}
 ========================
 
-மேலே கொடுக்கப்பட்ட தரவுத்தள தகவலின் அடிப்படையில் பதில் (100-300 சொற்கள்):
+மேலே கொடுக்கப்பட்ட தரவுத்தள தகவலை சுருக்கமாக விளக்கவும் (50-150 சொற்கள்).
+முக்கியம்: தரவை அப்படியே திரும்ப எழுதாதீர்கள். எண்ணிக்கைகள், முக்கிய பெயர்கள், மற்றும் பொதுவான போக்குகளை மட்டும் சுருக்கமாக குறிப்பிடவும்.
 """
 
 
@@ -2224,18 +2247,32 @@ def generate_extractive_answer(facts: List[Dict], question: str) -> str:
     return answer
 
 
-def format_sources(merged_docs: List[Dict]) -> List[Dict]:
+def _select_relevant_docs(merged_docs: List[Dict]) -> List[Dict]:
     """
-    Format source documents for display.
-    Returns at most TOP_SOURCES_LIMIT (3) unique sources, highest-scored first.
-    """
-    TOP_SOURCES_LIMIT = 3
+    Select relevant documents from merged results using dynamic score filtering.
 
-    sources = []
+    A document is relevant if its score is at least 50% of the top document's
+    score.  Caps at MAX_SOURCES (10) to avoid overload, and always returns at
+    least MIN_SOURCES (1) if any docs exist.  De-duplicates by content prefix.
+    """
+    MIN_SOURCES = 1
+    MAX_SOURCES = 10
+    RELEVANCE_RATIO = 0.5
+
+    if not merged_docs:
+        return []
+
+    top_score = merged_docs[0]["score"]
+    score_cutoff = top_score * RELEVANCE_RATIO
+
+    selected = []
     seen_hashes = set()
 
     for doc in merged_docs:
-        if len(sources) >= TOP_SOURCES_LIMIT:
+        if len(selected) >= MAX_SOURCES:
+            break
+
+        if len(selected) >= MIN_SOURCES and doc["score"] < score_cutoff:
             break
 
         content_hash = hash(doc["content"][:200])
@@ -2243,6 +2280,48 @@ def format_sources(merged_docs: List[Dict]) -> List[Dict]:
             continue
         seen_hashes.add(content_hash)
 
+        selected.append(doc)
+
+    return selected
+
+
+def build_context_from_docs(relevant_docs: List[Dict], max_context_chars: int = 15000) -> str:
+    """
+    Build LLM context using excerpts from ALL relevant documents.
+
+    Distributes the character budget equally across all relevant documents
+    so the LLM sees breadth from every evidence source, not just depth
+    from the first one.
+    """
+    if not relevant_docs:
+        return ""
+
+    n = len(relevant_docs)
+    per_doc_limit = max(500, max_context_chars // n)
+
+    context_parts = []
+    for idx, doc in enumerate(relevant_docs, 1):
+        excerpt = doc["content"][:per_doc_limit]
+        title = doc.get("heading", "")
+        header = f"ஆவணம் {idx}"
+        if title:
+            header += f" — {title}"
+        context_parts.append(f"{header}:\n{excerpt}")
+
+    return "\n\n".join(context_parts)
+
+
+def format_sources(merged_docs: List[Dict]) -> List[Dict]:
+    """
+    Format source documents for display.
+
+    Uses _select_relevant_docs() to dynamically determine which documents
+    are relevant enough to show as evidence.
+    """
+    relevant = _select_relevant_docs(merged_docs)
+
+    sources = []
+    for doc in relevant:
         sources.append({
             "volume":        doc["volume"],
             "heading":       doc["heading"],
@@ -2352,26 +2431,27 @@ Error Type: {health_status['error']}
                 logger.info("CSV query matched - passing to LLM for summarization")
                 t0 = time.time()
                 csv_content = _build_csv_user_content(question, csv_response)
-                llm_answer = generate_llm_answer(
+                llm_summary = generate_llm_answer(
                     question, context="", csv_context="",
                     user_content=csv_content, system_prompt=_CSV_SYSTEM_PROMPT,
                 )
                 logger.info(f"[TIMING] gemini_llm (csv): {time.time() - t0:.2f}s")
 
-                if not llm_answer or len(llm_answer) < 50:
-                    llm_answer = csv_response  # fallback to raw CSV data
+                if not llm_summary or len(llm_summary) < 50:
+                    llm_summary = ""
 
-                sources = _csv_source(csv_response)
+                # Combine: LLM gist + raw CSV data appended
+                combined_answer = _combine_csv_answer(llm_summary, csv_response)
+
                 result = {
-                    "answer": llm_answer,
-                    "sources": sources,
+                    "answer": combined_answer,
+                    "sources": [],
                     "query_type": "author_csv",
-                    "csv_evidence": csv_response,
                 }
                 _response_cache.put(question, result)
 
                 if return_formatted:
-                    return format_answer_output(llm_answer, sources)
+                    return format_answer_output(combined_answer, [])
                 return result
         except Exception as e:
             logger.error(f"CSV query error: {e}")
@@ -2405,11 +2485,12 @@ Error Type: {health_status['error']}
 
         logger.info(f"Merged into {len(merged_docs)} documents")
 
-        context_parts = []
-        for idx, doc in enumerate(merged_docs[:3], 1):
-            # Top document gets full content (up to 5000 chars) for thorough summarization
-            char_limit = 5000 if idx == 1 else 2000
-            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:char_limit]}")
+        # Select relevant docs (same set used for context + evidence)
+        relevant_docs = _select_relevant_docs(merged_docs)
+        logger.info(f"Selected {len(relevant_docs)} relevant documents for context")
+
+        # Build context with equal excerpts from all relevant docs
+        context = build_context_from_docs(relevant_docs)
 
         # CSV semantic context
         csv_results = search_csv_semantic(question, top_k=3)
@@ -2421,10 +2502,6 @@ Error Type: {health_status['error']}
         csv_context = ""
         if csv_results:
             csv_context = "\n".join([f"{idx}. {row}" for idx, row in enumerate(csv_results, 1)])
-        else:
-            csv_context = ""
-
-        context = "\n\n".join(context_parts)
 
         answer = ""
         if use_llm:
@@ -2511,26 +2588,27 @@ Error Type: {health_status['error']}
                 logger.info("CSV query matched - passing to LLM for summarization")
                 t0 = time.time()
                 csv_content = _build_csv_user_content(question, csv_response)
-                llm_answer = await generate_llm_answer_async(
+                llm_summary = await generate_llm_answer_async(
                     question, context="", csv_context="",
                     user_content=csv_content, system_prompt=_CSV_SYSTEM_PROMPT,
                 )
                 logger.info(f"[TIMING] async gemini_llm (csv): {time.time() - t0:.2f}s")
 
-                if not llm_answer or len(llm_answer) < 50:
-                    llm_answer = csv_response  # fallback to raw CSV data
+                if not llm_summary or len(llm_summary) < 50:
+                    llm_summary = ""
 
-                sources = _csv_source(csv_response)
+                # Combine: LLM gist + raw CSV data appended
+                combined_answer = _combine_csv_answer(llm_summary, csv_response)
+
                 result = {
-                    "answer": llm_answer,
-                    "sources": sources,
+                    "answer": combined_answer,
+                    "sources": [],
                     "query_type": "author_csv",
-                    "csv_evidence": csv_response,
                 }
                 _response_cache.put(question, result)
 
                 if return_formatted:
-                    return format_answer_output(llm_answer, sources)
+                    return format_answer_output(combined_answer, [])
                 return result
         except Exception as e:
             logger.error(f"CSV query error: {e}")
@@ -2565,10 +2643,12 @@ Error Type: {health_status['error']}
                 return format_answer_output(answer, [])
             return {"answer": answer, "sources": []}
 
-        context_parts = []
-        for idx, doc in enumerate(merged_docs[:3], 1):
-            char_limit = 5000 if idx == 1 else 2000
-            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:char_limit]}")
+        # Select relevant docs (same set used for context + evidence)
+        relevant_docs = _select_relevant_docs(merged_docs)
+        logger.info(f"Selected {len(relevant_docs)} relevant documents for context")
+
+        # Build context with equal excerpts from all relevant docs
+        context = build_context_from_docs(relevant_docs)
 
         # CSV semantic context
         csv_results = await asyncio.to_thread(search_csv_semantic, question, 3)
@@ -2580,10 +2660,6 @@ Error Type: {health_status['error']}
         csv_context = ""
         if csv_results:
             csv_context = "\n".join([f"{idx}. {row}" for idx, row in enumerate(csv_results, 1)])
-        else:
-            csv_context = ""
-
-        context = "\n\n".join(context_parts)
 
         answer = ""
         if use_llm:
@@ -2656,14 +2732,17 @@ def ask_question_stream(question: str):
                     accumulated.append(token)
                     yield {"type": "token", "content": token}
 
-                full_answer = "".join(accumulated)
-                if len(full_answer) < 50:
-                    yield {"type": "token", "content": csv_response}
-                    full_answer = csv_response
+                llm_summary = "".join(accumulated)
+                if len(llm_summary) < 50:
+                    llm_summary = ""
 
-                sources = _csv_source(csv_response)
-                _response_cache.put(question, {"answer": full_answer, "sources": sources})
-                yield {"type": "sources", "sources": sources}
+                # Append raw CSV data separator + data after the streamed summary
+                csv_suffix = _csv_data_suffix(csv_response)
+                yield {"type": "token", "content": csv_suffix}
+
+                combined_answer = _combine_csv_answer(llm_summary, csv_response)
+                _response_cache.put(question, {"answer": combined_answer, "sources": []})
+                yield {"type": "sources", "sources": []}
                 return
         except Exception as e:
             logger.error(f"CSV query error: {e}")
@@ -2689,19 +2768,17 @@ def ask_question_stream(question: str):
 
         logger.info(f"Merged into {len(merged_docs)} documents")
 
-        context_parts = []
-        for idx, doc in enumerate(merged_docs[:3], 1):
-            char_limit = 5000 if idx == 1 else 2000
-            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:char_limit]}")
+        # Select relevant docs (same set used for context + evidence)
+        relevant_docs = _select_relevant_docs(merged_docs)
+        logger.info(f"Selected {len(relevant_docs)} relevant documents for context")
+
+        # Build context with equal excerpts from all relevant docs
+        context = build_context_from_docs(relevant_docs)
 
         csv_results = search_csv_semantic(question, top_k=3)
         csv_context = ""
         if csv_results:
             csv_context = "\n".join([f"{idx}. {row}" for idx, row in enumerate(csv_results, 1)])
-        else:
-            csv_context = ""
-
-        context = "\n\n".join(context_parts)
 
         # Stream LLM tokens and accumulate for caching
         token_count = 0

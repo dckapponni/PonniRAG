@@ -558,16 +558,21 @@ class TestAskQuestion:
     @patch('hybrid_search.handle_author_query')
     @patch('hybrid_search.generate_llm_answer')
     def test_ask_question_author_query(self, mock_llm, mock_handle, mock_health):
-        """Test asking author-related question routes CSV through LLM."""
+        """Test CSV query: LLM summary + raw CSV data appended, no evidence card."""
         mock_health.return_value = {'healthy': True, 'points_count': 1000}
-        mock_handle.return_value = (True, 'Author response from CSV')
+        csv_data = 'Author response from CSV'
+        mock_handle.return_value = (True, csv_data)
         mock_llm.return_value = 'பொன்னி இதழில் பல எழுத்தாளர்கள் பங்களித்துள்ளனர். கருணாநிதி, பெரியார் போன்றவர்கள் முக்கிய எழுத்தாளர்கள்.'
 
         result = hs.ask_question('எழுத்தாளர்கள் யார்?')
+        # Answer should contain the LLM summary
         assert 'பொன்னி' in result['answer']
+        # Raw CSV data should be appended in the answer
+        assert csv_data in result['answer']
+        assert 'தரவுத்தள தகவல்' in result['answer']
         assert result['query_type'] == 'author_csv'
-        assert result['csv_evidence'] == 'Author response from CSV'
-        assert len(result['sources']) > 0
+        # No evidence card for CSV flow
+        assert result['sources'] == []
         mock_llm.assert_called_once()
     
     @patch('hybrid_search.check_qdrant_health')
@@ -1030,6 +1035,44 @@ class TestAdditionalCoverage:
         ]
         sources = hs.format_sources(docs)
         assert sources[0]['content'] == long_content
+
+    def test_format_sources_dynamic_count_all_relevant(self):
+        """Test that all relevant docs are included when scores are close."""
+        docs = [
+            {'volume': f'vol{i}', 'heading': f'Title {i}', 'doc_issue': str(i),
+             'content': f'Unique content {i}', 'word_count': 100,
+             'chunk_count': 2, 'score': 0.90 - (i * 0.02)}
+            for i in range(8)
+        ]
+        sources = hs.format_sources(docs)
+        # All 8 docs score >= 50% of top (0.90), so all should be included
+        assert len(sources) == 8
+
+    def test_format_sources_dynamic_count_drops_low_scores(self):
+        """Test that low-scoring docs are excluded by the relevance cutoff."""
+        docs = [
+            {'volume': 'vol1', 'heading': 'Top', 'doc_issue': '1',
+             'content': 'Top result', 'word_count': 100, 'chunk_count': 2, 'score': 1.0},
+            {'volume': 'vol2', 'heading': 'Good', 'doc_issue': '2',
+             'content': 'Good result', 'word_count': 100, 'chunk_count': 2, 'score': 0.7},
+            {'volume': 'vol3', 'heading': 'Weak', 'doc_issue': '3',
+             'content': 'Weak result', 'word_count': 100, 'chunk_count': 2, 'score': 0.3},
+        ]
+        sources = hs.format_sources(docs)
+        # score 0.3 < 50% of 1.0, so only 2 sources
+        assert len(sources) == 2
+        assert sources[-1]['heading'] == 'Good'
+
+    def test_format_sources_dynamic_count_max_cap(self):
+        """Test that sources are capped at MAX_SOURCES (10)."""
+        docs = [
+            {'volume': f'vol{i}', 'heading': f'Title {i}', 'doc_issue': str(i),
+             'content': f'Unique content {i}', 'word_count': 100,
+             'chunk_count': 2, 'score': 0.95}
+            for i in range(15)
+        ]
+        sources = hs.format_sources(docs)
+        assert len(sources) == 10
     
     def test_generate_extractive_answer_with_noise_removal(self):
         """Test extractive answer with noise in sentences."""
