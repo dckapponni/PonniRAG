@@ -1058,7 +1058,7 @@ class TestAdditionalCoverage:
             for i, score in enumerate([0.033, 0.031, 0.029, 0.027, 0.016, 0.015, 0.014])
         ]
         sources = hs.format_sources(docs)
-        # 0.016/0.027 = 0.59 > 0.4 gap ratio, and all > floor (0.033*0.3=0.0099)
+        # 0.016/0.027 = 0.59 > 0.4 gap ratio, and all > floor (0.033*0.35=0.01155)
         # So all 7 docs should be included
         assert len(sources) == 7
 
@@ -1073,7 +1073,7 @@ class TestAdditionalCoverage:
              'content': 'Weak result', 'word_count': 100, 'chunk_count': 2, 'score': 0.2},
         ]
         sources = hs.format_sources(docs)
-        # score 0.2 < 30% of 1.0 (floor=0.3), so only 2 sources
+        # score 0.2 < 35% of 1.0 (floor=0.35), so only 2 sources
         assert len(sources) == 2
         assert sources[-1]['heading'] == 'Good'
 
@@ -1088,21 +1088,36 @@ class TestAdditionalCoverage:
              'content': 'Cliff result', 'word_count': 100, 'chunk_count': 2, 'score': 0.32},
         ]
         sources = hs.format_sources(docs)
-        # 0.32/0.9 = 0.355 < 0.4 gap ratio, so gap triggers after doc 2
-        # (0.32 also passes the floor 1.0*0.3=0.3, but gap stops it)
+        # 0.32 < floor (1.0 * 0.35 = 0.35), so excluded
         assert len(sources) == 2
         assert sources[-1]['heading'] == 'Good'
 
     def test_format_sources_dynamic_count_max_cap(self):
-        """Test that sources are capped at MAX_SOURCES (10)."""
+        """Test that sources are capped at MAX_SOURCES (100)."""
         docs = [
             {'volume': f'vol{i}', 'heading': f'Title {i}', 'doc_issue': str(i),
              'content': f'Unique content {i}', 'word_count': 100,
              'chunk_count': 2, 'score': 0.95}
-            for i in range(15)
+            for i in range(120)
         ]
         sources = hs.format_sources(docs)
-        assert len(sources) == 10
+        assert len(sources) == 100
+
+    def test_format_sources_tightens_gap_after_20(self):
+        """Test that gap ratio tightens from 40% to 50% after 20 docs."""
+        # First 21 docs with gradual decline, then a 45% drop
+        scores = [1.0 - (i * 0.01) for i in range(21)]  # 1.0, 0.99, ..., 0.80
+        scores.append(0.80 * 0.45)  # 0.36 — 45% of prev (passes 40% gap but fails 50% tight gap)
+        docs = [
+            {'volume': f'vol{i}', 'heading': f'Title {i}', 'doc_issue': str(i),
+             'content': f'Unique content {i}', 'word_count': 100,
+             'chunk_count': 2, 'score': s}
+            for i, s in enumerate(scores)
+        ]
+        sources = hs.format_sources(docs)
+        # Doc 22 at 0.36: after 21 docs (>20), tight gap 50% applies
+        # 0.36/0.80 = 0.45 < 0.50 → gap triggers, excluded
+        assert len(sources) == 21
     
     def test_generate_extractive_answer_with_noise_removal(self):
         """Test extractive answer with noise in sentences."""

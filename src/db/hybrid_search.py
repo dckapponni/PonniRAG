@@ -325,6 +325,16 @@ def dense_embed_query(text: str):
         return model.encode(f"query: {text}").tolist()
 
 
+def _deterministic_token_hash(token: str) -> int:
+    """Deterministic token hash using MD5, consistent across processes.
+
+    Python's built-in hash() is randomized per process (PYTHONHASHSEED),
+    which causes sparse vectors at query time to mismatch those created
+    at indexing time.  MD5 is deterministic and fast for this use case.
+    """
+    return int(hashlib.md5(token.encode("utf-8")).hexdigest(), 16) % (2**31)
+
+
 def sparse_embed(text: str):
     """Generate sparse BM25-style embedding for text."""
     tokens = re.findall(r"\b\w+\b", text.lower())
@@ -333,7 +343,7 @@ def sparse_embed(text: str):
         counts[t] += 1
     indices, values = [], []
     for token, freq in counts.items():
-        indices.append(abs(hash(token)) % (2**31))
+        indices.append(_deterministic_token_hash(token))
         values.append(float(freq))
     return models.SparseVector(indices=indices, values=values)
 
@@ -1795,6 +1805,10 @@ class HybridQdrantSearch:
         Executes a two-stage search combining dense embeddings for semantic similarity
         and sparse embeddings for keyword matching, then fuses results using RRF.
 
+        Dense prefetch uses a cosine score_threshold (default 0.8) to gate
+        semantic quality.  Sparse prefetch is capped at `limit` (not limit*2)
+        to avoid flooding the RRF pool with weak keyword matches.
+
         Args:
             query (str): Search query string in Tamil or English
             limit (int, optional): Maximum number of results to return. Defaults to 30.
@@ -1818,7 +1832,7 @@ class HybridQdrantSearch:
                     query=sparse_embed(query),
                     using="sparse",
                     filter=models.Filter(must=[models.FieldCondition(key="type", match=models.MatchValue(value="article"))]),
-                    limit=limit * 2,
+                    limit=limit,
                 ),
             ],
             query=models.FusionQuery(fusion=models.Fusion.RRF),
@@ -2251,22 +2265,22 @@ def _select_relevant_docs(merged_docs: List[Dict]) -> List[Dict]:
     """
     Select relevant documents from merged results using score-gap filtering.
 
-    Uses two criteria (whichever is more generous):
-    1. **Absolute floor**: score >= 30% of the top document's score
-    2. **Gap detection**: stop when a doc scores < 60% of the *previous* doc
+    Three-layer relevance filtering:
+    1. **Absolute floor**: score >= 35% of the top document's score
+    2. **Gap detection**: stop when a doc scores < 40% of the *previous* doc
        (indicates a sharp relevance drop-off between consecutive results)
+    3. **Diminishing returns**: after 20 docs, tighten the gap ratio to 50%
+       to prevent long tails of marginally relevant results
 
-    A doc is included if it passes EITHER criterion (unless the gap is hit).
-    This handles RRF score distributions well — RRF scores are tightly clustered
-    (0.01–0.03 range), so a pure ratio-of-top cutoff is too aggressive.
-
-    Caps at MAX_SOURCES (10), always returns at least MIN_SOURCES (1).
-    De-duplicates by content prefix.
+    Caps at MAX_SOURCES (100), always returns at least MIN_SOURCES (1).
+    De-duplicates by content prefix (using deterministic hash).
     """
     MIN_SOURCES = 1
-    MAX_SOURCES = 10
-    FLOOR_RATIO = 0.3       # must score >= 30% of top doc
+    MAX_SOURCES = 100
+    FLOOR_RATIO = 0.35       # must score >= 35% of top doc
     GAP_RATIO = 0.4          # stop if doc scores < 40% of previous doc
+    TIGHT_GAP_RATIO = 0.5    # tighter gap after TIGHT_GAP_AFTER docs
+    TIGHT_GAP_AFTER = 20     # tighten gap ratio after this many docs
 
     if not merged_docs:
         return []
@@ -2284,16 +2298,19 @@ def _select_relevant_docs(merged_docs: List[Dict]) -> List[Dict]:
 
         score = doc["score"]
 
-        # After minimum satisfied, check both cutoffs
+        # After minimum satisfied, check cutoffs
         if len(selected) >= MIN_SOURCES:
-            # Hard floor: below 30% of top → stop
+            # Hard floor: below 35% of top → stop
             if score < floor_cutoff:
                 break
             # Gap: sharp drop from previous doc → stop
-            if prev_score > 0 and score < prev_score * GAP_RATIO:
+            # Tighten gap after TIGHT_GAP_AFTER docs to prevent long tails
+            gap = TIGHT_GAP_RATIO if len(selected) >= TIGHT_GAP_AFTER else GAP_RATIO
+            if prev_score > 0 and score < prev_score * gap:
                 break
 
-        content_hash = hash(doc["content"][:200])
+        # Deterministic dedup by content prefix
+        content_hash = hashlib.md5(doc["content"][:200].encode("utf-8")).hexdigest()
         if content_hash in seen_hashes:
             continue
         seen_hashes.add(content_hash)
@@ -2301,25 +2318,39 @@ def _select_relevant_docs(merged_docs: List[Dict]) -> List[Dict]:
         selected.append(doc)
         prev_score = score
 
+    if merged_docs:
+        logger.info(
+            f"[RELEVANCE] {len(selected)}/{len(merged_docs)} docs selected "
+            f"(top={top_score:.4f}, floor={floor_cutoff:.4f}, "
+            f"last={selected[-1]['score']:.4f})"
+        )
+
     return selected
 
 
-def build_context_from_docs(relevant_docs: List[Dict], max_context_chars: int = 15000) -> str:
+def build_context_from_docs(
+    relevant_docs: List[Dict],
+    max_context_chars: int = 15000,
+    max_context_docs: int = 15,
+) -> str:
     """
-    Build LLM context using excerpts from ALL relevant documents.
+    Build LLM context using excerpts from the top relevant documents.
 
-    Distributes the character budget equally across all relevant documents
-    so the LLM sees breadth from every evidence source, not just depth
-    from the first one.
+    The evidence set (for user display) can contain up to 100 docs, but the
+    LLM context is capped at max_context_docs (default 15) to ensure each
+    document gets enough characters (~1000 each) for meaningful analysis.
+    Documents are already sorted by score, so the top N are the most relevant.
     """
     if not relevant_docs:
         return ""
 
-    n = len(relevant_docs)
+    # Cap docs sent to LLM — evidence can be larger, context must be focused
+    context_docs = relevant_docs[:max_context_docs]
+    n = len(context_docs)
     per_doc_limit = max(500, max_context_chars // n)
 
     context_parts = []
-    for idx, doc in enumerate(relevant_docs, 1):
+    for idx, doc in enumerate(context_docs, 1):
         excerpt = doc["content"][:per_doc_limit]
         title = doc.get("heading", "")
         header = f"ஆவணம் {idx}"
@@ -2484,7 +2515,7 @@ Error Type: {health_status['error']}
 
         t0 = time.time()
         searcher = HybridQdrantSearch(client)
-        results = searcher.search(question, limit=50, score_threshold=SCORE_THRESHOLD)
+        results = searcher.search(question, limit=200, score_threshold=SCORE_THRESHOLD)
         logger.info(f"[TIMING] hybrid_search: {time.time() - t0:.2f}s ({len(results)} results)")
 
         if not results:
@@ -2642,7 +2673,7 @@ Error Type: {health_status['error']}
         t0 = time.time()
         searcher = HybridQdrantSearch(client)
         results = await asyncio.to_thread(
-            searcher.search, question, 50, SCORE_THRESHOLD
+            searcher.search, question, 200, SCORE_THRESHOLD
         )
         logger.info(f"[TIMING] async hybrid_search: {time.time() - t0:.2f}s ({len(results)} results)")
 
@@ -2778,7 +2809,7 @@ def ask_question_stream(question: str):
 
         logger.info(f"Streaming search: {question[:60]}...")
         searcher = HybridQdrantSearch(client)
-        results = searcher.search(question, limit=50)
+        results = searcher.search(question, limit=200, score_threshold=SCORE_THRESHOLD)
 
         if not results:
             yield {"type": "token", "content": "மன்னிக்கவும், தகவல்கள் கிடைக்கவில்லை."}

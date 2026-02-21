@@ -1,6 +1,12 @@
 # Ponni RAG
 
-**Ponni RAG** is an intelligent Retrieval-Augmented Generation system designed for Tamil literary documents. It uses a hybrid search approach that combines semantic vector search and keyword-based retrieval to deliver accurate, context-aware results from large collections of Tamil PDF and DOCX files. The system extracts and indexes individual literary articles while preserving author and structural metadata. Every query — whether it matches structured CSV data (authors, topics, issue counts) or requires vector search — is routed through Google's Gemini 2.5 Flash API with context-specific prompts to generate natural Tamil responses grounded strictly in the Ponni dataset. Additionally, the system provides an option to view the original PDF content of each Ponni article volume directly.
+**Ponni RAG** is an intelligent Retrieval-Augmented Generation system designed for Tamil literary documents. It uses a hybrid search approach that combines semantic vector search and keyword-based retrieval to deliver accurate, context-aware results from large collections of Tamil PDF and DOCX files. The system extracts and indexes individual literary articles while preserving author and structural metadata. Every query is routed through Google's Gemini 2.5 Flash API with context-specific prompts to generate natural Tamil responses grounded strictly in the Ponni dataset.
+
+**Two query flows:**
+- **Vector search queries** — hybrid retrieval (dense + sparse + RRF fusion) pulls all relevant documents, builds equal-excerpt context from each, and passes it to Gemini with the full document prompt. Evidence cards show full merged content from all relevant sources (dynamically determined by score-gap analysis, up to 10).
+- **CSV queries** (authors, topics, issues) — structured data is retrieved from the article database, passed to Gemini with a lightweight gist prompt that summarizes counts, key names, and trends. The answer displays the LLM summary followed by the raw database data appended below a separator — no separate evidence card.
+
+Additionally, the system provides an option to view the original PDF content of each Ponni article volume directly.
 
 ## Architecture Diagram:
 ![solution flow](assets/image.png)
@@ -30,7 +36,7 @@
 
 |      | Feature         | Summary       |
 | :--- | :---:           | :---          |
-| ⚙️  | **Architecture**  | <ul><li>Hybrid search system combining semantic vector search and keyword-based retrieval (`hybrid_search.py`)</li><li>Dual-prompt LLM pipeline: lightweight CSV summarization prompt for structured queries, full document prompt with Ponni context for vector search queries</li><li>Utilizes Qdrant vector database for efficient similarity search and document retrieval (`qdrant_indexer.py`)</li><li>AWS S3 integration for scalable document storage and retrieval (`s3_utils.py`)</li></ul> |
+| ⚙️  | **Architecture**  | <ul><li>Hybrid search (dense + sparse + RRF fusion) with dynamic evidence selection via score-gap analysis (`hybrid_search.py`)</li><li>Dual-prompt LLM pipeline: gist prompt for CSV queries (summary + appended raw data, no evidence card), full document prompt for vector search (equal-excerpt context from all relevant sources)</li><li>Utilizes Qdrant vector database for efficient similarity search and document retrieval (`qdrant_indexer.py`)</li><li>AWS S3 integration for scalable document storage and retrieval (`s3_utils.py`)</li></ul> |
 | 🔩 | **Code Quality**  | <ul><li>Modular design with separate modules for extraction (`text_extraction.py`), article separation (`article_seperation.py`), and search (`hybrid_search.py`)</li><li>Centralized configuration settings in `config/config.py` for consistency and easy modification</li><li>Comprehensive test coverage with unit and integration tests</li></ul> |
 | 🔌 | **Integrations**  | <ul><li>Integrates with `AWS S3` for efficient storage and retrieval of documents and processed data</li><li>Utilizes `Qdrant` vector database for semantic search and similarity matching</li><li>Streamlit-based interactive UI for querying and visualization (`streamlit_app.py`)</li></ul> |
 | 🧩 | **Modularity**    | <ul><li>Separate modules for text extraction (`text_extraction.py`), content processing (`content_extraction.py`), and text processing (`text_processing.py`)</li><li>Article separation and pattern matching encapsulated in `article_seperation.py` and `article_patterns.py`</li><li>Configuration settings isolated in `config/config.py`</li><li>Comprehensive test suites for quality assessment in `tests/`</li></ul> |
@@ -139,7 +145,7 @@
             <table>
             <tr>
                 <td><b><a href='db/hybrid_search.py'>hybrid_search.py</a></b></td>
-                <td>- Hybrid search engine combining semantic vector search with keyword-based retrieval<br>- All queries route through Gemini LLM with context-specific prompts: a lightweight CSV prompt for structured data (authors, topics, issues) and a full document prompt for vector search results<br>- CSV-retrieved data is passed as evidence to the LLM for natural summarization, with raw data preserved as source attribution<br>- Embedding model auto-detects GPU/CPU and applies device-specific optimizations (TF32 on CUDA, thread tuning on CPU)</td>
+                <td>- Hybrid search engine combining dense (E5 embeddings) + sparse (BM25-style) retrieval with Qdrant RRF fusion<br>- Dynamic evidence selection: score-gap analysis (floor 30% of top + consecutive gap 40%) determines relevant sources (1–10), replacing fixed top-3<br>- Equal-excerpt context: LLM receives balanced excerpts from all relevant documents (15K char budget distributed equally) instead of full content from first document only<br>- Dual-prompt LLM pipeline: gist prompt for CSV queries (LLM summary + raw data appended, no evidence card) and full document prompt for vector search (evidence cards show full merged content)<br>- Embedding model auto-detects GPU/CPU and applies device-specific optimizations (TF32 on CUDA, thread tuning on CPU)</td>
             </tr>
             <tr>
                 <td><b><a href='db/pdf_links.py'>pdf_links.py</a></b></td>
