@@ -1045,21 +1045,51 @@ class TestAdditionalCoverage:
             for i in range(8)
         ]
         sources = hs.format_sources(docs)
-        # All 8 docs score >= 50% of top (0.90), so all should be included
+        # All 8 docs have gradual score drops (2% each), no sharp gap
         assert len(sources) == 8
 
+    def test_format_sources_rrf_clustered_scores(self):
+        """Test with realistic RRF scores — tightly clustered, should include all."""
+        # Simulates RRF: docs in both modalities score ~0.033, single-modality ~0.016
+        docs = [
+            {'volume': f'vol{i}', 'heading': f'Title {i}', 'doc_issue': str(i),
+             'content': f'Unique content {i}', 'word_count': 100,
+             'chunk_count': 2, 'score': score}
+            for i, score in enumerate([0.033, 0.031, 0.029, 0.027, 0.016, 0.015, 0.014])
+        ]
+        sources = hs.format_sources(docs)
+        # 0.016/0.027 = 0.59 > 0.4 gap ratio, and all > floor (0.033*0.3=0.0099)
+        # So all 7 docs should be included
+        assert len(sources) == 7
+
     def test_format_sources_dynamic_count_drops_low_scores(self):
-        """Test that low-scoring docs are excluded by the relevance cutoff."""
+        """Test that low-scoring docs are excluded by floor cutoff."""
         docs = [
             {'volume': 'vol1', 'heading': 'Top', 'doc_issue': '1',
              'content': 'Top result', 'word_count': 100, 'chunk_count': 2, 'score': 1.0},
             {'volume': 'vol2', 'heading': 'Good', 'doc_issue': '2',
              'content': 'Good result', 'word_count': 100, 'chunk_count': 2, 'score': 0.7},
             {'volume': 'vol3', 'heading': 'Weak', 'doc_issue': '3',
-             'content': 'Weak result', 'word_count': 100, 'chunk_count': 2, 'score': 0.3},
+             'content': 'Weak result', 'word_count': 100, 'chunk_count': 2, 'score': 0.2},
         ]
         sources = hs.format_sources(docs)
-        # score 0.3 < 50% of 1.0, so only 2 sources
+        # score 0.2 < 30% of 1.0 (floor=0.3), so only 2 sources
+        assert len(sources) == 2
+        assert sources[-1]['heading'] == 'Good'
+
+    def test_format_sources_dynamic_count_drops_on_gap(self):
+        """Test that a sharp score gap between consecutive docs triggers cutoff."""
+        docs = [
+            {'volume': 'vol1', 'heading': 'Top', 'doc_issue': '1',
+             'content': 'Top result', 'word_count': 100, 'chunk_count': 2, 'score': 1.0},
+            {'volume': 'vol2', 'heading': 'Good', 'doc_issue': '2',
+             'content': 'Good result', 'word_count': 100, 'chunk_count': 2, 'score': 0.9},
+            {'volume': 'vol3', 'heading': 'Cliff', 'doc_issue': '3',
+             'content': 'Cliff result', 'word_count': 100, 'chunk_count': 2, 'score': 0.32},
+        ]
+        sources = hs.format_sources(docs)
+        # 0.32/0.9 = 0.355 < 0.4 gap ratio, so gap triggers after doc 2
+        # (0.32 also passes the floor 1.0*0.3=0.3, but gap stops it)
         assert len(sources) == 2
         assert sources[-1]['heading'] == 'Good'
 

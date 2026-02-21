@@ -1769,13 +1769,14 @@ def _csv_data_suffix(csv_data: str) -> str:
 def _combine_csv_answer(llm_summary: str, csv_data: str) -> str:
     """Combine LLM gist with raw CSV data appended below.
 
-    If the LLM summary is empty (failed), returns just the CSV data
-    with a header.
+    If the LLM summary is empty (failed), prepends a fallback header
+    before the raw CSV data so the separator is always visible.
     """
     suffix = _csv_data_suffix(csv_data)
     if llm_summary and llm_summary.strip():
         return llm_summary.strip() + suffix
-    return csv_data
+    # Fallback: no gist available, still show data with separator
+    return "கட்டுரை தரவுத்தளத்திலிருந்து பெறப்பட்ட தகவல்கள்:" + suffix
 
 
 
@@ -2035,16 +2036,15 @@ TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இத�
 
 இப்போது, கீழே கொடுக்கப்பட்ட கேள்வி மற்றும் சூழலின் அடிப்படையில், மேலுள்ள அனைத்து விதிகளையும் கட்டாயமாக பின்பற்றி, தெளிவாகவும் வாசிக்க எளிதாகவும் விரிவான பதிலை எழுதுக."""
 
-_CSV_SYSTEM_PROMPT = """நீங்கள் பொன்னி இதழ் கட்டுரை தரவுத்தளத்தின் தகவல்களை சுருக்கமாக வழங்கும் தமிழ் உதவியாளர்.
+_CSV_SYSTEM_PROMPT = """நீங்கள் பொன்னி இதழ் கட்டுரை தரவுத்தளத்தின் தகவல்களை சுருக்கமாக விளக்கும் தமிழ் உதவியாளர்.
 
 உங்கள் பணி:
-1. கொடுக்கப்பட்ட தரவுத்தள தகவலின் அடிப்படையில் கேள்விக்கு தமிழில் பதிலளிக்கவும்
-2. தரவுத்தளத்தில் உள்ள தகவல்களை மட்டுமே பயன்படுத்துக – கற்பனையாக எதையும் சேர்க்காதீர்கள்
-3. எண்கள், பெயர்கள், தலைப்புகள் போன்ற உண்மைத் தகவல்களை மாற்றாமல் அப்படியே பயன்படுத்துக
-4. பதிலை தெளிவாகவும் வாசிக்க எளிதாகவும் இயல்பான தமிழ் நடையில் எழுதுக
-5. பட்டியல் வகை தகவல்களுக்கு புள்ளிவாரியாக எழுதுக
-6. பதில் 100 முதல் 300 சொற்கள் வரை இருக்க வேண்டும்
-7. பதிலை ஒரு முடிவு வாக்கியத்துடன் நிறுத்த வேண்டும்"""
+1. கொடுக்கப்பட்ட தரவுத்தள தகவலை பகுப்பாய்வு செய்து, ஒரு சுருக்கமான விளக்கத்தை (gist) எழுதுக
+2. தரவை அப்படியே பட்டியலிடாதீர்கள் — மொத்த எண்ணிக்கை, முக்கிய பெயர்கள், பொதுவான போக்குகள் போன்ற உயர்நிலை நுண்ணறிவுகளை மட்டும் குறிப்பிடவும்
+3. உதாரணம்: "25 எழுத்தாளர்கள் கண்டறியப்பட்டுள்ளனர்" என்று எழுதுக, அனைத்து 25 பெயர்களையும் பட்டியலிடாதீர்கள்
+4. பதிலை இயல்பான தமிழ் உரைநடையில் எழுதுக — புள்ளிவாரியாக அல்ல
+5. பதில் 50 முதல் 150 சொற்கள் வரை இருக்க வேண்டும்
+6. பதிலை ஒரு முடிவு வாக்கியத்துடன் நிறுத்த வேண்டும்"""
 
 
 def _truncate_at_sentence_boundary(text: str) -> str:
@@ -2249,31 +2249,49 @@ def generate_extractive_answer(facts: List[Dict], question: str) -> str:
 
 def _select_relevant_docs(merged_docs: List[Dict]) -> List[Dict]:
     """
-    Select relevant documents from merged results using dynamic score filtering.
+    Select relevant documents from merged results using score-gap filtering.
 
-    A document is relevant if its score is at least 50% of the top document's
-    score.  Caps at MAX_SOURCES (10) to avoid overload, and always returns at
-    least MIN_SOURCES (1) if any docs exist.  De-duplicates by content prefix.
+    Uses two criteria (whichever is more generous):
+    1. **Absolute floor**: score >= 30% of the top document's score
+    2. **Gap detection**: stop when a doc scores < 60% of the *previous* doc
+       (indicates a sharp relevance drop-off between consecutive results)
+
+    A doc is included if it passes EITHER criterion (unless the gap is hit).
+    This handles RRF score distributions well — RRF scores are tightly clustered
+    (0.01–0.03 range), so a pure ratio-of-top cutoff is too aggressive.
+
+    Caps at MAX_SOURCES (10), always returns at least MIN_SOURCES (1).
+    De-duplicates by content prefix.
     """
     MIN_SOURCES = 1
     MAX_SOURCES = 10
-    RELEVANCE_RATIO = 0.5
+    FLOOR_RATIO = 0.3       # must score >= 30% of top doc
+    GAP_RATIO = 0.4          # stop if doc scores < 40% of previous doc
 
     if not merged_docs:
         return []
 
     top_score = merged_docs[0]["score"]
-    score_cutoff = top_score * RELEVANCE_RATIO
+    floor_cutoff = top_score * FLOOR_RATIO
 
     selected = []
     seen_hashes = set()
+    prev_score = top_score
 
     for doc in merged_docs:
         if len(selected) >= MAX_SOURCES:
             break
 
-        if len(selected) >= MIN_SOURCES and doc["score"] < score_cutoff:
-            break
+        score = doc["score"]
+
+        # After minimum satisfied, check both cutoffs
+        if len(selected) >= MIN_SOURCES:
+            # Hard floor: below 30% of top → stop
+            if score < floor_cutoff:
+                break
+            # Gap: sharp drop from previous doc → stop
+            if prev_score > 0 and score < prev_score * GAP_RATIO:
+                break
 
         content_hash = hash(doc["content"][:200])
         if content_hash in seen_hashes:
@@ -2281,6 +2299,7 @@ def _select_relevant_docs(merged_docs: List[Dict]) -> List[Dict]:
         seen_hashes.add(content_hash)
 
         selected.append(doc)
+        prev_score = score
 
     return selected
 
@@ -2436,8 +2455,9 @@ Error Type: {health_status['error']}
                     user_content=csv_content, system_prompt=_CSV_SYSTEM_PROMPT,
                 )
                 logger.info(f"[TIMING] gemini_llm (csv): {time.time() - t0:.2f}s")
+                logger.info(f"CSV LLM gist length: {len(llm_summary or '')} chars")
 
-                if not llm_summary or len(llm_summary) < 50:
+                if not llm_summary or len(llm_summary) < 20:
                     llm_summary = ""
 
                 # Combine: LLM gist + raw CSV data appended
@@ -2593,8 +2613,9 @@ Error Type: {health_status['error']}
                     user_content=csv_content, system_prompt=_CSV_SYSTEM_PROMPT,
                 )
                 logger.info(f"[TIMING] async gemini_llm (csv): {time.time() - t0:.2f}s")
+                logger.info(f"CSV LLM gist length: {len(llm_summary or '')} chars")
 
-                if not llm_summary or len(llm_summary) < 50:
+                if not llm_summary or len(llm_summary) < 20:
                     llm_summary = ""
 
                 # Combine: LLM gist + raw CSV data appended
@@ -2733,7 +2754,11 @@ def ask_question_stream(question: str):
                     yield {"type": "token", "content": token}
 
                 llm_summary = "".join(accumulated)
-                if len(llm_summary) < 50:
+                logger.info(f"CSV streaming gist length: {len(llm_summary)} chars")
+                if len(llm_summary) < 20:
+                    # Gist too short/empty — emit fallback header
+                    fallback = "கட்டுரை தரவுத்தளத்திலிருந்து பெறப்பட்ட தகவல்கள்:"
+                    yield {"type": "token", "content": fallback}
                     llm_summary = ""
 
                 # Append raw CSV data separator + data after the streamed summary
