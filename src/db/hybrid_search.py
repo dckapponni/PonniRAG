@@ -1748,15 +1748,14 @@ def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
     return False, ""
 
 
-def _csv_source() -> List[Dict]:
-    """Return a source entry indicating the answer came from the article database."""
+def _csv_source(csv_data: str) -> List[Dict]:
+    """Return a source entry with the raw CSV-retrieved data as evidence."""
     return [{
         "volume": "பொன்னி கட்டுரை தரவுத்தளம்",
         "heading": "Article Database",
         "doc_issue": "",
-        "content": "இந்த பதில் பொன்னி இதழ் கட்டுரை அட்டவணையில் இருந்து பெறப்பட்டது. "
-                   "இது எழுத்தாளர், தலைப்பு மற்றும் இதழ் தகவல்களைக் கொண்டுள்ளது.",
-        "word_count": 0,
+        "content": csv_data,
+        "word_count": len(csv_data.split()),
         "chunks_merged": 0,
         "score": 1.0,
     }]
@@ -1962,6 +1961,12 @@ TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இத�
 விவரிப்பு வகை கேள்விகளுக்கான விதி:
 - பயனர் விவரிப்பு வகையான கேள்வி கேட்டால் (எ.கா. "விளக்குக", "விவரி", "என்ன?", "எப்படி?"), மிக அதிக தொடர்புடைய முதல் ஆவணத்தின் உள்ளடக்கத்தை சுருக்கமாக விவரித்து, ஆதாரங்களுடன் பதிலளிக்கவும்
 - முதல் ஆவணத்தின் முக்கிய கருத்துகளை தெளிவாக சுருக்கி, அதன் பின்னர் மற்ற ஆவணங்களிலிருந்து கூடுதல் தகவல்களை சேர்க்கவும்
+
+சுருக்கம் / தலைப்பு சார்ந்த கேள்விகளுக்கான விதி (மிக முக்கியம்):
+- கேள்வி ஒரு குறிப்பிட்ட தலைப்பு, கட்டுரை, அல்லது கருத்தை சுருக்கமாகக் கூற கேட்டால், ஆவண சூழலில் கொடுக்கப்பட்ட முழு உள்ளடக்கத்தையும் பகுப்பாய்வு செய்து சுருக்கமாக எழுதுக
+- சூழலில் உள்ள அனைத்து முக்கிய கருத்துகள், வாதங்கள், மற்றும் தகவல்களை உள்ளடக்கிய முழுமையான சுருக்கத்தை வழங்குக
+- "போதுமான தகவல் இல்லை" என்று கூறாதீர்கள் — சூழலில் உள்ள தகவல்களைக் கொண்டு எவ்வளவு முடியுமோ அவ்வளவு விரிவாக பதிலளிக்கவும்
+- முதல் ஆவணத்தில் அதிக உள்ளடக்கம் கொடுக்கப்பட்டிருக்கும், அதை முழுமையாக பயன்படுத்துக
 
 பொன்னி இதழ் பற்றிய கேள்விகளுக்கான விதி (மிக முக்கியம்):
 - கேள்வி பொன்னி இதழைப் பற்றியதாக இருந்தால், கீழே கொடுக்கப்பட்ட "பொன்னி பின்னணி தகவல்" பகுதியை **முதன்மையாக** பயன்படுத்தி பதிலளிக்கவும்
@@ -2238,16 +2243,12 @@ def format_sources(merged_docs: List[Dict]) -> List[Dict]:
             continue
         seen_hashes.add(content_hash)
 
-        content = doc["content"]
-        if len(content) > 1500:
-            content = content[:1500].rsplit(' ', 1)[0] + "..."
-
         sources.append({
             "volume":        doc["volume"],
             "heading":       doc["heading"],
             "doc_issue":     doc["doc_issue"],
             "author_name":   doc.get("author_name", ""),
-            "content":       content,
+            "content":       doc["content"],
             "word_count":    doc["word_count"],
             "chunks_merged": doc["chunk_count"],
             "score":         doc["score"],
@@ -2360,7 +2361,7 @@ Error Type: {health_status['error']}
                 if not llm_answer or len(llm_answer) < 50:
                     llm_answer = csv_response  # fallback to raw CSV data
 
-                sources = _csv_source()
+                sources = _csv_source(csv_response)
                 result = {
                     "answer": llm_answer,
                     "sources": sources,
@@ -2406,7 +2407,9 @@ Error Type: {health_status['error']}
 
         context_parts = []
         for idx, doc in enumerate(merged_docs[:3], 1):
-            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:1500]}")
+            # Top document gets full content (up to 5000 chars) for thorough summarization
+            char_limit = 5000 if idx == 1 else 2000
+            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:char_limit]}")
 
         # CSV semantic context
         csv_results = search_csv_semantic(question, top_k=3)
@@ -2517,7 +2520,7 @@ Error Type: {health_status['error']}
                 if not llm_answer or len(llm_answer) < 50:
                     llm_answer = csv_response  # fallback to raw CSV data
 
-                sources = _csv_source()
+                sources = _csv_source(csv_response)
                 result = {
                     "answer": llm_answer,
                     "sources": sources,
@@ -2564,7 +2567,8 @@ Error Type: {health_status['error']}
 
         context_parts = []
         for idx, doc in enumerate(merged_docs[:3], 1):
-            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:1500]}")
+            char_limit = 5000 if idx == 1 else 2000
+            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:char_limit]}")
 
         # CSV semantic context
         csv_results = await asyncio.to_thread(search_csv_semantic, question, 3)
@@ -2657,7 +2661,7 @@ def ask_question_stream(question: str):
                     yield {"type": "token", "content": csv_response}
                     full_answer = csv_response
 
-                sources = _csv_source()
+                sources = _csv_source(csv_response)
                 _response_cache.put(question, {"answer": full_answer, "sources": sources})
                 yield {"type": "sources", "sources": sources}
                 return
@@ -2687,7 +2691,8 @@ def ask_question_stream(question: str):
 
         context_parts = []
         for idx, doc in enumerate(merged_docs[:3], 1):
-            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:1500]}")
+            char_limit = 5000 if idx == 1 else 2000
+            context_parts.append(f"ஆவணம் {idx}: {doc['content'][:char_limit]}")
 
         csv_results = search_csv_semantic(question, top_k=3)
         csv_context = ""

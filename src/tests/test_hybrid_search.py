@@ -1014,8 +1014,8 @@ class TestAdditionalCoverage:
         sources = hs.format_sources(docs)
         assert len(sources) == 1
     
-    def test_format_sources_long_content_truncation(self):
-        """Test source formatting with content truncation."""
+    def test_format_sources_full_content_preserved(self):
+        """Test source formatting preserves full merged content without truncation."""
         long_content = 'தமிழ் மொழி விவரம் ' * 200
         docs = [
             {
@@ -1029,8 +1029,7 @@ class TestAdditionalCoverage:
             }
         ]
         sources = hs.format_sources(docs)
-        assert len(sources[0]['content']) <= 1510
-        assert sources[0]['content'].endswith('...')
+        assert sources[0]['content'] == long_content
     
     def test_generate_extractive_answer_with_noise_removal(self):
         """Test extractive answer with noise in sentences."""
