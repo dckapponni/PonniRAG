@@ -2057,15 +2057,29 @@ TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இத�
 
 இப்போது, கீழே கொடுக்கப்பட்ட கேள்வி மற்றும் சூழலின் அடிப்படையில், மேலுள்ள அனைத்து விதிகளையும் கட்டாயமாக பின்பற்றி, தெளிவாகவும் வாசிக்க எளிதாகவும் விரிவான பதிலை எழுதுக."""
 
-_CSV_SYSTEM_PROMPT = """நீங்கள் பொன்னி இதழ் கட்டுரை தரவுத்தளத்தின் தகவல்களை சுருக்கமாக விளக்கும் தமிழ் உதவியாளர்.
+_CSV_SYSTEM_PROMPT = """நீங்கள் பொன்னி இதழ் கட்டுரை தரவுத்தளத்தின் தகவல்களை வைத்து கேள்விகளுக்கு பதிலளிக்கும் தமிழ் உதவியாளர்.
 
-உங்கள் பணி:
-1. கொடுக்கப்பட்ட தரவுத்தள தகவலை பகுப்பாய்வு செய்து, ஒரு சுருக்கமான விளக்கத்தை (gist) எழுதுக
-2. தரவை அப்படியே பட்டியலிடாதீர்கள் — மொத்த எண்ணிக்கை, முக்கிய பெயர்கள், பொதுவான போக்குகள் போன்ற உயர்நிலை நுண்ணறிவுகளை மட்டும் குறிப்பிடவும்
-3. உதாரணம்: "25 எழுத்தாளர்கள் கண்டறியப்பட்டுள்ளனர்" என்று எழுதுக, அனைத்து 25 பெயர்களையும் பட்டியலிடாதீர்கள்
-4. பதிலை இயல்பான தமிழ் உரைநடையில் எழுதுக — புள்ளிவாரியாக அல்ல
-5. பதில் 50 முதல் 150 சொற்கள் வரை இருக்க வேண்டும்
-6. பதிலை ஒரு முடிவு வாக்கியத்துடன் நிறுத்த வேண்டும்"""
+முக்கிய விதி: கேள்வியை கவனமாக படித்து, கேள்வி வகைக்கு ஏற்ப பதிலளிக்கவும்.
+
+கேள்வி வகைகள்:
+1. ஆம்/இல்லை கேள்வி ("எழுதியுள்ளாரா?", "உள்ளதா?", "இருக்கிறதா?"):
+   - முதல் வார்த்தையாக "ஆம்" அல்லது "இல்லை" என்று தெளிவாகக் கூறுக
+   - பின்னர் ஓரிரு வாக்கியங்களில் காரணத்தை விளக்குக
+   - எ.கா. "ஆம், ஆ. வ. இராமநாதன் பொன்னியில் 5 கட்டுரைகள் எழுதியுள்ளார்."
+
+2. நேரடி கேள்வி ("யார்?", "என்ன?", "எப்போது?", "எத்தனை?"):
+   - முதல் வாக்கியத்தில் நேரடியான பதிலைக் கூறுக
+   - எ.கா. "மொத்தம் 12 கட்டுரைகள் கண்டறியப்பட்டுள்ளன."
+
+3. பட்டியல் / சுருக்கக் கேள்வி:
+   - மொத்த எண்ணிக்கை, முக்கிய பெயர்கள், பொதுவான போக்குகளை சுருக்கமாகக் குறிப்பிடுக
+   - தரவை அப்படியே பட்டியலிடாதீர்கள்
+
+பொது விதிகள்:
+- பதிலை இயல்பான தமிழ் உரைநடையில் எழுதுக
+- பதில் 30 முதல் 150 சொற்கள் வரை இருக்க வேண்டும்
+- பதிலை ஒரு முடிவு வாக்கியத்துடன் நிறுத்த வேண்டும்
+- தரவில் "Error" அல்லது "கண்டுபிடிக்க முடியவில்லை" இருந்தால், "இல்லை" என்று தெளிவாகக் கூறுக"""
 
 
 def _truncate_at_sentence_boundary(text: str) -> str:
@@ -2112,7 +2126,7 @@ def _gemini_generation_config(
 
 _WH_PATTERNS = [
     'யார்', 'என்ன', 'எப்போது', 'எங்கே', 'எது', 'ஏன்', 'எப்படி',
-    'எவ்வளவு', 'எத்தனை',
+    'எவ்வளவு', 'எத்தனை', 'யாவை', 'எவை',
     'who', 'what', 'when', 'where', 'which', 'why', 'how',
 ]
 
@@ -2163,13 +2177,43 @@ def _build_user_content(
     return "\n".join(parts)
 
 
+_YES_NO_PATTERNS = [
+    'உள்ளாரா', 'உள்ளதா', 'இருக்கிறதா', 'இருக்கிறாரா',
+    'எழுதியுள்ளாரா', 'எழுதினாரா', 'எழுதியிருக்கிறாரா',
+    'உண்டா', 'இல்லையா', 'ஆகுமா', 'முடியுமா',
+    'செய்தாரா', 'செய்துள்ளாரா', 'பங்களித்தாரா',
+]
+
+
+def _is_yes_no_question(question: str) -> bool:
+    """Return True if the question expects a yes/no answer."""
+    q = question.lower()
+    return any(p in q for p in _YES_NO_PATTERNS)
+
+
 def _build_csv_user_content(question: str, csv_data: str) -> str:
     """Build a focused user prompt for CSV-only queries.
 
-    Instructs the LLM to produce a brief gist/summary of the CSV data
-    without repeating the raw data verbatim.  The raw data is appended
-    to the answer separately after LLM generation.
+    Repeats the question after the data block and adds a question-type
+    aware closing instruction.
     """
+    # Determine closing instruction based on question type
+    if _is_yes_no_question(question):
+        closing = (
+            "கேள்விக்கு முதலில் 'ஆம்' அல்லது 'இல்லை' என்று தெளிவாகக் கூறுக. "
+            "பின்னர் ஓரிரு வாக்கியங்களில் விளக்குக (30-100 சொற்கள்)."
+        )
+    elif _is_wh_question(question):
+        closing = (
+            "கேள்விக்கான நேரடியான பதிலை முதல் வாக்கியத்தில் கூறுக. "
+            "பின்னர் சுருக்கமாக விளக்குக (30-150 சொற்கள்)."
+        )
+    else:
+        closing = (
+            "தரவுத்தள தகவலை சுருக்கமாக விளக்கவும் (50-150 சொற்கள்). "
+            "தரவை அப்படியே திரும்ப எழுதாதீர்கள்."
+        )
+
     return f"""கேள்வி:
 {question}
 
@@ -2178,8 +2222,8 @@ def _build_csv_user_content(question: str, csv_data: str) -> str:
 {csv_data}
 ========================
 
-மேலே கொடுக்கப்பட்ட தரவுத்தள தகவலை சுருக்கமாக விளக்கவும் (50-150 சொற்கள்).
-முக்கியம்: தரவை அப்படியே திரும்ப எழுதாதீர்கள். எண்ணிக்கைகள், முக்கிய பெயர்கள், மற்றும் பொதுவான போக்குகளை மட்டும் சுருக்கமாக குறிப்பிடவும்.
+கேள்வி: {question}
+{closing}
 """
 
 
@@ -2394,8 +2438,50 @@ def _select_relevant_docs(merged_docs: List[Dict]) -> List[Dict]:
     return selected
 
 
+def _extract_relevant_excerpt(content: str, question: str, max_chars: int) -> str:
+    """Extract the most question-relevant portion of a document.
+
+    Instead of blindly taking the first N characters, this finds the region
+    with the highest density of question keywords and centres the excerpt
+    window there.  Falls back to the beginning if no keywords match.
+    """
+    if len(content) <= max_chars:
+        return content
+
+    # Extract meaningful Tamil keywords (3+ chars) from the question
+    keywords = set(re.findall(r'[\u0B80-\u0BFF]{3,}', question.lower()))
+    # Remove common stop-ish words that appear everywhere
+    keywords -= {
+        'இதழில்', 'இதழ்', 'பொன்னி', 'பொன்னியில்', 'என்ன', 'யாவை',
+        'எனும்', 'பற்றி', 'பற்றிய', 'என்று', 'உள்ள', 'உள்ளது',
+    }
+
+    if not keywords:
+        return content[:max_chars]
+
+    content_lower = content.lower()
+
+    # Score every position by counting keyword hits in a sliding window
+    # Use a coarse step to keep it fast
+    step = max(100, max_chars // 10)
+    best_pos, best_score = 0, 0
+
+    for pos in range(0, max(1, len(content) - max_chars + 1), step):
+        window = content_lower[pos:pos + max_chars]
+        score = sum(window.count(kw) for kw in keywords)
+        if score > best_score:
+            best_score = score
+            best_pos = pos
+
+    if best_score == 0:
+        return content[:max_chars]
+
+    return content[best_pos:best_pos + max_chars]
+
+
 def build_context_from_docs(
     relevant_docs: List[Dict],
+    question: str = "",
     max_context_chars: int = 15000,
     max_context_docs: int = 15,
 ) -> Tuple[str, int]:
@@ -2406,6 +2492,9 @@ def build_context_from_docs(
     LLM context is capped at max_context_docs (default 15) to ensure each
     document gets enough characters (~1000 each) for meaningful analysis.
     Documents are already sorted by score, so the top N are the most relevant.
+
+    Each document's excerpt is chosen by keyword relevance to the question,
+    not simply the first N characters.
 
     Returns:
         (context_string, doc_count) — the formatted context and the number of
@@ -2423,7 +2512,7 @@ def build_context_from_docs(
         f"[{n} ஆவணங்கள் — ஒவ்வொன்றின் தகவலையும் பயன்படுத்தவும்]\n"
     ]
     for idx, doc in enumerate(context_docs, 1):
-        excerpt = doc["content"][:per_doc_limit]
+        excerpt = _extract_relevant_excerpt(doc["content"], question, per_doc_limit)
         title = doc.get("heading", "")
         header = f"ஆவணம் {idx}/{n}"
         if title:
@@ -2561,7 +2650,7 @@ Error Type: {health_status['error']}
                 logger.info(f"[TIMING] gemini_llm (csv): {time.time() - t0:.2f}s")
                 logger.info(f"CSV LLM gist length: {len(llm_summary or '')} chars")
 
-                if not llm_summary or len(llm_summary) < 20:
+                if not llm_summary or len(llm_summary) < 5:
                     llm_summary = ""
 
                 # Combine: LLM gist + raw CSV data appended
@@ -2614,7 +2703,7 @@ Error Type: {health_status['error']}
         logger.info(f"Selected {len(relevant_docs)} relevant documents for context")
 
         # Build context with equal excerpts from all relevant docs
-        context, context_doc_count = build_context_from_docs(relevant_docs)
+        context, context_doc_count = build_context_from_docs(relevant_docs, question)
 
         # CSV semantic context
         csv_results = search_csv_semantic(question, top_k=3)
@@ -2723,7 +2812,7 @@ Error Type: {health_status['error']}
                 logger.info(f"[TIMING] async gemini_llm (csv): {time.time() - t0:.2f}s")
                 logger.info(f"CSV LLM gist length: {len(llm_summary or '')} chars")
 
-                if not llm_summary or len(llm_summary) < 20:
+                if not llm_summary or len(llm_summary) < 5:
                     llm_summary = ""
 
                 # Combine: LLM gist + raw CSV data appended
@@ -2777,7 +2866,7 @@ Error Type: {health_status['error']}
         logger.info(f"Selected {len(relevant_docs)} relevant documents for context")
 
         # Build context with equal excerpts from all relevant docs
-        context, context_doc_count = build_context_from_docs(relevant_docs)
+        context, context_doc_count = build_context_from_docs(relevant_docs, question)
 
         # CSV semantic context
         csv_results = await asyncio.to_thread(search_csv_semantic, question, 3)
@@ -2867,7 +2956,7 @@ def ask_question_stream(question: str):
 
                 llm_summary = "".join(accumulated)
                 logger.info(f"CSV streaming gist length: {len(llm_summary)} chars")
-                if len(llm_summary) < 20:
+                if len(llm_summary) < 5:
                     # Streaming failed — try sync fallback
                     logger.warning("CSV streaming gist too short, trying sync fallback")
                     llm_summary = generate_llm_answer(
@@ -2875,7 +2964,7 @@ def ask_question_stream(question: str):
                         user_content=csv_content, system_prompt=_CSV_SYSTEM_PROMPT,
                         disable_thinking=True,
                     )
-                    if llm_summary and len(llm_summary) >= 20:
+                    if llm_summary and len(llm_summary) >= 5:
                         yield {"type": "token", "content": llm_summary}
                     else:
                         fallback = "கட்டுரை தரவுத்தளத்திலிருந்து பெறப்பட்ட தகவல்கள்:"
@@ -2919,7 +3008,7 @@ def ask_question_stream(question: str):
         logger.info(f"Selected {len(relevant_docs)} relevant documents for context")
 
         # Build context with equal excerpts from all relevant docs
-        context, context_doc_count = build_context_from_docs(relevant_docs)
+        context, context_doc_count = build_context_from_docs(relevant_docs, question)
 
         csv_results = search_csv_semantic(question, top_k=3)
         csv_context = ""
