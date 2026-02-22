@@ -513,7 +513,7 @@ class TestAnswerGeneration:
         answer = hs.generate_extractive_answer([], 'question')
         assert answer == ""
     
-    @patch('hybrid_search._get_gemini_client')
+    @patch('llm._get_gemini_client')
     def test_generate_llm_answer_success(self, mock_get_client):
         """Test generating LLM answer successfully."""
         mock_candidate = MagicMock()
@@ -529,7 +529,7 @@ class TestAnswerGeneration:
         assert 'தமிழ்' in answer
         assert len(answer) > 0
 
-    @patch('hybrid_search._get_gemini_client')
+    @patch('llm._get_gemini_client')
     def test_generate_llm_answer_failure(self, mock_get_client):
         """Test generating LLM answer with failure."""
         mock_get_client.side_effect = Exception("API key invalid")
@@ -1258,14 +1258,14 @@ class TestAsyncFunctions:
         mock_client = MagicMock()
         mock_client.aio = mock_aio
 
-        with patch('hybrid_search._get_gemini_client', return_value=mock_client):
+        with patch('llm._get_gemini_client', return_value=mock_client):
             answer = await hs.generate_llm_answer_async('question', 'context', '')
             assert 'தமிழ்' in answer
 
     @pytest.mark.asyncio
     async def test_generate_llm_answer_async_failure(self):
         """Test async LLM answer generation failure."""
-        with patch('hybrid_search._get_gemini_client', side_effect=Exception("timeout")):
+        with patch('llm._get_gemini_client', side_effect=Exception("timeout")):
             answer = await hs.generate_llm_answer_async('question', 'context', '')
             assert answer == ""
 
