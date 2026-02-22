@@ -10,6 +10,8 @@ Additionally, the system provides an option to view the original PDF content of 
 
 ## Architecture Diagram:
 ![solution flow](assets/image.png)
+
+For detailed architecture documentation, see [system_architecture.md](system_architecture.md).
 ## Table of Contents
 - [Features](#features)
 - [Project Structure](#project-structure)
@@ -36,10 +38,10 @@ Additionally, the system provides an option to view the original PDF content of 
 
 |      | Feature         | Summary       |
 | :--- | :---:           | :---          |
-| ⚙️  | **Architecture**  | <ul><li>Hybrid search (dense + sparse + RRF fusion) with dynamic evidence selection via score-gap analysis (`hybrid_search.py`)</li><li>Dual-prompt LLM pipeline: gist prompt for CSV queries (summary + appended raw data, no evidence card), full document prompt for vector search (equal-excerpt context from all relevant sources)</li><li>Utilizes Qdrant vector database for efficient similarity search and document retrieval (`qdrant_indexer.py`)</li><li>AWS S3 integration for scalable document storage and retrieval (`s3_utils.py`)</li></ul> |
-| 🔩 | **Code Quality**  | <ul><li>Modular design with separate modules for extraction (`text_extraction.py`), article separation (`article_seperation.py`), and search (`hybrid_search.py`)</li><li>Centralized configuration settings in `config/config.py` for consistency and easy modification</li><li>Comprehensive test coverage with unit and integration tests</li></ul> |
+| ⚙️  | **Architecture**  | <ul><li>Hybrid search (dense + sparse + RRF fusion) with dynamic evidence selection via score-gap analysis (`hybrid_search.py` orchestrator)</li><li>Dual-prompt LLM pipeline (`llm.py`): gist prompt for CSV queries (summary + appended raw data, no evidence card), full document prompt for vector search (equal-excerpt context from all relevant sources)</li><li>Utilizes Qdrant vector database for efficient similarity search and document retrieval (`qdrant_indexer.py`)</li><li>AWS S3 integration for scalable document storage and retrieval (`s3_utils.py`)</li></ul> |
+| 🔩 | **Code Quality**  | <ul><li>Modular design with separate modules for extraction (`text_extraction.py`), article separation (`article_seperation.py`), and search split across focused sub-modules (`hybrid_search.py`, `tamil_text.py`, `csv_queries.py`, `llm.py`, `search.py`)</li><li>Centralized configuration settings in `config/config.py` for consistency and easy modification</li><li>Comprehensive test coverage with unit and integration tests</li></ul> |
 | 🔌 | **Integrations**  | <ul><li>Integrates with `AWS S3` for efficient storage and retrieval of documents and processed data</li><li>Utilizes `Qdrant` vector database for semantic search and similarity matching</li><li>Streamlit-based interactive UI for querying and visualization (`streamlit_app.py`)</li></ul> |
-| 🧩 | **Modularity**    | <ul><li>Separate modules for text extraction (`text_extraction.py`), content processing (`content_extraction.py`), and text processing (`text_processing.py`)</li><li>Article separation and pattern matching encapsulated in `article_seperation.py` and `article_patterns.py`</li><li>Configuration settings isolated in `config/config.py`</li><li>Comprehensive test suites for quality assessment in `tests/`</li></ul> |
+| 🧩 | **Modularity**    | <ul><li>Search backend split into focused modules: orchestration (`hybrid_search.py`), Tamil NLP (`tamil_text.py`), CSV queries (`csv_queries.py`), LLM layer (`llm.py`), document processing (`search.py`)</li><li>Separate modules for text extraction (`text_extraction.py`), content processing (`content_extraction.py`), and text processing (`text_processing.py`)</li><li>Article separation and pattern matching encapsulated in `article_seperation.py` and `article_patterns.py`</li><li>Configuration settings isolated in `config/config.py`</li><li>Comprehensive test suites for quality assessment in `tests/`</li></ul> |
 
 ---
 
@@ -69,7 +71,11 @@ Additionally, the system provides an option to view the original PDF content of 
 │   │   └── text_processing.py
 │   ├── db/
 │   │   ├── api.py               # FastAPI REST API
-│   │   ├── hybrid_search.py
+│   │   ├── hybrid_search.py     # Orchestrator (search, caching, model loaders)
+│   │   ├── tamil_text.py        # Tamil NLP utilities, fuzzy matching, pattern bank
+│   │   ├── csv_queries.py       # CSV query pipeline (authors, topics, issues)
+│   │   ├── llm.py               # Gemini LLM layer (prompts, generation)
+│   │   ├── search.py            # Vector search document processing
 │   │   ├── mock_search.py       # Mock data for testing
 │   │   ├── pdf_links.py
 │   │   ├── qdrant_indexer.py
@@ -145,7 +151,23 @@ Additionally, the system provides an option to view the original PDF content of 
             <table>
             <tr>
                 <td><b><a href='db/hybrid_search.py'>hybrid_search.py</a></b></td>
-                <td>- Hybrid search engine combining dense (E5 embeddings) + sparse (BM25-style) retrieval with Qdrant RRF fusion<br>- Dynamic evidence selection: score-gap analysis (floor 30% of top + consecutive gap 40%) determines relevant sources (1–10), replacing fixed top-3<br>- Equal-excerpt context: LLM receives balanced excerpts from all relevant documents (15K char budget distributed equally) instead of full content from first document only<br>- Dual-prompt LLM pipeline: gist prompt for CSV queries (LLM summary + raw data appended, no evidence card) and full document prompt for vector search (evidence cards show full merged content)<br>- Embedding model auto-detects GPU/CPU and applies device-specific optimizations (TF32 on CUDA, thread tuning on CPU)</td>
+                <td>- Orchestrator module: coordinates query routing, embedding generation, caching, and model loading<br>- Combines dense (E5 embeddings) + sparse (BM25-style) retrieval with Qdrant RRF fusion<br>- GPU/CPU auto-detection with device-specific optimizations (TF32 on CUDA, thread tuning on CPU)<br>- Re-exports all sub-module names for backward compatibility</td>
+            </tr>
+            <tr>
+                <td><b><a href='db/tamil_text.py'>tamil_text.py</a></b></td>
+                <td>- Tamil NLP utilities: fuzzy matching, edit distance, possessive suffix stripping<br>- Pattern bank with compiled regexes for Tamil word boundaries, initials, and canonical author mappings</td>
+            </tr>
+            <tr>
+                <td><b><a href='db/csv_queries.py'>csv_queries.py</a></b></td>
+                <td>- CSV query pipeline: author listing, author→topics, topic→authors, issue counts<br>- EnhancedAuthorQuerySystem with fuzzy author/title matching<br>- Formatting functions and CSV answer composition with LLM gist summaries</td>
+            </tr>
+            <tr>
+                <td><b><a href='db/llm.py'>llm.py</a></b></td>
+                <td>- Gemini LLM layer: sync, async, and streaming answer generation<br>- Dual-prompt system: TAMIL_ANSWER_SYSTEM_PROMPT for vector search, _CSV_SYSTEM_PROMPT for structured data<br>- Question-type detection (wh-questions, yes/no) for prompt optimization<br>- Extractive answer fallback when LLM is unavailable</td>
+            </tr>
+            <tr>
+                <td><b><a href='db/search.py'>search.py</a></b></td>
+                <td>- Vector search document processing: chunk retrieval, consecutive chunk merging, key fact extraction<br>- Dynamic evidence selection via score-gap analysis (floor 30% of top, consecutive gap 40%, max 10)<br>- Equal-excerpt context building (15K char budget distributed across relevant docs)<br>- Source formatting for evidence cards</td>
             </tr>
             <tr>
                 <td><b><a href='db/pdf_links.py'>pdf_links.py</a></b></td>
