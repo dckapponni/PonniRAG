@@ -20,7 +20,7 @@ const Navigation = ({ language, onToggleLanguage }) => {
       <div className="nav-links">
         <Link
           to="/"
-          className={`nav-link ${isActive('/') && !location.pathname.startsWith('/library') && !location.pathname.startsWith('/about') ? 'active' : ''}`}
+          className={`nav-link ${isActive('/') && !location.pathname.startsWith('/library') && !location.pathname.startsWith('/tags') && !location.pathname.startsWith('/about') ? 'active' : ''}`}
         >
           {t('nav_ask_ai')}
         </Link>
@@ -29,6 +29,12 @@ const Navigation = ({ language, onToggleLanguage }) => {
           className={`nav-link ${isActive('/library') ? 'active' : ''}`}
         >
           {t('nav_library')}
+        </Link>
+        <Link
+          to="/tags"
+          className={`nav-link ${isActive('/tags') ? 'active' : ''}`}
+        >
+          {t('nav_tags')}
         </Link>
         <Link
           to="/about"

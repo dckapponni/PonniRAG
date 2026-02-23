@@ -11,6 +11,7 @@ const SourceCard = ({ source, index, language }) => {
   const heading = source.heading || source.payload?.metadata?.heading;
   const author = source.author_name || source.payload?.metadata?.author_name;
   const content = source.content || source.payload?.content || '';
+  const tags = source.tags || source.payload?.metadata?.tags || [];
 
   const metaParts = [];
   if (docIssue) metaParts.push(`${t('issue_label')}: ${docIssue}`);
@@ -25,6 +26,13 @@ const SourceCard = ({ source, index, language }) => {
     <div className="source-card">
       <div className="source-header">
         <span className="source-title">{t('source_title')} {index + 1}</span>
+        {tags.length > 0 && (
+          <div className="source-tags">
+            {tags.map((tag) => (
+              <span key={tag} className="tag-badge">{tag}</span>
+            ))}
+          </div>
+        )}
       </div>
       {metaParts.length > 0 && (
         <div className="source-meta">{metaParts.join(' • ')}</div>

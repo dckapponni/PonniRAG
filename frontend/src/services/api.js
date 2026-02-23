@@ -251,6 +251,25 @@ export const getPDFLink = async (volumeId, issueId) => {
 };
 
 /**
+ * Get all article tags/categories with counts
+ * @returns {Promise<{success: boolean, tags: Array<{id: string, tamil: string, english: string, count: number}>}>}
+ */
+export const getTags = async () => {
+  const response = await api.get('/api/tags');
+  return response.data;
+};
+
+/**
+ * Get articles for a specific tag
+ * @param {string} tagId - Tag ID (e.g. 'FICTION')
+ * @returns {Promise<{success: boolean, tag_id: string, tag_tamil: string, count: number, articles: Array}>}
+ */
+export const getTagArticles = async (tagId) => {
+  const response = await api.get(`/api/tags/${encodeURIComponent(tagId)}/articles`);
+  return response.data;
+};
+
+/**
  * Test API connection
  * @returns {Promise<boolean>}
  */

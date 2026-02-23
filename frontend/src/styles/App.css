@@ -603,3 +603,153 @@ html, body {
 .pdf-link:hover {
   text-decoration: underline;
 }
+
+/* Tag Badges */
+.source-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.tag-badge {
+  background: #dbeafe;
+  color: #1e3a8a;
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 0.15rem 0.5rem;
+  border-radius: 99px;
+  white-space: nowrap;
+}
+
+/* Tags Grid (Browse Page) */
+.tags-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem;
+}
+
+@media (max-width: 768px) {
+  .tags-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .tags-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.tag-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  text-align: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.tag-card:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  transform: translateY(-4px);
+  border-color: #3b82f6;
+}
+
+.tag-card-name {
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: #1e3a8a;
+  margin-bottom: 0.5rem;
+}
+
+.tag-card-count {
+  color: #64748b;
+  font-size: 0.9rem;
+}
+
+/* Tag Articles List */
+.tag-articles-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.tag-article-card {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  padding: 1rem;
+}
+
+.tag-article-title {
+  font-weight: 600;
+  color: #1e3a8a;
+  margin-bottom: 0.35rem;
+}
+
+.tag-article-meta {
+  color: #64748b;
+  font-size: 0.85rem;
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.35rem;
+}
+
+/* Tag Filter Sidebar */
+.tag-filter {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.75rem;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.tag-filter-title {
+  font-weight: 600;
+  color: #1e3a8a;
+  margin-bottom: 0.75rem;
+  font-size: 0.95rem;
+}
+
+.tag-filter-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.tag-filter-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: #334155;
+}
+
+.tag-filter-item input[type="checkbox"] {
+  accent-color: #3b82f6;
+}
+
+.tag-filter-count {
+  color: #94a3b8;
+  font-size: 0.8rem;
+}
+
+.tag-filter-clear {
+  background: transparent;
+  border: 1px solid #e2e8f0;
+  color: #3b82f6;
+  padding: 0.3rem 0.75rem;
+  border-radius: 0.25rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  margin-top: 0.75rem;
+  width: 100%;
+}
+
+.tag-filter-clear:hover {
+  background: #f1f5f9;
+}
