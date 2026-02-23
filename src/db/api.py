@@ -20,8 +20,9 @@ from pydantic import BaseModel, Field
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 # Import real hybrid_search module
+from qdrant_client import models
+
 from hybrid_search import (
-    ask_question,
     ask_question_async,
     ask_question_stream,
     check_qdrant_health,
@@ -32,7 +33,11 @@ from hybrid_search import (
     _author_system_lock,
     validate_gemini_api,
     _response_cache,
+    get_qdrant_client,
+    COLLECTION_NAME,
 )
+
+from article_tagger import TAXONOMY
 
 from pdf_links import PDF_LINKS
 
@@ -47,6 +52,7 @@ class QuestionRequest(BaseModel):
     """Request model for asking questions."""
     question: str = Field(..., min_length=1, description="The question to ask")
     use_llm: bool = Field(default=True, description="Use LLM for answer generation")
+    tags: Optional[List[str]] = Field(default=None, description="Filter by tag IDs")
 
 
 class SourceDocument(BaseModel):
@@ -58,6 +64,7 @@ class SourceDocument(BaseModel):
     word_count: Optional[int] = None
     chunks_merged: Optional[int] = None
     score: Optional[float] = None
+    tags: Optional[List[str]] = None
 
 
 class QuestionResponse(BaseModel):
@@ -157,6 +164,38 @@ class PDFLinkResponse(BaseModel):
     found: bool
 
 
+class TagInfo(BaseModel):
+    """Response model for a tag/category."""
+    id: str
+    tamil: str
+    english: str
+    count: int
+
+
+class TagsResponse(BaseModel):
+    """Response model for listing all tags."""
+    success: bool
+    tags: List[TagInfo]
+
+
+class TagArticleInfo(BaseModel):
+    """Response model for an article under a tag."""
+    doc_id: Optional[str] = None
+    doc_issue: Optional[str] = None
+    title: Optional[str] = None
+    author_name: Optional[str] = None
+    year: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+
+class TagArticlesResponse(BaseModel):
+    """Response model for articles under a tag."""
+    success: bool
+    tag_id: str
+    tag_tamil: str
+    count: int
+    articles: List[TagArticleInfo]
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -248,7 +287,8 @@ async def ask_question_endpoint(request: QuestionRequest):
         result = await ask_question_async(
             question=request.question,
             return_formatted=False,
-            use_llm=request.use_llm
+            use_llm=request.use_llm,
+            filter_tags=request.tags,
         )
 
         return QuestionResponse(
@@ -277,6 +317,7 @@ async def ask_question_stream_endpoint(request: QuestionRequest):
         try:
             for event in ask_question_stream(
                 question=request.question,
+                filter_tags=request.tags,
             ):
                 if event["type"] == "token":
                     yield f"event: token\ndata: {json.dumps({'content': event['content']})}\n\n"
@@ -314,19 +355,23 @@ async def cache_clear():
 @app.get("/api/search", response_model=QuestionResponse, tags=["Search"])
 async def search_endpoint(
     q: str = Query(..., min_length=1, description="Search query"),
-    use_llm: bool = Query(default=False, description="Use LLM for answer")
+    use_llm: bool = Query(default=False, description="Use LLM for answer"),
+    tags: Optional[str] = Query(default=None, description="Comma-separated tag IDs to filter by"),
 ):
     """
     Search the archive with a query string.
 
     GET alternative to POST /api/ask for simpler search queries.
     Results are filtered by score threshold (>= 80% similarity).
+    Optionally filter by tags (comma-separated, e.g. tags=FICTION,POETRY).
     """
     try:
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
         result = await ask_question_async(
             question=q,
             return_formatted=False,
-            use_llm=use_llm
+            use_llm=use_llm,
+            filter_tags=tag_list,
         )
 
         return QuestionResponse(
@@ -338,6 +383,117 @@ async def search_endpoint(
 
     except Exception as e:
         logger.error(f"Error in search: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/tags", response_model=TagsResponse, tags=["Tags"])
+async def list_tags():
+    """
+    List all 15 article categories with article counts.
+
+    Scrolls the Qdrant collection to aggregate tag counts across all articles.
+    Returns the full taxonomy with counts.
+    """
+    try:
+        client = get_qdrant_client()
+
+        # Aggregate tag counts by scrolling all article points
+        tag_counts = {}
+        offset = None
+        while True:
+            points, offset = await asyncio.to_thread(
+                client.scroll,
+                collection_name=COLLECTION_NAME,
+                scroll_filter=models.Filter(must=[
+                    models.FieldCondition(key="type", match=models.MatchValue(value="article")),
+                    models.FieldCondition(key="metadata.chunk_id", match=models.MatchValue(value=0)),
+                ]),
+                limit=500,
+                offset=offset,
+                with_payload=True,
+            )
+            for p in points:
+                metadata = (p.payload or {}).get("metadata", {})
+                for tag in metadata.get("tags", []):
+                    tag_counts[tag] = tag_counts.get(tag, 0) + 1
+            if offset is None:
+                break
+
+        tags_list = []
+        for cat_id, cat_info in TAXONOMY.items():
+            tags_list.append(TagInfo(
+                id=cat_id,
+                tamil=cat_info["tamil"],
+                english=cat_info["english"],
+                count=tag_counts.get(cat_id, 0),
+            ))
+
+        # Sort by count descending
+        tags_list.sort(key=lambda t: t.count, reverse=True)
+
+        return TagsResponse(success=True, tags=tags_list)
+
+    except Exception as e:
+        logger.error(f"Error listing tags: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/tags/{tag_id}/articles", response_model=TagArticlesResponse, tags=["Tags"])
+async def get_tag_articles(tag_id: str):
+    """
+    Get all articles for a specific tag/category.
+
+    Scrolls Qdrant for articles matching the tag, deduplicates by doc_id + doc_issue.
+    """
+    if tag_id not in TAXONOMY:
+        raise HTTPException(status_code=404, detail=f"Unknown tag ID: {tag_id}")
+
+    try:
+        client = get_qdrant_client()
+
+        seen = set()
+        articles = []
+        offset = None
+        while True:
+            points, offset = await asyncio.to_thread(
+                client.scroll,
+                collection_name=COLLECTION_NAME,
+                scroll_filter=models.Filter(must=[
+                    models.FieldCondition(key="type", match=models.MatchValue(value="article")),
+                    models.FieldCondition(key="metadata.tags", match=models.MatchAny(any=[tag_id])),
+                    models.FieldCondition(key="metadata.chunk_id", match=models.MatchValue(value=0)),
+                ]),
+                limit=500,
+                offset=offset,
+                with_payload=True,
+            )
+            for p in points:
+                metadata = (p.payload or {}).get("metadata", {})
+                dedup_key = (metadata.get("doc_id"), metadata.get("doc_issue"))
+                if dedup_key in seen:
+                    continue
+                seen.add(dedup_key)
+                articles.append(TagArticleInfo(
+                    doc_id=metadata.get("doc_id"),
+                    doc_issue=metadata.get("doc_issue"),
+                    title=metadata.get("title"),
+                    author_name=metadata.get("author_name"),
+                    year=metadata.get("year"),
+                    tags=metadata.get("tags", []),
+                ))
+            if offset is None:
+                break
+
+        return TagArticlesResponse(
+            success=True,
+            tag_id=tag_id,
+            tag_tamil=TAXONOMY[tag_id]["tamil"],
+            count=len(articles),
+            articles=articles,
+        )
+
+    except Exception as e:
+        logger.error(f"Error getting tag articles: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -95,6 +95,7 @@ def merge_consecutive_chunks(client: QdrantClient, points) -> List[Dict]:
             "word_count": word_count,
             "chunk_count": len(chunk_data),
             "score": p.score,
+            "tags": metadata.get("tags", []),
         })
 
     merged_docs.sort(key=lambda x: x["score"], reverse=True)
@@ -305,6 +306,7 @@ def format_sources(merged_docs: List[Dict]) -> List[Dict]:
             "word_count":    doc["word_count"],
             "chunks_merged": doc["chunk_count"],
             "score":         doc["score"],
+            "tags":          doc.get("tags", []),
         })
 
     return sources

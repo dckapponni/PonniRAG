@@ -24,18 +24,35 @@ IMG_DIR = BASE_DIR.parent.parent/"frontend"/"public"/"images"
 # Check if mock mode is enabled
 USE_MOCK_DATA = os.getenv("USE_MOCK_DATA", "false").lower() in ("true", "1", "yes")
 
+try:
+    from qdrant_client import models as qdrant_models
+except ImportError:
+    qdrant_models = None
+
+try:
+    from article_tagger import TAXONOMY
+except ImportError:
+    TAXONOMY = {}
+
 if USE_MOCK_DATA:
     from mock_search import mock_ask_question as ask_question
     ask_question_stream = None
+    get_qdrant_client = None
+    COLLECTION_NAME = None
     logger.info("Running in MOCK MODE - using mock_search module")
 else:
     try:
-        from hybrid_search import ask_question, ask_question_stream
+        from hybrid_search import (
+            ask_question, ask_question_stream,
+            get_qdrant_client, COLLECTION_NAME,
+        )
         logger.info("Successfully imported hybrid_search module")
     except ImportError as e:
         logger.error(f"Failed to import hybrid_search: {e}")
         ask_question = None
         ask_question_stream = None
+        get_qdrant_client = None
+        COLLECTION_NAME = None
 
 
 TRANSLATIONS = {
@@ -64,6 +81,13 @@ TRANSLATIONS = {
         "author_label": "எழுத்தாளர்",
         "read_more": "மேலும் படிக்க",
         "show_less": "குறைவாக காட்டு",
+        "nav_tags": "வகைகள்",
+        "browse_tags": "கட்டுரை வகைகள்",
+        "browse_tags_desc": "பொன்னி இதழின் கட்டுரைகளை வகை வாரியாக ஆராயுங்கள்.",
+        "articles_in_category": "கட்டுரைகள்",
+        "articles_count": "கட்டுரைகள்",
+        "back_to_tags": "வகைகளுக்கு திரும்பு",
+        "untitled": "தலைப்பு இல்லை",
     },
     "en": {
         "app_title": "Ponni Archive",
@@ -90,6 +114,13 @@ TRANSLATIONS = {
         "author_label": "Author",
         "read_more": "Read More",
         "show_less": "Show Less",
+        "nav_tags": "Categories",
+        "browse_tags": "Article Categories",
+        "browse_tags_desc": "Browse Ponni magazine articles by category.",
+        "articles_in_category": "Articles",
+        "articles_count": "articles",
+        "back_to_tags": "Back to Categories",
+        "untitled": "Untitled",
     }
 }
 
@@ -208,6 +239,30 @@ def get_app_styles():
     .issue-card img { width: 100%; height: 280px; object-fit: cover; }
     .issue-card-title { padding: 1rem; text-align: center; color: #1e3a8a;
         font-weight: 600; font-size: 1.1rem; background: #f8fafc; }
+
+    /* Tags page styles */
+    .tags-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.25rem;
+        max-width: 900px; margin: 0 auto; }
+    .tag-card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 0.75rem;
+        padding: 1.5rem; text-align: center; text-decoration: none; display: block;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08); transition: all 0.3s ease; cursor: pointer; }
+    .tag-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.12); transform: translateY(-4px);
+        border-color: #3b82f6; }
+    .tag-card-name { font-weight: 600; font-size: 1.1rem; color: #1e3a8a; margin-bottom: 0.5rem; }
+    .tag-card-count { font-size: 0.9rem; color: #64748b; }
+
+    .tag-articles-list { max-width: 900px; margin: 0 auto; }
+    .tag-article-card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 0.75rem;
+        padding: 1.25rem; margin-bottom: 0.75rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06); transition: all 0.2s ease; }
+    .tag-article-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+    .tag-article-title { font-weight: 600; font-size: 1.05rem; color: #1e3a8a; margin-bottom: 0.4rem; }
+    .tag-article-meta { color: #64748b; font-size: 0.85rem; display: flex; gap: 1rem;
+        flex-wrap: wrap; margin-bottom: 0.5rem; }
+
+    .source-tags { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.4rem; }
+    .tag-badge { background: #eff6ff; color: #1e40af; font-size: 0.75rem; font-weight: 500;
+        padding: 0.2rem 0.6rem; border-radius: 99px; border: 1px solid #bfdbfe; }
 </style>
 """
 
@@ -362,6 +417,7 @@ def render_navigation_bar():
         <div class="nav-links">
             <a href="/?page=home" target="_self" class="nav-link">{t('nav_ask_ai')}</a>
             <a href="/?page=library" target="_self" class="nav-link">{t('nav_library')}</a>
+            <a href="/?page=tags" target="_self" class="nav-link">{t('nav_tags')}</a>
             <a href="/?page=about" target="_self" class="nav-link">{t('nav_about')}</a>
             <a href="/?lang={target_lang}{toggle_page_param}" target="_self" class="lang-toggle">{t('nav_toggle')}</a>
         </div>
@@ -804,6 +860,183 @@ def load_image(image_name: str):
     logger.warning(f"Image not found: {image_name}")
 
 
+@st.cache_data(ttl=300)
+def fetch_all_tags():
+    """Fetch all tags with article counts from Qdrant (synchronous)."""
+    if get_qdrant_client is None or qdrant_models is None or not TAXONOMY:
+        # Mock/fallback: return TAXONOMY with zero counts
+        return [
+            {"id": cat_id, "tamil": info["tamil"], "english": info["english"], "count": 0}
+            for cat_id, info in TAXONOMY.items()
+        ] if TAXONOMY else []
+
+    try:
+        client = get_qdrant_client()
+        tag_counts = {}
+        offset = None
+        while True:
+            points, offset = client.scroll(
+                collection_name=COLLECTION_NAME,
+                scroll_filter=qdrant_models.Filter(must=[
+                    qdrant_models.FieldCondition(
+                        key="type", match=qdrant_models.MatchValue(value="article")),
+                    qdrant_models.FieldCondition(
+                        key="metadata.chunk_id", match=qdrant_models.MatchValue(value=0)),
+                ]),
+                limit=500,
+                offset=offset,
+                with_payload=True,
+            )
+            for p in points:
+                metadata = (p.payload or {}).get("metadata", {})
+                for tag in metadata.get("tags", []):
+                    tag_counts[tag] = tag_counts.get(tag, 0) + 1
+            if offset is None:
+                break
+
+        tags_list = []
+        for cat_id, cat_info in TAXONOMY.items():
+            tags_list.append({
+                "id": cat_id,
+                "tamil": cat_info["tamil"],
+                "english": cat_info["english"],
+                "count": tag_counts.get(cat_id, 0),
+            })
+        tags_list.sort(key=lambda x: x["count"], reverse=True)
+        return tags_list
+    except Exception as e:
+        logger.error(f"Error fetching tags: {e}")
+        return [
+            {"id": cat_id, "tamil": info["tamil"], "english": info["english"], "count": 0}
+            for cat_id, info in TAXONOMY.items()
+        ]
+
+
+@st.cache_data(ttl=300)
+def fetch_tag_articles(tag_id):
+    """Fetch articles for a specific tag from Qdrant (synchronous)."""
+    if get_qdrant_client is None or qdrant_models is None:
+        return []
+
+    try:
+        client = get_qdrant_client()
+        seen = set()
+        articles = []
+        offset = None
+        while True:
+            points, offset = client.scroll(
+                collection_name=COLLECTION_NAME,
+                scroll_filter=qdrant_models.Filter(must=[
+                    qdrant_models.FieldCondition(
+                        key="type", match=qdrant_models.MatchValue(value="article")),
+                    qdrant_models.FieldCondition(
+                        key="metadata.tags", match=qdrant_models.MatchAny(any=[tag_id])),
+                    qdrant_models.FieldCondition(
+                        key="metadata.chunk_id", match=qdrant_models.MatchValue(value=0)),
+                ]),
+                limit=500,
+                offset=offset,
+                with_payload=True,
+            )
+            for p in points:
+                metadata = (p.payload or {}).get("metadata", {})
+                dedup_key = (metadata.get("doc_id"), metadata.get("doc_issue"))
+                if dedup_key in seen:
+                    continue
+                seen.add(dedup_key)
+                articles.append({
+                    "title": metadata.get("title"),
+                    "author_name": metadata.get("author_name"),
+                    "doc_id": metadata.get("doc_id"),
+                    "doc_issue": metadata.get("doc_issue"),
+                    "year": metadata.get("year"),
+                    "tags": metadata.get("tags", []),
+                })
+            if offset is None:
+                break
+        return articles
+    except Exception as e:
+        logger.error(f"Error fetching tag articles: {e}")
+        return []
+
+
+def render_tags_page():
+    """Render tags/categories browsing page with grid and article list views."""
+    logger.info("Rendering tags page")
+    st.markdown("<div style='height: 6rem;'></div>", unsafe_allow_html=True)
+
+    query_params = st.query_params
+    selected_tag = query_params.get("tag", None)
+    lang = st.session_state.language
+
+    if selected_tag and selected_tag in TAXONOMY:
+        # Article list view for a selected tag
+        if st.button(t("back_to_tags")):
+            current_params = dict(st.query_params)
+            current_params.pop("tag", None)
+            st.query_params.clear()
+            st.query_params.update(current_params)
+            st.rerun()
+
+        tag_info = TAXONOMY[selected_tag]
+        tag_name = tag_info["tamil"] if lang == "ta" else tag_info["english"]
+        st.markdown(f"## {tag_name}")
+
+        articles = fetch_tag_articles(selected_tag)
+        st.markdown(f"**{t('articles_in_category')}:** {len(articles)}")
+
+        if articles:
+            articles_html = '<div class="tag-articles-list">'
+            for article in articles:
+                title = article.get("title") or t("untitled")
+                author = article.get("author_name", "")
+                doc_issue = article.get("doc_issue", "")
+                year = article.get("year", "")
+                tags = article.get("tags", [])
+
+                meta_parts = []
+                if author:
+                    meta_parts.append(f"{t('author_label')}: {author}")
+                if doc_issue:
+                    meta_parts.append(f"{t('issue_label')}: {doc_issue}")
+                if year:
+                    meta_parts.append(str(year))
+                meta_html = "".join(f"<span>{p}</span>" for p in meta_parts)
+
+                tags_html = ""
+                if tags:
+                    badges = "".join(f'<span class="tag-badge">{tg}</span>' for tg in tags)
+                    tags_html = f'<div class="source-tags">{badges}</div>'
+
+                articles_html += f"""
+                <div class="tag-article-card">
+                    <div class="tag-article-title">{title}</div>
+                    <div class="tag-article-meta">{meta_html}</div>
+                    {tags_html}
+                </div>"""
+            articles_html += "</div>"
+            st.markdown(articles_html, unsafe_allow_html=True)
+    else:
+        # Tag grid view
+        st.markdown(f"## {t('browse_tags')}")
+        st.markdown(t("browse_tags_desc"))
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        tags = fetch_all_tags()
+        if tags:
+            grid_html = '<div class="tags-grid">'
+            for tag in tags:
+                tag_name = tag["tamil"] if lang == "ta" else tag["english"]
+                grid_html += f"""
+                <a href="?page=tags&tag={tag['id']}" target="_self" class="tag-card"
+                   style="text-decoration:none;">
+                    <div class="tag-card-name">{tag_name}</div>
+                    <div class="tag-card-count">{tag['count']} {t('articles_count')}</div>
+                </a>"""
+            grid_html += "</div>"
+            st.markdown(grid_html, unsafe_allow_html=True)
+
+
 def render_about_page():
     """
     Render the About page with historical information about Ponni magazine.
@@ -982,6 +1215,8 @@ def main():
         render_issues_page(selected_volume)
     elif current_page == "pdf_viewer":
         render_pdf_viewer_page(selected_volume, selected_issue)
+    elif current_page == "tags":
+        render_tags_page()
     elif current_page == "about":
         render_about_page()
     else:

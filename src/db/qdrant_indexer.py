@@ -22,6 +22,7 @@ from src.config.config import (
     CHUNK_SIZE,
     BATCH_SIZE,
 )
+from src.db.article_tagger import ArticleTagger
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -302,15 +303,12 @@ def is_author_file(s3_key: str) -> bool:
 
 def load_documents_from_s3() -> List[Dict]:
     """
-    Load and process article documents from S3.
-    
-    Performs:
-    - Downloads JSON files from S3
-    - Extracts articles from "articles" array
-    - Chunks text into manageable pieces
-    - Validates chunk quality
-    - Creates document dictionaries with metadata
-    
+    Load and process article documents from S3 with automatic tagging.
+
+    Two-pass approach:
+    1. Load all articles from S3, train TF-IDF tagger on full corpus
+    2. Tag each article, chunk, and create document dicts with tags in metadata
+
     Returns:
         list: List of document dictionaries ready for indexing
     """
@@ -325,21 +323,21 @@ def load_documents_from_s3() -> List[Dict]:
     keys = list_s3_json_files(S3_BUCKET, S3_PREFIX, S3_SUFFIX)
     logger.info(f"Found {len(keys)} JSON files in S3")
 
+    # --- Pass 1: Collect all articles for tagger training ---
+    all_articles = []  # list of (article_dict, key, volume)
     for key in keys:
-        # Skip authors.json files
         if is_author_file(key):
             continue
-            
-        logger.info(f"Processing: {key}")
+
+        logger.info(f"Loading: {key}")
         try:
             obj = s3.get_object(Bucket=S3_BUCKET, Key=key)
             data = json.loads(obj["Body"].read().decode("utf-8"))
-            
-            # Check if this is the new format with "articles" array
+
             if not isinstance(data, dict) or "articles" not in data:
                 logger.info(f"Skipping non-articles JSON: {key}")
                 continue
-            
+
             articles = data.get("articles", [])
             if not isinstance(articles, list):
                 logger.warning(f"'articles' is not a list in {key}")
@@ -348,51 +346,72 @@ def load_documents_from_s3() -> List[Dict]:
             volume = extract_volume_from_s3_key(key)
 
             for article in articles:
-                # Get content from the article
                 content = article.get("content", "").strip()
                 if not content:
                     continue
-
-                chunks = chunk_text(content, CHUNK_SIZE)
-                
-                logger.info(f"  doc_id={article.get('doc_id')}, article_no={article.get('article_no')}: {len(chunks)} chunks")
-
-                for idx, chunk in enumerate(chunks):
-                    chunk_stats['total'] += 1
-                    
-                    if not validate_chunk(chunk):
-                        chunk_stats['invalid'] += 1
-                        logger.debug(f"    Skipped invalid chunk {idx}")
-                        continue
-                    
-                    chunk_stats['valid'] += 1
-                    word_count = len(re.findall(r'[\u0B80-\u0BFF]+|\w+', chunk))
-                    chunk_stats['word_counts'].append(word_count)
-
-                    documents.append({
-                        "id": str(uuid.uuid5(
-                            uuid.NAMESPACE_DNS,
-                            f"{key}-{article.get('doc_id')}-{article.get('article_no')}-{idx}"
-                        )),
-                        "text": chunk,
-                        "metadata": {
-                            "doc_id": article.get("doc_id"),
-                            "doc_issue": article.get("doc_issue"),
-                            "article_no": article.get("article_no"),
-                            "author_name": article.get("author_name", ""),
-                            "title": article.get("title", ""),
-                            "year": article.get("year", ""),
-                            "source_document": article.get("source_document", ""),
-                            "source": "s3",
-                            "s3_key": key,
-                            "chunk_id": idx,
-                            "total_chunks": len(chunks),
-                            "volume": volume,
-                        },
-                    })
+                all_articles.append((article, key, volume))
 
         except Exception as e:
-            logger.error(f"Failed to process {key}: {e}")
+            logger.error(f"Failed to load {key}: {e}")
+
+    logger.info(f"Loaded {len(all_articles)} articles from S3")
+
+    # --- Train article tagger on full corpus ---
+    tagger = ArticleTagger()
+    tagger.train_tfidf([a for a, _, _ in all_articles])
+    logger.info("Article tagger trained")
+
+    # --- Pass 2: Tag, chunk, and prepare documents ---
+    for article, key, volume in all_articles:
+        content = article.get("content", "").strip()
+
+        # Tag at article level
+        article_tags = tagger.tag_article(article)
+        article_tags_tamil = tagger.get_tamil_tags(article_tags)
+
+        chunks = chunk_text(content, CHUNK_SIZE)
+
+        logger.info(
+            f"  doc_id={article.get('doc_id')}, "
+            f"article_no={article.get('article_no')}: "
+            f"{len(chunks)} chunks, tags={article_tags}"
+        )
+
+        for idx, chunk in enumerate(chunks):
+            chunk_stats['total'] += 1
+
+            if not validate_chunk(chunk):
+                chunk_stats['invalid'] += 1
+                logger.debug(f"    Skipped invalid chunk {idx}")
+                continue
+
+            chunk_stats['valid'] += 1
+            word_count = len(re.findall(r'[\u0B80-\u0BFF]+|\w+', chunk))
+            chunk_stats['word_counts'].append(word_count)
+
+            documents.append({
+                "id": str(uuid.uuid5(
+                    uuid.NAMESPACE_DNS,
+                    f"{key}-{article.get('doc_id')}-{article.get('article_no')}-{idx}"
+                )),
+                "text": chunk,
+                "metadata": {
+                    "doc_id": article.get("doc_id"),
+                    "doc_issue": article.get("doc_issue"),
+                    "article_no": article.get("article_no"),
+                    "author_name": article.get("author_name", ""),
+                    "title": article.get("title", ""),
+                    "year": article.get("year", ""),
+                    "source_document": article.get("source_document", ""),
+                    "source": "s3",
+                    "s3_key": key,
+                    "chunk_id": idx,
+                    "total_chunks": len(chunks),
+                    "volume": volume,
+                    "tags": article_tags,
+                    "tags_tamil": article_tags_tamil,
+                },
+            })
 
     if chunk_stats['word_counts']:
         logger.info(f"\n{'='*60}")
