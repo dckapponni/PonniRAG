@@ -120,7 +120,7 @@ class TestUtilityFunctions:
     
     def test_dense_embed_query(self):
         """Test dense embedding generation."""
-        with patch.object(hs, 'get_embed_model') as mock_model:
+        with patch('embeddings.get_embed_model') as mock_model:
             mock_model.return_value.encode.return_value.tolist.return_value = [0.1, 0.2, 0.3]
             result = hs.dense_embed_query("test query")
             assert result == [0.1, 0.2, 0.3]
@@ -372,7 +372,7 @@ class TestQdrantFunctions:
     
     def test_check_qdrant_health_success(self, mock_qdrant_client):
         """Test Qdrant health check success."""
-        with patch('hybrid_search.QdrantClient', return_value=mock_qdrant_client):
+        with patch('embeddings.QdrantClient', return_value=mock_qdrant_client):
             result = hs.check_qdrant_health()
             assert result['healthy'] == True
             assert 'points_count' in result
@@ -382,11 +382,11 @@ class TestQdrantFunctions:
         # Clear cache so our mock will be used
         clear_all_caches()
         
-        with patch('hybrid_search.QdrantClient', side_effect=Exception("Connection failed")):
+        with patch('embeddings.QdrantClient', side_effect=Exception("Connection failed")):
             result = hs.check_qdrant_health()
             assert result['healthy'] == False
             assert result['error'] == 'connection_failed'
-    
+
 
 
 # Test HybridQdrantSearch
@@ -649,10 +649,9 @@ class TestAskQuestion:
 class TestModelLoading:
     """Test model loading and caching."""
     
-    @patch('hybrid_search.SentenceTransformer')
+    @patch('embeddings.SentenceTransformer')
     def test_get_embed_model(self, mock_transformer):
         """Test embedding model loading."""
-        hs._embed_model = None
         mock_model = MagicMock()
         mock_transformer.return_value = mock_model
         
@@ -685,32 +684,14 @@ class TestModelLoading:
         except ImportError:
             pytest.skip("transformers library not available")
     
-    @patch('hybrid_search.get_embed_model')
-    @patch('hybrid_search.get_qdrant_client')
-    @patch('streamlit.spinner')
-    @patch('streamlit.success')
-    def test_preload_models(self, mock_success, mock_spinner, mock_client, mock_embed):
-        """Test preloading models."""
-        mock_embed.return_value = MagicMock()
-        mock_client.return_value = MagicMock()
-        mock_spinner.return_value.__enter__ = MagicMock()
-        mock_spinner.return_value.__exit__ = MagicMock()
-        
-        hs.preload_models()
-        
-        mock_embed.assert_called()
-        mock_client.assert_called()
-
 
 # Test get_qdrant_client
 class TestGetQdrantClient:
     """Test Qdrant client initialization."""
     
-    @patch('hybrid_search.QdrantClient')
+    @patch('embeddings.QdrantClient')
     def test_get_qdrant_client_success(self, mock_client_class):
         """Test successful Qdrant client initialization."""
-        hs._qdrant_client = None
-        
         mock_client = MagicMock()
         collection_info = MagicMock()
         collection_info.points_count = 1000
@@ -720,7 +701,7 @@ class TestGetQdrantClient:
         client = hs.get_qdrant_client()
         assert client is not None
     
-    @patch('hybrid_search.QdrantClient')
+    @patch('embeddings.QdrantClient')
     def test_get_qdrant_client_cached(self, mock_client_class):
         """Test Qdrant client caching via Streamlit."""
         clear_all_caches()
@@ -737,7 +718,7 @@ class TestGetQdrantClient:
         assert client1 is client2
         assert mock_client_class.call_count == 1
     
-    @patch('hybrid_search.QdrantClient')
+    @patch('embeddings.QdrantClient')
     def test_get_qdrant_client_failure(self, mock_client_class):
         """Test Qdrant client initialization failure."""
         clear_all_caches()
@@ -891,7 +872,7 @@ class TestAdditionalCoverage:
         """Test Qdrant health check when collection not found - FIXED VERSION."""
         clear_all_caches()
         
-        with patch('hybrid_search.QdrantClient') as mock_client_class:
+        with patch('embeddings.QdrantClient') as mock_client_class:
             mock_client = MagicMock()
             mock_client.get_collection.side_effect = Exception("Collection not found")
             mock_client_class.return_value = mock_client
