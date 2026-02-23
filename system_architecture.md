@@ -32,7 +32,8 @@
 │  │  /library ─── Volumes    │    │  Endpoints:                                     │ │
 │  │  /library/:vol ─ Issues  │    │  POST /api/ask ──────── JSON Q&A                │ │
 │  │  /library/:vol/:iss ─ PDF│    │  POST /api/ask/stream ─ SSE streaming           │ │
-│  │  /about ─── About        │    │  GET  /api/search ───── Archive search          │ │
+│  │  /tags ─── Categories    │    │  GET  /api/search ───── Archive search          │ │
+│  │  /about ─── About        │    │  GET  /api/tags ─────── Tag categories + counts  │ │
 │  │                          │    │  GET  /api/authors ──── Author listing           │ │
 │  │  Services:               │    │  GET  /api/topics ───── Topic search             │ │
 │  │  api.js (axios)          │    │  GET  /api/library ──── Volumes/Issues/PDF       │ │
@@ -228,9 +229,13 @@ hybrid_search.py   ← Orchestrator (ask_question, embeddings, caching, model lo
                               merging, relevance filtering, context building
                               (leaf — constants defined locally)
 
+article_tagger.py  Hybrid article tagger: rule-based + TF-IDF fallback
+                    TAXONOMY (15 categories), ArticleTagger class
+
 api.py             FastAPI endpoints (imports from hybrid_search)
+                    Includes /api/tags and /api/tags/{id}/articles
 qdrant_indexer.py   Vector indexing with E5 prefixes
-streamlit_app.py    Legacy Streamlit UI
+streamlit_app.py    Streamlit UI (Ask AI, Library, Tags/Categories, About)
 ```
 
 All external consumers (`api.py`, tests) import from `hybrid_search` — the re-export layer ensures backward compatibility.

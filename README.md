@@ -51,7 +51,7 @@ For detailed architecture documentation, see [system_architecture.md](system_arc
 ├── frontend/                    # React.js Frontend
 │   ├── src/
 │   │   ├── components/          # Navigation, ChatMessage, ChatInput
-│   │   ├── pages/               # Home, Library, Issues, PDFViewer, About
+│   │   ├── pages/               # Home, Library, Issues, PDFViewer, TagBrowse, About
 │   │   ├── services/            # API client, translations
 │   │   └── styles/              # CSS styles
 │   ├── Dockerfile
@@ -179,7 +179,7 @@ For detailed architecture documentation, see [system_architecture.md](system_arc
             </tr>
             <tr>
                 <td><b><a href='db/streamlit_app.py'>streamlit_app.py</a></b></td>
-                <td>- Interactive web interface for querying the Ponni RAG system<br>- Provides user-friendly search and document exploration capabilities<br>- Displays search results with relevance scores, source attribution, and metadata<br>- Supports advanced filtering, query refinement, and result visualization<br>- Includes performance metrics and search quality indicators.</td>
+                <td>- Interactive web interface for querying the Ponni RAG system<br>- Provides user-friendly search and document exploration capabilities<br>- Displays search results with relevance scores, source attribution, and metadata<br>- Tags/Categories page: browse 15 article categories with counts, drill into article lists (mirrors React TagBrowse)<br>- Supports advanced filtering, query refinement, and result visualization<br>- Includes performance metrics and search quality indicators.</td>
             </tr>
             <tr>
                 <td><b><a href='db/summary.csv'>summary.csv</a></b></td>
@@ -448,6 +448,8 @@ The FastAPI service exposes the following endpoints:
 | `GET` | `/api/library/volumes` | List all volumes |
 | `GET` | `/api/library/volumes/{id}/issues` | Get issues for a volume |
 | `GET` | `/api/library/volumes/{id}/issues/{issue}/pdf` | Get PDF link |
+| `GET` | `/api/tags` | List all article categories with counts |
+| `GET` | `/api/tags/{tag_id}/articles` | Get articles for a category |
 | `GET` | `/api/cache/stats` | Cache hit/miss stats |
 | `POST` | `/api/cache/clear` | Clear response cache |
 
@@ -515,6 +517,7 @@ docker-compose up frontend
 | AI Search | Chat-based interface for querying the archive |
 | Digital Library | Browse volumes and issues with cover images |
 | PDF Viewer | Embedded PDF viewer for magazine issues |
+| Tags / Categories | Browse 15 article categories with article counts, drill into article lists |
 | Language Toggle | Switch between Tamil and English |
 | Responsive Design | Works on desktop and mobile devices |
 
@@ -523,8 +526,8 @@ docker-compose up frontend
 ```
 frontend/
 ├── src/
-│   ├── components/      # Navigation, ChatMessage, ChatInput
-│   ├── pages/           # Home, Library, Issues, PDFViewer, About
+│   ├── components/      # Navigation, ChatMessage, ChatInput, TagFilter
+│   ├── pages/           # Home, Library, Issues, PDFViewer, TagBrowse, About
 │   ├── services/        # API client, translations
 │   └── styles/          # CSS matching Streamlit UI
 ├── Dockerfile
