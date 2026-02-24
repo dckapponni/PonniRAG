@@ -26,9 +26,9 @@ from src.db.article_tagger import ArticleTagger
 
 BASE_DIR = Path(__file__).resolve().parent
 
-QDRANT_PATH = str(BASE_DIR / "qdrant_data")
-QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
-QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
+QDRANT_PATH = str(BASE_DIR / "qdrant_data_tags")
+# QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
+# QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6400"))
 
 COLLECTION_NAME = Path(__file__).stem
 
@@ -501,7 +501,7 @@ def main():
     5. Indexes author metadata
     6. Logs statistics and completion status
     """
-    client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+    client = QdrantClient(path=QDRANT_PATH)
 
     if client.collection_exists(COLLECTION_NAME):
         client.delete_collection(COLLECTION_NAME)

@@ -18,7 +18,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
-QDRANT_PATH = str(BASE_DIR / "qdrant_data")
+QDRANT_PATH = str(BASE_DIR / "qdrant_data_tags")
 IMG_DIR = BASE_DIR.parent.parent/"frontend"/"public"/"images"
 
 # Check if mock mode is enabled

@@ -34,8 +34,10 @@ else:
     except RuntimeError:
         pass  # Already configured by another module
 
-QDRANT_HOST = os.getenv("QDRANT_HOST", "qdrant")
-QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
+# QDRANT_HOST = os.getenv("QDRANT_HOST", "qdrant")
+# QDRANT_PORT = int(os.getenv("QDRANT_PORT"))
+QDRANT_HOST= os.getenv("QDRANT_HOST", "localhost") 
+QDRANT_PATH = "/home/ubuntu/Ponni_Rag/Tagging_feature/src/db/qdrant_data_tags"
 COLLECTION_NAME = "qdrant_indexer"
 EMBEDDING_MODEL = "intfloat/multilingual-e5-large"
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -64,26 +66,42 @@ def get_embed_model():
     return model
 
 
+# @st.cache_resource(show_spinner=False)
+# def get_qdrant_client() -> QdrantClient:
+#     """
+#     Get or initialize Qdrant client (singleton pattern with Streamlit caching).
+#     Spinner is disabled - will only show during preload_models().
+#     """
+#     logger.info("🔄 Connecting to Qdrant SERVER...")
+
+#     client = QdrantClient(
+#         host=QDRANT_HOST,
+#         port=QDRANT_PORT,
+#         prefer_grpc=False,
+#         timeout=30.0
+#     )
+
+#     collection_info = client.get_collection(COLLECTION_NAME)
+#     logger.info(f"Connected: {collection_info.points_count} points")
+
+#     return client
 @st.cache_resource(show_spinner=False)
 def get_qdrant_client() -> QdrantClient:
     """
-    Get or initialize Qdrant client (singleton pattern with Streamlit caching).
-    Spinner is disabled - will only show during preload_models().
+    Get or initialize embedded Qdrant client.
     """
-    logger.info("🔄 Connecting to Qdrant SERVER...")
+    logger.info("🔄 Connecting to EMBEDDED Qdrant...")
 
-    client = QdrantClient(
-        host=QDRANT_HOST,
-        port=QDRANT_PORT,
-        prefer_grpc=False,
-        timeout=30.0
-    )
+    client = QdrantClient(path=QDRANT_PATH)
 
-    collection_info = client.get_collection(COLLECTION_NAME)
-    logger.info(f"Connected: {collection_info.points_count} points")
+    try:
+        collection_info = client.get_collection(COLLECTION_NAME)
+        logger.info(f"Connected: {collection_info.points_count} points")
+    except Exception as e:
+        logger.error(f"Collection error: {e}")
+        raise
 
     return client
-
 
 @st.cache_resource(show_spinner=False)
 def get_csv_dataframe():

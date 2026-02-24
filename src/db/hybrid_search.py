@@ -12,9 +12,9 @@ from pathlib import Path
 import asyncio
 import time
 
-from cache import ResponseCache, _response_cache  # noqa: F401
-from embeddings import (  # noqa: F401
-    USE_CUDA, DEVICE, QDRANT_HOST, QDRANT_PORT, COLLECTION_NAME,
+from cache import ResponseCache, _response_cache 
+from embeddings import (
+    USE_CUDA, DEVICE, COLLECTION_NAME,
     EMBEDDING_MODEL, SCORE_THRESHOLD, BASE_DIR, CSV_PATH,
     _embed_lock,
     get_embed_model, get_qdrant_client, get_csv_dataframe, get_csv_embeddings,
