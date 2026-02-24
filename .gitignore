@@ -11,4 +11,7 @@ qdrant_data/
 !frontend/package-lock.json
 *.log
 .env
+*.sqlite
+*.db
+qdrant_data_tags/
 ./
