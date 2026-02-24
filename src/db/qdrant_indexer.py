@@ -24,13 +24,12 @@ from src.config.config import (
 )
 from src.db.article_tagger import ArticleTagger
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent
+QDRANT_PATH = str(BASE_DIR / "db" / "qdrant_data_tags")
+COLLECTION_NAME = "qdrant_indexer"
 
-QDRANT_PATH = str(BASE_DIR / "qdrant_data_tags")
-# QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
-# QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6400"))
-
-COLLECTION_NAME = Path(__file__).stem
+# ensure folder exists
+Path(QDRANT_PATH).mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

@@ -36,13 +36,15 @@ else:
 
 # QDRANT_HOST = os.getenv("QDRANT_HOST", "qdrant")
 # QDRANT_PORT = int(os.getenv("QDRANT_PORT"))
-QDRANT_HOST= os.getenv("QDRANT_HOST", "localhost") 
-QDRANT_PATH = "/home/ubuntu/Ponni_Rag/Tagging_feature/src/db/qdrant_data_tags"
-COLLECTION_NAME = "qdrant_indexer"
-EMBEDDING_MODEL = "intfloat/multilingual-e5-large"
+# QDRANT_HOST= os.getenv("QDRANT_HOST", "localhost") 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+QDRANT_PATH = str(BASE_DIR / "db" / "qdrant_data_tags")
+COLLECTION_NAME = "qdrant_indexer"
+
+EMBEDDING_MODEL = "intfloat/multilingual-e5-large"
 CSV_PATH = BASE_DIR / "data" / "summary.csv"
-SCORE_THRESHOLD = 0.8  # Minimum cosine similarity for dense vector search
+SCORE_THRESHOLD = 0.65 # Minimum cosine similarity for dense vector search
 
 _embed_lock = threading.Lock()
 
@@ -88,18 +90,17 @@ def get_embed_model():
 @st.cache_resource(show_spinner=False)
 def get_qdrant_client() -> QdrantClient:
     """
-    Get or initialize embedded Qdrant client.
+    Embedded Qdrant only (local mode).
     """
-    logger.info("🔄 Connecting to EMBEDDED Qdrant...")
+    if not os.path.exists(QDRANT_PATH):
+        raise FileNotFoundError(f"Qdrant data not found at: {QDRANT_PATH}")
+
+    logger.info(f"🔄 Using LOCAL Qdrant → {QDRANT_PATH}")
 
     client = QdrantClient(path=QDRANT_PATH)
 
-    try:
-        collection_info = client.get_collection(COLLECTION_NAME)
-        logger.info(f"Connected: {collection_info.points_count} points")
-    except Exception as e:
-        logger.error(f"Collection error: {e}")
-        raise
+    collection_info = client.get_collection(COLLECTION_NAME)
+    logger.info(f"✅ Connected: {collection_info.points_count} points")
 
     return client
 
@@ -133,22 +134,20 @@ def get_csv_embeddings():
 
     embeddings = model.encode(
         [f"passage: {t}" for t in texts],
-        show_progress_bar=False
+        show_progress_bar=False,
+        normalize_embeddings=True
     )
 
     return list(zip(texts, embeddings))
 
 
-# ============================================================================
-# EMBEDDING FUNCTIONS (USE CACHED MODELS)
-# ============================================================================
-
 def dense_embed_query(text: str):
-    """Generate dense embedding for query text (thread-safe)."""
     model = get_embed_model()
     with _embed_lock:
-        return model.encode(f"query: {text}").tolist()
-
+        return model.encode(
+            f"query: {text}",
+            normalize_embeddings=True
+        ).tolist()
 
 def _deterministic_token_hash(token: str) -> int:
     """Deterministic token hash using MD5, consistent across processes.
@@ -181,7 +180,10 @@ def search_csv_semantic(question: str, top_k: int = 5):
     if not csv_data:
         return []
 
-    query_emb = model.encode(f"query: {question}")
+    query_emb = model.encode(
+        f"query: {question}",
+        normalize_embeddings=True
+    )
 
     scored = []
     for text, emb in csv_data:
@@ -224,7 +226,7 @@ def check_qdrant_health() -> Dict:
             "error": "connection_failed",
             "message": "Failed to connect to Qdrant server",
             "details": str(e),
-            "action": "Ensure Qdrant server is running on port 6333"
+            "action": "Run the indexer to create the local database"
         }
 
 
