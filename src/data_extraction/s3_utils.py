@@ -293,27 +293,3 @@ def file_exists(bucket, key):
         return False
 
 
-def delete_file(bucket, key):
-    """
-    Delete a file from S3.
-    
-    Args:
-        bucket (str): S3 bucket name
-        key (str): S3 object key
-        
-    Raises:
-        ClientError: If S3 operation fails
-    """
-    try:
-        logger.debug(f"Deleting file: s3://{bucket}/{key}")
-        s3.delete_object(Bucket=bucket, Key=key)
-        logger.info(f"Successfully deleted: s3://{bucket}/{key}")
-        
-    except ClientError as e:
-        error_code = e.response['Error']['Code']
-        logger.error(f"S3 ClientError deleting file: {error_code} - {e}")
-        raise
-        
-    except Exception as e:
-        logger.error(f"Unexpected error deleting file {key}: {e}", exc_info=True)
-        raise

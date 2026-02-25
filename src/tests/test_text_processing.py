@@ -8,11 +8,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from data_extraction.text_processing import (
     normalize_text,
-    normalize_title,
     is_valid_heading,
     fuzzy_match_author,
     extract_author_from_line,
-    find_author_in_range,
     get_intro_keywords
 )
 
@@ -108,74 +106,6 @@ class TestNormalizeText:
         with patch('data_extraction.text_processing.logger') as mock_logger:
             result = normalize_text(FailingObject())
             assert mock_logger.warning.called
-
-
-class TestNormalizeTitle:
-    """Test suite for the normalize_title function.
-    
-    Tests title normalization including punctuation removal, Unicode handling,
-    case conversion, and error conditions.
-    """
-    
-    def test_normalize_title_empty(self):
-        """Test normalize_title with empty and None inputs.
-        
-        Verifies that the function returns an empty string when given
-        empty string or None as input.
-        """
-        assert normalize_title("") == ""
-        assert normalize_title(None) == ""
-    
-    def test_normalize_title_removes_punctuation(self):
-        """Test that all punctuation marks are removed from titles.
-        
-        Verifies that the function removes common punctuation characters
-        including: . , ! ? ; : " ' - — – ( ) [ ] { }
-        """
-        title = "Title.,!?;:\"'-—–()[]{}End"
-        result = normalize_title(title)
-        # All punctuation should be removed
-        for char in '.,!?;:"\'-—–()[]{}':
-            assert char not in result
-    
-    def test_normalize_title_with_tamil_text(self):
-        """Test normalization of titles containing Tamil text.
-        
-        Verifies that the function can handle mixed Tamil and English
-        text without errors.
-        """
-        title = "தமிழ் Title ணு"
-        result = normalize_title(title)
-        assert isinstance(result, str)
-    
-    def test_normalize_title_lowercase(self):
-        """Test that titles are converted to lowercase.
-        
-        Verifies that all characters in the normalized title are
-        in lowercase.
-        """
-        title = "UPPERCASE Title"
-        result = normalize_title(title)
-        assert result.islower()
-    
-    def test_normalize_title_with_exception(self):
-        """Test exception handling during title normalization.
-        
-        Verifies that when an exception occurs during processing,
-        the function:
-        - Logs a warning
-        - Returns a valid string instead of crashing
-        """
-        class BadTitle:
-            def __bool__(self):
-                return True
-            def replace(self, *args):
-                raise ValueError("Mock error")
-        
-        with patch('data_extraction.text_processing.logger') as mock_logger:
-            result = normalize_title(BadTitle())
-            assert mock_logger.warning.called
-            assert isinstance(result, str)
 
 
 class TestIsValidHeading:
@@ -518,148 +448,6 @@ class TestExtractAuthorFromLine:
         assert isinstance(result, (str, type(None)))
 
 
-class TestFindAuthorInRange:
-    """Test suite for the find_author_in_range function.
-    
-    Tests searching for author names within a range of text lines including
-    blank line handling, index errors, and various edge cases.
-    """
-    
-    def test_find_author_in_range_basic(self):
-        """Test basic author finding functionality.
-        
-        Verifies that the function:
-        - Returns a tuple of (author_name, line_index)
-        - Successfully finds an author in a simple list of lines
-        """
-        lines = ["Line 1", "Author Name", "Line 3"]
-        authors_norm = ["authorname"]
-        authors_orig = ["Author Name"]
-        
-        with patch('data_extraction.text_processing.logger'):
-            result = find_author_in_range(lines, 0, 3, authors_norm, authors_orig)
-            assert isinstance(result, tuple)
-            assert len(result) == 2
-    
-    def test_find_author_not_found(self):
-        """Test behavior when no author is found in range.
-        
-        Verifies that when no author is found:
-        - Function returns (None, -1)
-        - A debug message about "No author found" is logged
-        """
-        lines = ["Line 1", "Line 2", "Line 3"]
-        authors_norm = ["author"]
-        authors_orig = ["Author"]
-        
-        with patch('data_extraction.text_processing.logger') as mock_logger:
-            result = find_author_in_range(lines, 0, 3, authors_norm, authors_orig)
-            assert result == (None, -1)
-            # Should log that no author was found
-            assert any("No author found" in str(call) for call in mock_logger.debug.call_args_list)
-    
-    def test_find_author_with_blank_lines(self):
-        """Test that blank lines are properly skipped.
-        
-        Verifies that the function:
-        - Skips empty lines and whitespace-only lines
-        - Correctly identifies the line index when author is found
-        """
-        lines = ["", "  ", "   ", "Author Name", "Content"]
-        authors_norm = ["authorname"]
-        authors_orig = ["Author Name"]
-        
-        with patch('data_extraction.text_processing.logger'):
-            result = find_author_in_range(lines, 0, 5, authors_norm, authors_orig)
-            if result[0]:
-                assert result[1] == 3
-    
-    def test_find_author_index_error(self):
-        """Test handling of IndexError exceptions.
-        
-        Verifies that when an IndexError occurs:
-        - Function returns (None, -1)
-        - A warning is logged
-        - No exception is raised to the caller
-        """
-        lines = ["Line 1", "Line 2"]
-        authors_norm = ["author"]
-        authors_orig = ["Author"]
-        
-        with patch('data_extraction.text_processing.logger') as mock_logger:
-            with patch('data_extraction.text_processing.extract_author_from_line', 
-                      side_effect=IndexError("Index out of range")):
-                result = find_author_in_range(lines, 0, 10, authors_norm, authors_orig)
-                assert result == (None, -1)
-                assert mock_logger.warning.called
-    
-    def test_find_author_general_exception(self):
-        """Test handling of general exceptions.
-        
-        Verifies that when an unexpected exception occurs:
-        - Function returns (None, -1)
-        - An error is logged
-        - No exception is raised to the caller
-        """
-        lines = ["Line 1", "Line 2"]
-        authors_norm = ["author"]
-        authors_orig = ["Author"]
-        
-        with patch('data_extraction.text_processing.logger') as mock_logger:
-            with patch('data_extraction.text_processing.extract_author_from_line',
-                      side_effect=RuntimeError("Unexpected error")):
-                result = find_author_in_range(lines, 0, 5, authors_norm, authors_orig)
-                assert result == (None, -1)
-                assert mock_logger.error.called
-    
-    def test_find_author_debug_logging(self):
-        """Test that debug logging occurs during author search.
-        
-        Verifies that the function logs debug messages during
-        its execution for troubleshooting purposes.
-        """
-        lines = ["Line 1", "Author Name", "Line 3"]
-        authors_norm = ["authorname"]
-        authors_orig = ["Author Name"]
-        
-        with patch('data_extraction.text_processing.logger') as mock_logger:
-            result = find_author_in_range(lines, 0, 3, authors_norm, authors_orig)
-            # Should have debug logging calls
-            assert mock_logger.debug.called
-    
-    def test_find_author_range_exceeds_length(self):
-        """Test behavior when search range exceeds list length.
-        
-        Verifies that the function handles gracefully when the
-        specified end_idx is larger than the actual list length,
-        using min(end_idx, len(lines)) internally.
-        """
-        lines = ["Line 1", "Line 2"]
-        authors_norm = ["author"]
-        authors_orig = ["Author"]
-        
-        with patch('data_extraction.text_processing.logger'):
-            # Should handle gracefully using min(end_idx, len(lines))
-            result = find_author_in_range(lines, 0, 100, authors_norm, authors_orig)
-            assert isinstance(result, tuple)
-    
-    def test_find_author_found_logs_correctly(self):
-        """Test logging when an author is successfully found.
-        
-        Verifies that when an author is found, a debug message
-        containing "Found author" is logged with relevant details.
-        """
-        lines = ["", "Author Name", ""]
-        authors_norm = ["authorname"]
-        authors_orig = ["Author Name"]
-        
-        with patch('data_extraction.text_processing.logger') as mock_logger:
-            result = find_author_in_range(lines, 0, 3, authors_norm, authors_orig)
-            if result[0]:
-                # Should log finding the author
-                assert any("Found author" in str(call) for call in mock_logger.debug.call_args_list)
-
-
 class TestGetIntroKeywords:
     """Test suite for the get_intro_keywords function.
     
@@ -743,27 +531,21 @@ class TestIntegration:
     
     def test_author_extraction_workflow(self):
         """Test complete author extraction workflow.
-        
-        Verifies a realistic author extraction process:
-        1. Extracting author from a single formatted line
-        2. Finding author within a range of lines
-        
+
+        Verifies a realistic author extraction process by
+        extracting an author from a single formatted line.
+
         This simulates how author extraction would be used in
         practice when processing documents.
         """
         authors_norm = ["testauthor"]
         authors_orig = ["Test Author"]
-        
+
         # Extract from a line
         line = "— Test Author"
         author = extract_author_from_line(line, authors_norm, authors_orig)
-        
-        # Find in a range
-        lines = ["", "— Test Author", "Content"]
-        found_author, idx = find_author_in_range(lines, 0, 3, authors_norm, authors_orig)
-        
+
         assert isinstance(author, (str, type(None)))
-        assert isinstance(found_author, (str, type(None)))
 
 
 if __name__ == "__main__":

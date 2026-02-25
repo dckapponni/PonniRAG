@@ -6,9 +6,9 @@ project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.data_extraction.text_processing import (
-    normalize_text, normalize_title, is_valid_heading,
+    normalize_text, is_valid_heading,
     fuzzy_match_author, extract_author_from_line,
-    find_author_in_range, get_intro_keywords
+    get_intro_keywords
 )
 
 
@@ -38,21 +38,6 @@ class TestTextProcessingIntegration:
         assert normalize_text("  Spaces  ") == "spaces"
         assert normalize_text("") == ""
         assert normalize_text(None) == ""
-    
-    def test_normalize_title_real(self):
-        """Test normalize_title with real punctuation-heavy input.
-        
-        Verifies that title normalization:
-        - Returns a non-empty result for valid input
-        - Removes commas from titles
-        - Handles multiple types of punctuation
-        
-        This is critical for matching titles across different sources that
-        may use different punctuation conventions.
-        """
-        result = normalize_title("Title, with! punctuation?")
-        assert result
-        assert "," not in result
     
     def test_is_valid_heading_real(self):
         """Test is_valid_heading with various real-world heading formats.
@@ -110,25 +95,6 @@ class TestTextProcessingIntegration:
         assert extract_author_from_line("Author One", authors_norm, authors_orig) == "Author One"
         assert extract_author_from_line("— Author One", authors_norm, authors_orig) == "Author One"
         assert extract_author_from_line("", authors_norm, authors_orig) is None
-    
-    def test_find_author_in_range_real(self):
-        """Test find_author_in_range with real line list and author data.
-        
-        Verifies that author range searching:
-        - Successfully finds author in a list of lines
-        - Returns the correct author name ("Author One")
-        - Returns the correct line index (1) where author was found
-        
-        This function is critical for locating author attributions within
-        a specific section of text, such as after a poem title or at the
-        beginning of a prose piece.
-        """
-        lines = ["Line 1", "Author One", "Line 3"]
-        authors_norm = ["authorone"]
-        authors_orig = ["Author One"]
-        author, idx = find_author_in_range(lines, 0, 3, authors_norm, authors_orig)
-        assert author == "Author One"
-        assert idx == 1
     
     def test_get_intro_keywords_real(self):
         """Test get_intro_keywords returns valid Tamil introduction keywords.

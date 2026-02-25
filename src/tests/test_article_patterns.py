@@ -11,7 +11,6 @@ from data_extraction.article_patterns import (
     extract_pattern_b_forward,
     extract_pattern_c_reverse,
     find_author_in_content_end,
-    extract_articles_main
 )
 
 
@@ -936,70 +935,6 @@ class TestExtractPatternCReverse:
         )
         
         assert isinstance(result, list)
-
-
-class TestExtractArticlesMain:
-    """Test suite for the main extraction orchestrator function."""
-    
-    def test_extract_articles_main_calls_all_patterns(self, sample_authors, intro_keywords):
-        """Test that main function invokes all three extraction patterns."""
-        lines = ["வரி 1", "வரி 2", "வரி 3"]
-        
-        with patch('data_extraction.article_patterns.extract_pattern_c_reverse') as mock_c, \
-             patch('data_extraction.article_patterns.extract_pattern_a_forward') as mock_a, \
-             patch('data_extraction.article_patterns.extract_pattern_b_forward') as mock_b:
-            
-            mock_c.return_value = []
-            mock_a.return_value = []
-            mock_b.return_value = []
-            
-            result = extract_articles_main(
-                lines, 0, len(lines),
-                sample_authors['normalized'],
-                sample_authors['original'],
-                intro_keywords
-            )
-            
-            assert mock_c.called
-            assert mock_a.called
-            assert mock_b.called
-            assert isinstance(result, list)
-    
-    def test_extract_articles_main_combines_results(self, sample_authors, intro_keywords):
-        """Test that main function combines results from all patterns."""
-        lines = ["வரி"]
-        
-        with patch('data_extraction.article_patterns.extract_pattern_c_reverse') as mock_c, \
-             patch('data_extraction.article_patterns.extract_pattern_a_forward') as mock_a, \
-             patch('data_extraction.article_patterns.extract_pattern_b_forward') as mock_b:
-            
-            mock_c.return_value = [{"pattern": "C", "heading": "C1"}]
-            mock_a.return_value = [{"pattern": "A", "heading": "A1"}]
-            mock_b.return_value = [{"pattern": "B", "heading": "B1"}]
-            
-            result = extract_articles_main(
-                lines, 0, len(lines),
-                sample_authors['normalized'],
-                sample_authors['original'],
-                intro_keywords
-            )
-            
-            assert len(result) == 3
-            assert isinstance(result, list)
-    
-    def test_extract_articles_main_empty_input(self, sample_authors, intro_keywords):
-        """Test main function behavior with empty input."""
-        lines = []
-        
-        result = extract_articles_main(
-            lines, 0, len(lines),
-            sample_authors['normalized'],
-            sample_authors['original'],
-            intro_keywords
-        )
-        
-        assert isinstance(result, list)
-        assert len(result) == 0
 
 
 class TestArticlePatternsIntegration:

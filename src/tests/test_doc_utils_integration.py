@@ -7,7 +7,7 @@ sys.path.insert(0, str(project_root))
 
 from src.data_extraction.doc_utils import (
     extract_doc_info, is_valid_author_name, is_section_type,
-    is_section_header, parse_toc_line_robust, count_words,
+    is_section_header, parse_toc_line_robust,
     count_content_lines, find_toc_boundaries, extract_authors_from_toc,
     get_shared_authors
 )
@@ -75,17 +75,6 @@ class TestDocUtilsIntegration:
         result = parse_toc_line_robust("சிறுகதை  முருகன்  45")
         assert result is not None
         assert result['page'] == "45"
-    
-    def test_count_words_real(self):
-        """
-        Test word counting functionality.
-        
-        Verifies accurate word count for various input types including
-        normal text, empty strings, and None values.
-        """
-        assert count_words("hello world") == 2
-        assert count_words("") == 0
-        assert count_words(None) == 0
     
     def test_count_content_lines_real(self):
         """

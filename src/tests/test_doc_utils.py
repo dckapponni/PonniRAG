@@ -15,7 +15,6 @@ from src.data_extraction.doc_utils import (
     extract_doc_info,
     extract_authors_from_toc,
     extract_authors_alternative,
-    count_words,
     count_content_lines,
     get_shared_authors
 )
@@ -833,33 +832,12 @@ class TestTOCParsing:
 class TestHelperFunctions:
     """
     Tests for helper/utility functions.
-    
+
     Functions:
-        - count_words: Counts words in text
         - count_content_lines: Counts non-empty lines
         - get_shared_authors: Retrieves authors from lookup dictionary
     """
-    
-    def test_count_words(self):
-        """
-        Test word counting functionality.
-        
-        Validates:
-            - Accurate word count
-            - Empty string handling
-            - None handling
-            - Whitespace handling
-        
-        Examples:
-            "தமிழ் வார்த்தைகள் இங்கே" → 3 words
-            "" → 0 words
-            "  single  " → 1 word
-        """
-        assert count_words("தமிழ் வார்த்தைகள் இங்கே") == 3
-        assert count_words("") == 0
-        assert count_words(None) == 0
-        assert count_words("  single  ") == 1
-    
+
     def test_count_content_lines(self):
         """
         Test content line counting (non-empty lines).

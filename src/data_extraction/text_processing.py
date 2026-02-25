@@ -32,33 +32,6 @@ def normalize_text(text):
         return str(text) if text else ""
 
 
-def normalize_title(title):
-    """
-    Normalize title/heading for matching across documents.
-    
-    Args:
-        title (str): Title to normalize
-        
-    Returns:
-        str: Normalized title
-    """
-    try:
-        if not title:
-            return ""
-        
-        title = re.sub(r'[.,!?;:"\'\-—–()[\]{}]', '', title)
-        title = title.replace('ண', 'ण').replace('णु', ' णु')
-        title = re.sub(r'\s+', '', title.strip().lower())
-        
-        return title
-        
-    except Exception as e:
-        title_str = str(title) if title else ''
-        title_preview = title_str[:50] if len(title_str) > 50 else title_str
-        logger.warning(f"Error normalizing title '{title_preview}...': {e}")
-        return str(title) if title else ""
-
-
 def is_valid_heading(heading):
     """
     Validate if a line qualifies as a proper article heading.
@@ -179,44 +152,6 @@ def extract_author_from_line(line, authors_normalized, authors_original):
         line_preview = line_str[:50] if len(line_str) > 50 else line_str
         logger.warning(f"Error extracting author from line '{line_preview}...': {e}")
         return None
-
-
-def find_author_in_range(lines, start_idx, end_idx, authors_normalized, authors_original):
-    """
-    Search for an author name within a specified range of lines.
-    
-    Args:
-        lines (list): List of text lines
-        start_idx (int): Starting index for search
-        end_idx (int): Ending index for search
-        authors_normalized (list): List of normalized author names
-        authors_original (list): List of original author names
-        
-    Returns:
-        tuple: (author_name or None, line_index or -1)
-    """
-    try:
-        logger.debug(f"Searching for author from line {start_idx} to {end_idx}")
-        
-        for i in range(start_idx, min(end_idx, len(lines))):
-            line = lines[i].strip()
-            if not line:
-                continue
-            
-            author = extract_author_from_line(line, authors_normalized, authors_original)
-            if author:
-                logger.debug(f"Found author '{author}' at line {i}")
-                return (author, i)
-        
-        logger.debug(f"No author found in range {start_idx}-{end_idx}")
-        return (None, -1)
-        
-    except IndexError as e:
-        logger.warning(f"Index error in find_author_in_range ({start_idx}-{end_idx}): {e}")
-        return (None, -1)
-    except Exception as e:
-        logger.error(f"Error in find_author_in_range: {e}")
-        return (None, -1)
 
 
 def get_intro_keywords():

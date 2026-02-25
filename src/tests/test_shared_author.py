@@ -6,14 +6,12 @@ import pytest
 import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock, mock_open, call
-import warnings
 import json
 
 # Import the functions to test
 from shared_author import (
     check_author_ahead,
     build_shared_authors_dict_s3,
-    build_shared_authors_dict_local
 )
 
 class TestCheckAuthorAhead:
@@ -858,214 +856,6 @@ Author Name
         except Exception:
             pass  # Acceptable behavior
 
-class TestBuildSharedAuthorsDictLocal:
-    """
-    Test suite for build_shared_authors_dict_local function.
-    
-    DEPRECATION NOTICE:
-        This function is deprecated in favor of the S3-based version.
-        It's maintained for backward compatibility but should issue
-        deprecation warnings.
-    
-    Functionality:
-        Builds the same author dictionary structure but reads from
-        local filesystem instead of S3.
-    
-    Key Differences from S3 Version:
-        - Uses pathlib.Path instead of S3 client
-        - Uses open() instead of read_text_from_s3()
-        - Uses .rglob('*.txt') instead of list_files()
-    
-    Tests Focus On:
-        - Deprecation warning issuance
-        - Local file system operations
-        - Error handling (IOError, UnicodeDecodeError)
-        - Backward compatibility
-    """
-    
-    def test_deprecation_warning_issued(self):
-        """
-        Test that deprecation warning is properly issued when called.
-        
-        Expected:
-            DeprecationWarning raised when function is called
-        
-        Validates:
-            - Warning system works
-            - Users notified about deprecated function
-        
-        Note:
-            Implementation-dependent; may not issue warning in all cases
-        
-        Best Practice:
-            Users should migrate to S3-based version
-        """
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            
-            try:
-                build_shared_authors_dict_local(Path("/fake/path"))
-            except (FileNotFoundError, Exception):
-                pass
-            
-            # Check for deprecation warning (implementation dependent)
-    
-    @patch('pathlib.Path.exists')
-    @patch('pathlib.Path.rglob')
-    @patch('builtins.open', new_callable=mock_open, read_data="மலர் 1\nஇதழ் 1\nபொருளடக்கம்\nAuthor\nஆகியோரின்")
-    def test_build_from_valid_local_files(self, mock_file, mock_rglob, mock_exists):
-        """
-        Test building dictionary from valid local files.
-        
-        Scenario:
-            Local directory with two text files
-        
-        Expected:
-            Successfully parse and return dictionary
-        
-        Validates:
-            - Local file reading works
-            - Same parsing logic as S3 version
-            - Multiple file processing
-        """
-        mock_exists.return_value = True
-        mock_rglob.return_value = [Path("file1.txt"), Path("file2.txt")]
-        
-        result = build_shared_authors_dict_local(Path("/fake/path"))
-        
-        assert isinstance(result, (dict, tuple))
-    
-    @patch('pathlib.Path.exists')
-    def test_nonexistent_directory(self, mock_exists):
-        """
-        Test behavior with non-existent directory path.
-        
-        Scenario:
-            Path provided doesn't exist on filesystem
-        
-        Expected:
-            FileNotFoundError raised or handled gracefully
-        
-        Validates:
-            - Path validation
-            - Error handling for missing directories
-        """
-        mock_exists.return_value = False
-        
-        try:
-            result = build_shared_authors_dict_local(Path("/nonexistent"))
-            # Should handle gracefully or raise FileNotFoundError
-        except FileNotFoundError:
-            pass  # Acceptable
-    
-    @patch('pathlib.Path.exists')
-    @patch('pathlib.Path.rglob')
-    def test_directory_with_no_text_files(self, mock_rglob, mock_exists):
-        """
-        Test directory containing no .txt files.
-        
-        Scenario:
-            Directory exists but has no matching files
-        
-        Expected:
-            Return empty dictionary
-            No errors raised
-        
-        Validates:
-            - Empty directory handling
-            - Proper filtering for .txt files
-        """
-        mock_exists.return_value = True
-        mock_rglob.return_value = []
-        
-        result = build_shared_authors_dict_local(Path("/fake/path"))
-        
-        # Should return empty structure
-        assert isinstance(result, (dict, tuple))
-    
-    @patch('pathlib.Path.exists')
-    @patch('pathlib.Path.rglob')
-    @patch('builtins.open', new_callable=mock_open)
-    def test_file_read_error(self, mock_file, mock_rglob, mock_exists):
-        """
-        Test handling of file read errors (permissions, etc.).
-        
-        Scenario:
-            File exists but cannot be opened (permissions, lock, etc.)
-        
-        Expected:
-            IOError caught and handled
-            Processing continues or fails gracefully
-        
-        Validates:
-            - File access error handling
-            - Permission error resilience
-        """
-        mock_exists.return_value = True
-        mock_rglob.return_value = [Path("file1.txt")]
-        mock_file.side_effect = IOError("Cannot read file")
-        
-        try:
-            result = build_shared_authors_dict_local(Path("/fake/path"))
-            assert isinstance(result, (dict, tuple))
-        except IOError:
-            pass  # Acceptable if not handled
-    
-    @patch('pathlib.Path.exists')
-    @patch('pathlib.Path.rglob')
-    @patch('builtins.open', new_callable=mock_open, read_data="")
-    def test_empty_files(self, mock_file, mock_rglob, mock_exists):
-        """
-        Test handling of empty local files.
-        
-        Scenario:
-            File exists but is empty (0 bytes)
-        
-        Expected:
-            Handle gracefully, skip or return empty entry
-        
-        Validates:
-            - Empty file handling matches S3 version
-            - No crash on empty content
-        """
-        mock_exists.return_value = True
-        mock_rglob.return_value = [Path("empty.txt")]
-        
-        result = build_shared_authors_dict_local(Path("/fake/path"))
-        
-        assert isinstance(result, (dict, tuple))
-    
-    @patch('pathlib.Path.exists')
-    @patch('pathlib.Path.rglob')
-    @patch('builtins.open', new_callable=mock_open)
-    def test_unicode_decode_error_in_file(self, mock_file, mock_rglob, mock_exists):
-        """
-        Test handling of Unicode decoding errors in local files.
-        
-        Scenario:
-            File has invalid UTF-8 encoding
-        
-        Expected:
-            UnicodeDecodeError caught and handled
-            Similar behavior to S3 version
-        
-        Validates:
-            - Encoding error handling
-            - Consistency with S3 version
-        """
-        mock_exists.return_value = True
-        mock_rglob.return_value = [Path("file1.txt")]
-        mock_file.return_value.__enter__.return_value.read.side_effect = UnicodeDecodeError(
-            'utf-8', b'', 0, 1, 'invalid'
-        )
-        
-        try:
-            result = build_shared_authors_dict_local(Path("/fake/path"))
-            assert isinstance(result, (dict, tuple))
-        except UnicodeDecodeError:
-            pass  # Acceptable if not handled
-
-
 class TestIntegrationAndEdgeCases:
     """
     Integration tests and complex edge cases.
@@ -1169,7 +959,6 @@ class TestIntegrationAndEdgeCases:
         """
         assert callable(check_author_ahead)
         assert callable(build_shared_authors_dict_s3)
-        assert callable(build_shared_authors_dict_local)
 
 
 

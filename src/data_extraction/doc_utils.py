@@ -408,21 +408,6 @@ def extract_authors_from_toc(lines):
         return ("NA", "NA", [], [], [])
 
 
-def count_words(text):
-    """
-    Count words in text.
-    
-    Args:
-        text (str): Text to count words in
-        
-    Returns:
-        int: Number of words
-    """
-    if not text:
-        return 0
-    return len([word for word in text.split() if word.strip()])
-
-
 def count_content_lines(text):
     """
     Count non-empty lines in text.
