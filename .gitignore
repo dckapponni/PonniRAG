@@ -13,5 +13,5 @@ qdrant_data/
 .env
 *.sqlite
 *.db
-qdrant_data_tags/
+src/db/qdrant_data_tags/
 ./
