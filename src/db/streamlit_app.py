@@ -88,6 +88,13 @@ TRANSLATIONS = {
         "tags_showing": "காட்டுகிறது",
         "tags_of": "இல்",
         "tags_browse_desc": "தொகுதி மற்றும் இதழ் வாரியாக கட்டுரைகளை உலாவுங்கள்",
+        "tags_volumes": "தொகுதிகள்",
+        "tags_content_list": "உள்ளடக்க பட்டியல்",
+        "tags_search_placeholder": "தலைப்பு, எழுத்தாளர், வகை மூலம் தேடுங்கள்...",
+        "tags_filter_authors": "எழுத்தாளர்கள்",
+        "tags_filter_titles": "தலைப்புகள்",
+        "tags_filter_tags": "வகைகள்",
+        "tags_filters": "வடிகட்டிகள்",
     },
     "en": {
         "app_title": "Ponni Archive",
@@ -132,6 +139,13 @@ TRANSLATIONS = {
         "tags_showing": "Showing",
         "tags_of": "of",
         "tags_browse_desc": "Browse articles by volume and issue",
+        "tags_volumes": "Volumes",
+        "tags_content_list": "Content List",
+        "tags_search_placeholder": "Search by title, author, category...",
+        "tags_filter_authors": "Authors",
+        "tags_filter_titles": "Titles",
+        "tags_filter_tags": "Categories",
+        "tags_filters": "Filters",
     }
 }
 
@@ -261,38 +275,59 @@ def get_app_styles():
         width: auto !important; }
 
     .tags-sidebar { border-right: 1px solid #e2e8f0; padding-right: 1rem; min-height: 70vh; }
+    .tags-sidebar .sidebar-title { font-weight: 700; font-size: 0.95rem; color: #1e3a8a;
+        margin: 0 0 0.5rem 0; padding: 0; }
+    .tags-page-container div[data-testid="stExpander"] { margin-bottom: 0.35rem; }
+    .tags-page-container div[data-testid="stExpander"] summary {
+        background-color: #f1f5f9 !important; color: #1e3a8a !important;
+        border-radius: 0.5rem !important; padding: 0.5rem 0.75rem !important;
+        font-weight: 500 !important; font-size: 0.9rem !important;
+        border: 1px solid #e2e8f0 !important; }
+    .tags-page-container div[data-testid="stExpander"] summary:hover {
+        background-color: #e2e8f0 !important; }
+    .tags-page-container div[data-testid="stExpander"] summary span,
+    .tags-page-container div[data-testid="stExpander"] summary p {
+        color: #1e3a8a !important; font-size: 0.9rem !important; }
+    .tags-page-container div[data-testid="stExpander"] svg {
+        fill: #1e3a8a !important; }
+    .tags-page-container div[data-testid="stExpander"] div[data-testid="stExpanderDetails"] {
+        padding: 0.5rem 0.25rem !important; }
     .tags-content { padding-left: 1rem; }
 
-    .tags-issue-item { display: flex; align-items: center; gap: 0.6rem;
-        padding: 0.4rem 0.6rem; border-radius: 0.5rem; cursor: pointer;
-        text-decoration: none; color: #334155; transition: background 0.2s; margin-bottom: 0.25rem; }
-    .tags-issue-item:hover { background: #f1f5f9; text-decoration: none; color: #1e3a8a; }
-    .tags-issue-item.active { background: #eff6ff; color: #1e3a8a; font-weight: 600;
+    .tags-issue-grid { display: flex; flex-direction: column; gap: 0.3rem; }
+    .tags-issue-cell { display: flex; align-items: center; gap: 0.6rem;
+        text-decoration: none; color: #334155; padding: 0.4rem 0.5rem; border-radius: 0.4rem;
+        transition: background 0.2s; cursor: pointer; }
+    .tags-issue-cell:hover { background: #f1f5f9; text-decoration: none; color: #1e3a8a; }
+    .tags-issue-cell.active { background: #eff6ff; color: #1e3a8a; font-weight: 600;
         border-left: 3px solid #3b82f6; }
-    .tags-issue-thumb { width: 36px; height: 50px; object-fit: cover;
+    .tags-issue-cell img { width: 40px; height: 55px; object-fit: cover;
         border-radius: 0.25rem; border: 1px solid #e2e8f0; flex-shrink: 0; }
+    .tags-issue-cell span { font-size: 0.85rem; }
 
-    .tags-article-card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 0.75rem;
-        padding: 1.25rem; margin-bottom: 0.75rem;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.06); transition: all 0.2s ease; }
-    .tags-article-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-        border-color: #3b82f6; }
-    .tags-article-card a { text-decoration: none; }
-    .tags-article-title { font-weight: 600; font-size: 1.05rem; color: #1e3a8a;
-        margin-bottom: 0.4rem; cursor: pointer; }
-    .tags-article-title:hover { color: #3b82f6; }
-    .tags-article-meta { color: #64748b; font-size: 0.85rem; display: flex; gap: 1rem;
-        flex-wrap: wrap; margin-bottom: 0.5rem; }
+    .content-title { font-weight: 700; font-size: 1.1rem; color: #1e3a8a;
+        margin: 0; padding: 0.3rem 0; line-height: 1.4; }
 
-    .tags-article-viewer { max-width: 100%; }
-    .tags-article-viewer .article-content { line-height: 1.8; color: #1e293b;
-        font-size: 0.95rem; margin-top: 1rem; white-space: pre-wrap; }
-    .tags-article-viewer .article-meta { color: #64748b; font-size: 0.85rem;
-        margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid #e2e8f0; }
+    .article-content { line-height: 1.8; color: #1e293b;
+        font-size: 0.95rem; white-space: pre-wrap; }
 
-    .tags-empty-state { text-align: center; padding: 4rem 2rem; color: #94a3b8; }
-    .tags-empty-state .icon { font-size: 3rem; margin-bottom: 1rem; }
-    .tags-empty-state p { font-size: 1.1rem; }
+    /* Right-pane article expanders — light style */
+    .tags-content div[data-testid="stExpander"] { margin-bottom: 0.25rem; }
+    .tags-content div[data-testid="stExpander"] summary {
+        background-color: #ffffff !important; color: #1e3a8a !important;
+        border-radius: 0.5rem !important; padding: 0.6rem 0.75rem !important;
+        font-weight: 500 !important; font-size: 0.9rem !important;
+        border: 1px solid #e2e8f0 !important; }
+    .tags-content div[data-testid="stExpander"] summary:hover {
+        background-color: #f8fafc !important; border-color: #3b82f6 !important; }
+    .tags-content div[data-testid="stExpander"] summary span,
+    .tags-content div[data-testid="stExpander"] summary p {
+        color: #1e3a8a !important; font-size: 0.9rem !important; }
+    .tags-content div[data-testid="stExpander"] svg {
+        fill: #1e3a8a !important; }
+    .tags-content div[data-testid="stExpander"] div[data-testid="stExpanderDetails"] {
+        padding: 0.75rem !important; border: 1px solid #e2e8f0; border-top: none;
+        border-radius: 0 0 0.5rem 0.5rem; }
 
     .source-tags { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.4rem; }
     .tag-badge { background: #eff6ff; color: #1e40af; font-size: 0.75rem; font-weight: 500;
@@ -1156,90 +1191,36 @@ def render_tags_page():
     st.markdown("<div style='height: 6rem;'></div>", unsafe_allow_html=True)
 
     query_params = st.query_params
-    selected_volume = query_params.get("volume", None)
-    selected_issue = query_params.get("issue", None)
-    selected_article = query_params.get("article", None)
-    filter_cat = query_params.get("filter_cat", None)
-    filter_q = query_params.get("filter_q", None)
+    selected_volume = query_params.get("volume", "1")
+    selected_issue = query_params.get("issue", "1")
 
     st.markdown(f"## {t('browse_tags')}")
     st.markdown(t("tags_browse_desc"))
-    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<hr style='border: none; border-top: 1px solid #e2e8f0; margin: 1rem 0;'>", unsafe_allow_html=True)
 
     st.markdown('<div class="tags-page-container">', unsafe_allow_html=True)
     left_col, right_col = st.columns([3, 7])
 
     with left_col:
         st.markdown('<div class="tags-sidebar">', unsafe_allow_html=True)
-        render_tags_sidebar(selected_volume, selected_issue, filter_cat, filter_q)
+        render_tags_sidebar(selected_volume, selected_issue)
         st.markdown('</div>', unsafe_allow_html=True)
 
     with right_col:
         st.markdown('<div class="tags-content">', unsafe_allow_html=True)
-        if selected_article and selected_volume and selected_issue:
-            render_article_viewer(selected_article, selected_volume, selected_issue)
-        elif selected_volume and selected_issue:
-            render_issue_articles(
-                selected_volume, int(selected_issue), filter_cat, filter_q
-            )
-        else:
-            render_tags_empty_state()
+        render_issue_articles(selected_volume, int(selected_issue))
         st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('</div>', unsafe_allow_html=True)
 
 
-def render_tags_sidebar(selected_volume, selected_issue, filter_cat, filter_q):
-    """Render the left sidebar with filters and volume/issue tree."""
-    lang = st.session_state.language
-
-    # --- Filter bar ---
-    search_val = st.text_input(
-        t("tags_filter_placeholder"),
-        value=filter_q or "",
-        key="tags_search",
-        label_visibility="collapsed",
-        placeholder=t("tags_filter_placeholder"),
+def render_tags_sidebar(selected_volume, selected_issue):
+    """Render the left sidebar with Volumes title and volume/issue tree."""
+    st.markdown(
+        f'<div class="sidebar-title">{t("tags_volumes")}</div>',
+        unsafe_allow_html=True,
     )
-    cat_options = [t("tags_all_categories")] + [
-        _tag_display_name(cid, lang) for cid in TAXONOMY
-    ]
-    cat_ids = [None] + list(TAXONOMY.keys())
-    current_cat_idx = 0
-    if filter_cat and filter_cat in TAXONOMY:
-        current_cat_idx = cat_ids.index(filter_cat)
-    cat_choice = st.selectbox(
-        t("tags_filter_category"),
-        options=cat_options,
-        index=current_cat_idx,
-        key="tags_cat_select",
-        label_visibility="collapsed",
-    )
-    chosen_cat_id = cat_ids[cat_options.index(cat_choice)] if cat_choice in cat_options else None
 
-    # Update query params if filters changed
-    new_params = dict(st.query_params)
-    changed = False
-    if search_val and search_val != (filter_q or ""):
-        new_params["filter_q"] = search_val
-        changed = True
-    elif not search_val and filter_q:
-        new_params.pop("filter_q", None)
-        changed = True
-    if chosen_cat_id and chosen_cat_id != filter_cat:
-        new_params["filter_cat"] = chosen_cat_id
-        changed = True
-    elif not chosen_cat_id and filter_cat:
-        new_params.pop("filter_cat", None)
-        changed = True
-    if changed:
-        st.query_params.clear()
-        st.query_params.update(new_params)
-        st.rerun()
-
-    st.markdown("<hr style='margin: 0.5rem 0; border-color: #e2e8f0;'>", unsafe_allow_html=True)
-
-    # --- Volume tree ---
     volumes = [
         {"id": 1, "year": "1947"}, {"id": 2, "year": "1948"},
         {"id": 3, "year": "1949"}, {"id": 4, "year": "1950"},
@@ -1258,7 +1239,7 @@ def render_tags_sidebar(selected_volume, selected_issue, filter_cat, filter_q):
 
 
 def _render_sidebar_issues(volume_id, selected_issue):
-    """Render issue list inside a volume expander in the sidebar."""
+    """Render issue thumbnails in a grid inside a volume expander."""
     base_dir = Path(IMG_DIR) if isinstance(IMG_DIR, str) else IMG_DIR
     volume_folder = base_dir / f"volume{volume_id}-covers"
     issues_data = load_volume_issues(volume_id, volume_folder)
@@ -1267,37 +1248,105 @@ def _render_sidebar_issues(volume_id, selected_issue):
         st.caption("No issues available")
         return
 
-    issues_html = ""
+    grid_html = '<div class="tags-issue-grid">'
     for issue in issues_data:
         inum = issue["issue_num"]
         is_active = (selected_issue == str(inum))
         active_cls = " active" if is_active else ""
         thumb_b64 = _get_issue_thumbnail_base64(int(volume_id), inum)
         thumb_html = (
-            f'<img class="tags-issue-thumb" src="data:image/jpeg;base64,{thumb_b64}">'
+            f'<img src="data:image/jpeg;base64,{thumb_b64}">'
             if thumb_b64
-            else '<div class="tags-issue-thumb" style="background:#f1f5f9;"></div>'
+            else '<div style="width:60px;height:80px;background:#e2e8f0;border-radius:0.25rem;"></div>'
         )
-        issues_html += f"""
+        grid_html += f"""
         <a href="?page=tags&volume={volume_id}&issue={inum}" target="_self"
-           class="tags-issue-item{active_cls}">
+           class="tags-issue-cell{active_cls}">
             {thumb_html}
             <span>{t('issue')} {inum}</span>
         </a>"""
+    grid_html += '</div>'
 
-    st.markdown(issues_html, unsafe_allow_html=True)
+    st.markdown(grid_html, unsafe_allow_html=True)
 
 
-def render_issue_articles(volume_id, issue_num, filter_cat, filter_q):
+def render_issue_articles(volume_id, issue_num):
     """Render the article list for a selected volume + issue in the right pane."""
     lang = st.session_state.language
 
-    st.markdown(
-        f"### {t('tags_articles_for')} {t('lib_vol')} {volume_id} — {t('issue')} {issue_num}",
-        unsafe_allow_html=True,
-    )
+    # Fetch articles first so we can extract filter options
+    articles = fetch_issue_articles(volume_id, issue_num)
 
-    # PDF link button
+    # Extract unique authors, titles, tags for this issue
+    all_authors = sorted({a.get("author_name", "") for a in articles if a.get("author_name")})
+    all_titles = sorted({a.get("title", "") for a in articles if a.get("title")})
+    all_tag_ids = sorted({tg for a in articles for tg in a.get("tags", [])})
+
+    # --- Title row with search bar + filter button ---
+    title_text = (
+        f"{t('lib_vol')} {volume_id} {t('issue')} {issue_num} "
+        f"— {t('tags_content_list')}"
+    )
+    title_col, search_col, filter_col = st.columns([4, 5, 1])
+    with title_col:
+        st.markdown(
+            f'<div class="content-title">{title_text}</div>',
+            unsafe_allow_html=True,
+        )
+    with search_col:
+        search_q = st.text_input(
+            t("tags_search_placeholder"),
+            value="",
+            key="tags_right_search",
+            label_visibility="collapsed",
+            placeholder=f"\U0001F50D {t('tags_search_placeholder')}",
+        )
+    with filter_col:
+        show_filters = st.toggle("\U0001F50E", key="tags_filter_toggle", help=t("tags_filters"))
+
+    # --- Filter panel (shown when toggle is on) ---
+    sel_authors = []
+    sel_titles = []
+    sel_tags = []
+    if show_filters:
+        st.markdown(
+            f"<div style='background:#f8fafc;border:1px solid #e2e8f0;"
+            f"border-radius:0.5rem;padding:0.75rem;margin-bottom:0.5rem;'>",
+            unsafe_allow_html=True,
+        )
+        f_col1, f_col2, f_col3 = st.columns(3)
+        with f_col1:
+            st.markdown(
+                f"<span style='font-weight:600;font-size:0.85rem;color:#1e3a8a;'>"
+                f"{t('tags_filter_authors')}</span>",
+                unsafe_allow_html=True,
+            )
+            for author in all_authors:
+                if st.checkbox(author, key=f"fa_{volume_id}_{issue_num}_{author}"):
+                    sel_authors.append(author)
+        with f_col2:
+            st.markdown(
+                f"<span style='font-weight:600;font-size:0.85rem;color:#1e3a8a;'>"
+                f"{t('tags_filter_titles')}</span>",
+                unsafe_allow_html=True,
+            )
+            for title_opt in all_titles:
+                display = title_opt[:30] + "..." if len(title_opt) > 30 else title_opt
+                if st.checkbox(display, key=f"ft_{volume_id}_{issue_num}_{title_opt}"):
+                    sel_titles.append(title_opt)
+        with f_col3:
+            st.markdown(
+                f"<span style='font-weight:600;font-size:0.85rem;color:#1e3a8a;'>"
+                f"{t('tags_filter_tags')}</span>",
+                unsafe_allow_html=True,
+            )
+            for tag_id in all_tag_ids:
+                tag_name = _tag_display_name(tag_id, lang)
+                if st.checkbox(tag_name, key=f"fc_{volume_id}_{issue_num}_{tag_id}"):
+                    sel_tags.append(tag_id)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # PDF link
     pdf_key = f"vol_{volume_id}_issue_{issue_num}"
     pdf_url = PDF_LINKS.get(pdf_key)
     if pdf_url:
@@ -1307,18 +1356,28 @@ def render_issue_articles(volume_id, issue_num, filter_cat, filter_q):
             unsafe_allow_html=True,
         )
 
-    articles = fetch_issue_articles(volume_id, issue_num)
+    st.markdown(
+        "<hr style='border:none;border-top:1px solid #e2e8f0;margin:0.5rem 0;'>",
+        unsafe_allow_html=True,
+    )
 
-    # Apply filters
-    if filter_cat and filter_cat in TAXONOMY:
-        articles = [a for a in articles if filter_cat in a.get("tags", [])]
-    if filter_q:
-        q_lower = filter_q.lower()
+    # Apply search filter
+    if search_q:
+        q_lower = search_q.lower()
         articles = [
             a for a in articles
             if q_lower in (a.get("title") or "").lower()
             or q_lower in (a.get("author_name") or "").lower()
+            or any(q_lower in _tag_display_name(tg, lang).lower() for tg in a.get("tags", []))
         ]
+
+    # Apply checkbox filters
+    if sel_authors:
+        articles = [a for a in articles if a.get("author_name") in sel_authors]
+    if sel_titles:
+        articles = [a for a in articles if a.get("title") in sel_titles]
+    if sel_tags:
+        articles = [a for a in articles if any(tg in sel_tags for tg in a.get("tags", []))]
 
     total = len(articles)
     if total == 0:
@@ -1330,124 +1389,35 @@ def render_issue_articles(volume_id, issue_num, filter_cat, filter_q):
         unsafe_allow_html=True,
     )
 
-    articles_html = ""
-    for article in articles:
+    # Numbered article list with collapsible content
+    for idx, article in enumerate(articles, 1):
         title = article.get("title") or t("untitled")
         author = article.get("author_name", "")
-        year = article.get("year", "")
         tags = article.get("tags", [])
         doc_id = article.get("doc_id", "")
 
-        meta_parts = []
-        if author:
-            meta_parts.append(f"{t('author_label')}: {author}")
-        if year:
-            meta_parts.append(str(year))
-        meta_html = "".join(f"<span>{p}</span>" for p in meta_parts)
-
-        tags_html = ""
-        if tags:
-            badges = "".join(
-                f'<span class="tag-badge">{_tag_display_name(tg, lang)}</span>'
-                for tg in tags
-            )
-            tags_html = f'<div class="source-tags">{badges}</div>'
-
-        link = f"?page=tags&volume={volume_id}&issue={issue_num}&article={doc_id}"
-        articles_html += f"""
-        <div class="tags-article-card">
-            <a href="{link}" target="_self">
-                <div class="tags-article-title">{title}</div>
-            </a>
-            <div class="tags-article-meta">{meta_html}</div>
-            {tags_html}
-        </div>"""
-
-    st.markdown(articles_html, unsafe_allow_html=True)
-
-
-def render_article_viewer(doc_id, volume_id, issue_num):
-    """Render full article content with tags and PDF link in the right pane."""
-    lang = st.session_state.language
-
-    # Back button
-    if st.button(t("tags_back_to_articles")):
-        new_params = dict(st.query_params)
-        new_params.pop("article", None)
-        st.query_params.clear()
-        st.query_params.update(new_params)
-        st.rerun()
-
-    article = fetch_article_content(doc_id)
-    if not article:
-        st.warning(t("tags_no_articles"))
-        return
-
-    title = article.get("title") or t("untitled")
-    author = article.get("author_name", "")
-    year = article.get("year", "")
-    doc_issue = article.get("doc_issue", "")
-    tags = article.get("tags", [])
-    content = article.get("content", "")
-
-    st.markdown(f"### {title}")
-
-    # Tag badges
-    if tags:
-        badges = "".join(
-            f'<span class="tag-badge">{_tag_display_name(tg, lang)}</span>'
-            for tg in tags
-        )
-        st.markdown(f'<div class="source-tags">{badges}</div>', unsafe_allow_html=True)
-
-    # PDF button
-    pdf_key = f"vol_{volume_id}_issue_{issue_num}"
-    pdf_url = PDF_LINKS.get(pdf_key)
-    if pdf_url:
-        st.markdown(
-            f'<a href="{pdf_url}" target="_blank" class="tags-pdf-btn">'
-            f'&#128196; {t("tags_read_pdf")}</a>',
-            unsafe_allow_html=True,
-        )
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # Article content
-    st.markdown(
-        f'<div class="tags-article-viewer">'
-        f'<div class="article-content">{content}</div>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-
-    # Metadata footer
-    meta_parts = []
-    if author:
-        meta_parts.append(f"{t('author_label')}: {author}")
-    if doc_issue:
-        meta_parts.append(f"{t('issue_label')}: {doc_issue}")
-    if year:
-        meta_parts.append(str(year))
-    if meta_parts:
-        meta_str = " &bull; ".join(meta_parts)
-        st.markdown(
-            f'<div class="tags-article-viewer">'
-            f'<div class="article-meta">{meta_str}</div></div>',
-            unsafe_allow_html=True,
-        )
-
-
-def render_tags_empty_state():
-    """Default right-pane content when no issue is selected."""
-    st.markdown(
-        f"""
-        <div class="tags-empty-state">
-            <div class="icon">&#128218;</div>
-            <p>{t('tags_select_issue')}</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+        author_str = f' — {author}' if author else ''
+        expander_label = f"{idx}. {title}{author_str}"
+        with st.expander(expander_label, expanded=False):
+            # Tag badges
+            if tags:
+                badges_html = "".join(
+                    f'<span class="tag-badge">{_tag_display_name(tg, lang)}</span>'
+                    for tg in tags
+                )
+                st.markdown(
+                    f'<div class="source-tags" style="margin-bottom:0.75rem;">{badges_html}</div>',
+                    unsafe_allow_html=True,
+                )
+            # Fetch and display article content
+            content_data = fetch_article_content(doc_id)
+            if content_data and content_data.get("content"):
+                st.markdown(
+                    f'<div class="article-content">{content_data["content"]}</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.caption(t("tags_no_articles"))
 
 
 def render_about_page():
