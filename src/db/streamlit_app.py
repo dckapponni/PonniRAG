@@ -1,5 +1,4 @@
 import logging
-import os
 import sys
 import io
 import base64
@@ -21,9 +20,6 @@ BASE_DIR = Path(__file__).resolve().parent
 QDRANT_PATH = str(BASE_DIR / "qdrant_data_tags")
 IMG_DIR = BASE_DIR.parent.parent/"frontend"/"public"/"images"
 
-# Check if mock mode is enabled
-USE_MOCK_DATA = os.getenv("USE_MOCK_DATA", "false").lower() in ("true", "1", "yes")
-
 try:
     from qdrant_client import models as qdrant_models
 except ImportError:
@@ -34,25 +30,18 @@ try:
 except ImportError:
     TAXONOMY = {}
 
-if USE_MOCK_DATA:
-    from mock_search import mock_ask_question as ask_question
+try:
+    from hybrid_search import (
+        ask_question, ask_question_stream,
+        get_qdrant_client, COLLECTION_NAME,
+    )
+    logger.info("Successfully imported hybrid_search module")
+except ImportError as e:
+    logger.error(f"Failed to import hybrid_search: {e}")
+    ask_question = None
     ask_question_stream = None
     get_qdrant_client = None
     COLLECTION_NAME = None
-    logger.info("Running in MOCK MODE - using mock_search module")
-else:
-    try:
-        from hybrid_search import (
-            ask_question, ask_question_stream,
-            get_qdrant_client, COLLECTION_NAME,
-        )
-        logger.info("Successfully imported hybrid_search module")
-    except ImportError as e:
-        logger.error(f"Failed to import hybrid_search: {e}")
-        ask_question = None
-        ask_question_stream = None
-        get_qdrant_client = None
-        COLLECTION_NAME = None
 
 
 TRANSLATIONS = {
