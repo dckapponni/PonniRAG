@@ -334,7 +334,6 @@ All external consumers (`api.py`, tests) import from `hybrid_search` — the re-
 | `GEMINI_MODEL` | api | LLM model (default: gemini-2.5-flash) |
 | `QDRANT_HOST` | api | Qdrant hostname (default: qdrant) |
 | `QDRANT_PORT` | api | Qdrant port (default: 6333) |
-| `USE_MOCK_DATA` | api | Skip S3/Qdrant, use sample data (true/false) |
 
 ---
 
