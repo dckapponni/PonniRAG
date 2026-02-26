@@ -33,7 +33,7 @@ except ImportError:
 try:
     from hybrid_search import (
         ask_question, ask_question_stream,
-        get_qdrant_client, COLLECTION_NAME,
+        get_qdrant_client, COLLECTION_NAME as _HYBRID_COLLECTION,
     )
     logger.info("Successfully imported hybrid_search module")
 except ImportError as e:
@@ -41,7 +41,12 @@ except ImportError as e:
     ask_question = None
     ask_question_stream = None
     get_qdrant_client = None
-    COLLECTION_NAME = None
+    _HYBRID_COLLECTION = None
+
+# The qdrant_indexer script indexes into "qdrant_indexer" collection.
+# Use that for tags/browse queries; fall back to hybrid_search collection for chat.
+TAGS_COLLECTION = "qdrant_indexer"
+COLLECTION_NAME = _HYBRID_COLLECTION
 
 
 TRANSLATIONS = {
@@ -266,55 +271,46 @@ def get_app_styles():
         font-weight: 600; font-size: 1.1rem; background: #f8fafc; }
 
     /* === Tags/Categories page — two-pane layout (design ref) === */
-    /* .tags-sidebar-marker is injected in left column; :has() detects tags page */
     .tags-sidebar-marker { display: none; }
 
-    /* Lock the entire page — no page-level scroll, only panes scroll */
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) section.main {
-        overflow: hidden !important; height: 100vh !important; }
+    /* Reduce top gap — just enough for fixed nav bar */
     div[data-testid="stApp"]:has(.tags-sidebar-marker) .block-container {
-        max-width: 100% !important; padding: 0 !important;
-        overflow: hidden !important; height: 100% !important; }
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) .block-container > div[data-testid="stVerticalBlock"] {
-        height: 100% !important; gap: 0 !important; padding-top: 3.5rem !important; }
+        max-width: 100% !important; padding: 3.5rem 0 0 0 !important; }
 
-    /* The st.columns wrapper — fill remaining height */
+    /* Kill global column card styles on tags page */
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stHorizontalBlock"] {
-        gap: 0 !important; flex-wrap: nowrap !important;
-        height: 100% !important;
-        border-top: 1px solid #e2e8f0;
-        overflow: hidden !important; }
-
-    /* Both columns fill height, no global card styles */
+        gap: 0 !important; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] {
         background: #ffffff !important; box-shadow: none !important;
-        transform: none !important; padding: 0 !important; border-radius: 0 !important;
-        height: 100% !important; overflow: hidden !important; }
+        transform: none !important; padding: 0 !important; border-radius: 0 !important; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:hover {
         box-shadow: none !important; transform: none !important; }
+
+    /* Left column — light bg sidebar */
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child {
+        background: #f8fafc !important; border-right: 1px solid #e2e8f0; }
+
+    /* Style the st.container(height=...) scrollable boxes — stretch to fill viewport */
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stVerticalBlockBorderWrapper"] {
+        border: none !important; border-radius: 0 !important;
+        height: calc(100vh - 3.5rem) !important; max-height: calc(100vh - 3.5rem) !important; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stVerticalBlockBorderWrapper"] > div {
+        padding: 0 !important; max-height: calc(100vh - 3.5rem) !important; }
+
+    /* Left scrollable container inner padding */
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child
+        div[data-testid="stVerticalBlockBorderWrapper"] > div { padding: 1.5rem !important; }
+
+    /* Right scrollable container inner padding */
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:last-child
+        div[data-testid="stVerticalBlockBorderWrapper"] > div { padding: 2rem 2.5rem !important; }
+
+    /* Button overrides inside tags page */
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] .stButton > button {
         background-color: #ffffff !important; color: #1e3a8a !important;
         width: auto !important; box-shadow: none !important; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] h3 {
         color: #1e3a8a !important; text-align: left !important; }
-
-    /* Propagate height through all Streamlit wrapper divs inside columns */
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] > div,
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] > div > div,
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] > div > div > div,
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] > div > div[data-testid="stVerticalBlock"] {
-        height: 100% !important; overflow-y: auto !important; }
-
-    /* Left column (sidebar) — own scrollbar, light bg, border-right */
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child {
-        background: #f8fafc !important; border-right: 1px solid #e2e8f0;
-        max-width: 380px !important; }
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child > div {
-        padding: 1.5rem !important; }
-
-    /* Right column (main) — own scrollbar, padding */
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:last-child > div {
-        padding: 2rem 2.5rem !important; }
 
     /* Sidebar title and form elements */
     .tags-sidebar-title { font-size: 1.4rem; font-weight: 700; color: #1e3a8a;
@@ -1001,7 +997,7 @@ def load_image(image_name: str):
 
 @st.cache_data(ttl=300)
 def fetch_all_tags():
-    """Fetch all tags with article counts from Qdrant (synchronous)."""
+    """Fetch all tags with article counts from Qdrant (qdrant_indexer collection)."""
     if get_qdrant_client is None or qdrant_models is None or not TAXONOMY:
         # Mock/fallback: return TAXONOMY with zero counts
         return [
@@ -1015,7 +1011,7 @@ def fetch_all_tags():
         offset = None
         while True:
             points, offset = client.scroll(
-                collection_name=COLLECTION_NAME,
+                collection_name=TAGS_COLLECTION,
                 scroll_filter=qdrant_models.Filter(must=[
                     qdrant_models.FieldCondition(
                         key="type", match=qdrant_models.MatchValue(value="article")),
@@ -1064,7 +1060,7 @@ def fetch_tag_articles(tag_id):
         offset = None
         while True:
             points, offset = client.scroll(
-                collection_name=COLLECTION_NAME,
+                collection_name=TAGS_COLLECTION,
                 scroll_filter=qdrant_models.Filter(must=[
                     qdrant_models.FieldCondition(
                         key="type", match=qdrant_models.MatchValue(value="article")),
@@ -1115,52 +1111,101 @@ def get_volume_issue_counts():
 def fetch_issue_articles(volume_id, issue_num):
     """Fetch articles for a specific volume + issue from Qdrant."""
     if get_qdrant_client is None or qdrant_models is None:
+        logger.warning("Qdrant client or models not available")
         return []
     try:
         client = get_qdrant_client()
         seen = set()
         articles = []
-        offset = None
-        vol_key = f"vol_{volume_id}"
-        while True:
-            points, offset = client.scroll(
-                collection_name=COLLECTION_NAME,
-                scroll_filter=qdrant_models.Filter(must=[
-                    qdrant_models.FieldCondition(
-                        key="type", match=qdrant_models.MatchValue(value="article")),
-                    qdrant_models.FieldCondition(
-                        key="metadata.chunk_id", match=qdrant_models.MatchValue(value=0)),
-                    qdrant_models.FieldCondition(
-                        key="metadata.volume", match=qdrant_models.MatchValue(value=vol_key)),
-                ]),
-                limit=500,
-                offset=offset,
-                with_payload=True,
-            )
-            for p in points:
-                metadata = (p.payload or {}).get("metadata", {})
-                doc_issue = metadata.get("doc_issue", "")
-                # Match issue number — doc_issue may be like "3" or "Issue 3" etc.
-                issue_str = str(issue_num)
-                if issue_str not in str(doc_issue):
-                    continue
-                doc_id = metadata.get("doc_id")
-                if doc_id in seen:
-                    continue
-                seen.add(doc_id)
-                articles.append({
-                    "doc_id": doc_id,
-                    "title": metadata.get("title"),
-                    "author_name": metadata.get("author_name"),
-                    "year": metadata.get("year"),
-                    "tags": metadata.get("tags", []),
-                    "doc_issue": doc_issue,
-                })
-            if offset is None:
-                break
+
+        # Step 1: Query only by type=article and chunk_id=0 for the volume.
+        # Try both "vol_N" and "Vol_N" to handle case variations from S3 keys.
+        vol_keys = [f"vol_{volume_id}", f"Vol_{volume_id}"]
+        all_points = []
+        for vol_key in vol_keys:
+            scroll_offset = None
+            while True:
+                points, scroll_offset = client.scroll(
+                    collection_name=TAGS_COLLECTION,
+                    scroll_filter=qdrant_models.Filter(must=[
+                        qdrant_models.FieldCondition(
+                            key="type", match=qdrant_models.MatchValue(value="article")),
+                        qdrant_models.FieldCondition(
+                            key="metadata.chunk_id", match=qdrant_models.MatchValue(value=0)),
+                        qdrant_models.FieldCondition(
+                            key="metadata.volume", match=qdrant_models.MatchValue(value=vol_key)),
+                    ]),
+                    limit=500,
+                    offset=scroll_offset,
+                    with_payload=True,
+                )
+                all_points.extend(points)
+                if scroll_offset is None:
+                    break
+
+        logger.info(f"fetch_issue_articles: vol={volume_id}, issue={issue_num}, "
+                     f"total chunk_0 points found: {len(all_points)}")
+
+        # If no results with volume filter, try without it and filter client-side
+        if not all_points:
+            logger.info("No points with volume filter — trying without volume filter")
+            scroll_offset = None
+            while True:
+                points, scroll_offset = client.scroll(
+                    collection_name=TAGS_COLLECTION,
+                    scroll_filter=qdrant_models.Filter(must=[
+                        qdrant_models.FieldCondition(
+                            key="type", match=qdrant_models.MatchValue(value="article")),
+                        qdrant_models.FieldCondition(
+                            key="metadata.chunk_id", match=qdrant_models.MatchValue(value=0)),
+                    ]),
+                    limit=500,
+                    offset=scroll_offset,
+                    with_payload=True,
+                )
+                all_points.extend(points)
+                if scroll_offset is None:
+                    break
+            logger.info(f"Without volume filter: {len(all_points)} chunk_0 article points")
+            # Log sample volume values to help debug
+            if all_points:
+                sample_vols = set()
+                for p in all_points[:20]:
+                    meta = (p.payload or {}).get("metadata", {})
+                    sample_vols.add(meta.get("volume", "MISSING"))
+                logger.info(f"Sample volume values in data: {sample_vols}")
+            # Client-side volume filter
+            vol_lower = f"vol_{volume_id}".lower()
+            all_points = [
+                p for p in all_points
+                if str((p.payload or {}).get("metadata", {}).get("volume", "")).lower() == vol_lower
+            ]
+            logger.info(f"After client-side volume filter: {len(all_points)}")
+
+        # Step 2: Filter by issue number client-side
+        issue_str = str(issue_num)
+        for p in all_points:
+            metadata = (p.payload or {}).get("metadata", {})
+            doc_issue = str(metadata.get("doc_issue", ""))
+            if issue_str not in doc_issue:
+                continue
+            doc_id = metadata.get("doc_id")
+            if doc_id in seen:
+                continue
+            seen.add(doc_id)
+            articles.append({
+                "doc_id": doc_id,
+                "title": metadata.get("title"),
+                "author_name": metadata.get("author_name"),
+                "year": metadata.get("year"),
+                "tags": metadata.get("tags", []),
+                "doc_issue": doc_issue,
+            })
+
+        logger.info(f"fetch_issue_articles result: {len(articles)} articles for vol {volume_id} issue {issue_num}")
         return articles
     except Exception as e:
-        logger.error(f"Error fetching issue articles: {e}")
+        logger.error(f"Error fetching issue articles: {e}", exc_info=True)
         return []
 
 
@@ -1175,7 +1220,7 @@ def fetch_article_content(doc_id):
         offset = None
         while True:
             points, offset = client.scroll(
-                collection_name=COLLECTION_NAME,
+                collection_name=TAGS_COLLECTION,
                 scroll_filter=qdrant_models.Filter(must=[
                     qdrant_models.FieldCondition(
                         key="type", match=qdrant_models.MatchValue(value="article")),
@@ -1258,19 +1303,24 @@ def render_tags_page():
     selected_issue = query_params.get("issue", "1")
     selected_article = query_params.get("article", None)
 
-    # Two-pane columns — CSS :has(.tags-sidebar-marker) applies the full-height layout
+    # Calculate pane height: viewport minus nav bar
+    pane_height = 700  # px — fallback; CSS will stretch to calc(100vh - 3.5rem)
+
+    # Two-pane columns
     left_col, right_col = st.columns([3, 7])
 
     with left_col:
-        # Marker div for CSS :has() selector — must be first element
+        # Marker div for CSS :has() selector
         st.markdown('<div class="tags-sidebar-marker"></div>', unsafe_allow_html=True)
-        render_tags_sidebar(selected_volume, selected_issue)
+        with st.container(height=pane_height, border=False):
+            render_tags_sidebar(selected_volume, selected_issue)
 
     with right_col:
-        if selected_article:
-            render_article_detail(selected_article, selected_volume, selected_issue)
-        else:
-            render_issue_articles(selected_volume, int(selected_issue))
+        with st.container(height=pane_height, border=False):
+            if selected_article:
+                render_article_detail(selected_article, selected_volume, selected_issue)
+            else:
+                render_issue_articles(selected_volume, int(selected_issue))
 
 
 def render_tags_sidebar(selected_volume, selected_issue):
