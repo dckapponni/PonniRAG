@@ -265,116 +265,140 @@ def get_app_styles():
     .issue-card-title { padding: 1rem; text-align: center; color: #1e3a8a;
         font-weight: 600; font-size: 1.1rem; background: #f8fafc; }
 
-    /* === Tags/Categories page — dark two-pane layout (design ref) === */
-    .tags-page-wrap { background: #0f172a; border-radius: 1rem; overflow: hidden;
-        min-height: 80vh; margin-top: 0.5rem; }
-    .tags-page-wrap, .tags-page-wrap * { color: #e2e8f0; }
-    .tags-page-wrap div[data-testid="column"] {
-        background: transparent !important; box-shadow: none !important;
-        transform: none !important; padding: 0 !important; border-radius: 0 !important; }
-    .tags-page-wrap div[data-testid="column"]:hover {
-        box-shadow: none !important; transform: none !important; }
-    .tags-page-wrap div[data-testid="column"] .stButton > button {
-        background-color: transparent !important; color: #e2e8f0 !important;
-        width: auto !important; box-shadow: none !important; }
-    .tags-page-wrap div[data-testid="column"] h3 { color: #f1f5f9 !important; text-align: left !important; }
-    .tags-page-wrap div[data-testid="stMarkdownContainer"] { color: #e2e8f0 !important; }
-    .tags-page-wrap div[data-testid="stMarkdownContainer"] p { color: #e2e8f0 !important; }
+    /* === Tags/Categories page — light two-pane layout (design ref) === */
+    /* .tags-sidebar-marker is injected in left column; :has() detects tags page */
+    .tags-sidebar-marker { display: none; }
 
-    /* Sidebar */
-    .tags-sidebar { background: #1e293b; border-right: 1px solid rgba(51,65,85,0.5);
-        padding: 1.5rem; min-height: 80vh; }
-    .tags-sidebar-title { font-size: 1.4rem; font-weight: 700; color: #f1f5f9;
+    /* Widen block container on tags page */
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) .block-container,
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) section.main .block-container {
+        max-width: 100% !important; padding-left: 1rem !important; padding-right: 1rem !important;
+        padding-bottom: 0 !important; overflow: hidden !important; }
+
+    /* Hide the scrollbar on main section so only panes scroll */
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) section.main {
+        overflow: hidden !important; }
+
+    /* The stHorizontalBlock (st.columns) — full viewport height */
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stHorizontalBlock"] {
+        gap: 0 !important; flex-wrap: nowrap !important;
+        height: calc(100vh - 6rem) !important;
+        background: #ffffff; border-radius: 1rem; border: 1px solid #e2e8f0;
+        overflow: hidden !important; }
+
+    /* Both columns fill height */
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] {
+        background: #ffffff !important; box-shadow: none !important;
+        transform: none !important; padding: 0 !important; border-radius: 0 !important;
+        height: 100% !important; overflow: hidden !important; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] > div {
+        height: 100% !important; overflow: hidden !important; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] > div > div[data-testid="stVerticalBlock"] {
+        height: 100% !important; gap: 0 !important; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:hover {
+        box-shadow: none !important; transform: none !important; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] .stButton > button {
+        background-color: #ffffff !important; color: #1e3a8a !important;
+        width: auto !important; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] h3 {
+        color: #1e3a8a !important; text-align: left !important; }
+
+    /* Left column (sidebar) — scroll independently, light bg */
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child {
+        background: #f8fafc !important; border-right: 1px solid #e2e8f0; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child > div {
+        overflow-y: auto !important; padding: 1.5rem; }
+
+    /* Right column (main) — scroll independently, with padding */
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:last-child > div {
+        overflow-y: auto !important; padding: 2rem 2.5rem; }
+
+    /* Sidebar title and form elements */
+    .tags-sidebar-title { font-size: 1.4rem; font-weight: 700; color: #1e3a8a;
         margin-bottom: 1.25rem; }
-    .tags-sidebar label, .tags-sidebar .stSelectbox label,
-    .tags-sidebar .stTextInput label { color: #cbd5e1 !important; font-size: 0.85rem !important;
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child label {
+        color: #334155 !important; font-size: 0.85rem !important;
         font-weight: 500 !important; }
-    .tags-sidebar .stSelectbox > div > div { background: #1e293b !important;
-        border-color: #334155 !important; color: #f1f5f9 !important; }
-    .tags-sidebar .stTextInput > div > div > input { background: #1e293b !important;
-        border-color: #334155 !important; color: #f1f5f9 !important; }
-    .tags-sidebar .stTextInput > div > div > input::placeholder { color: #64748b !important; }
-    .tags-sidebar .result-count { font-size: 0.85rem; color: #94a3b8; margin-top: 0.75rem;
+    .result-count { font-size: 0.85rem; color: #64748b; margin-top: 0.75rem;
         margin-bottom: 0.5rem; }
-    .tags-sidebar .result-count strong { color: #cbd5e1; }
+    .result-count strong { color: #1e3a8a; }
 
     /* Volume accordions in sidebar */
-    .tags-page-wrap div[data-testid="stExpander"] { margin-bottom: 0.5rem; }
-    .tags-page-wrap div[data-testid="stExpander"] summary {
-        background-color: rgba(30,41,59,0.5) !important; color: #f1f5f9 !important;
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stExpander"] { margin-bottom: 0.5rem; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stExpander"] summary {
+        background-color: #ffffff !important; color: #1e3a8a !important;
         border-radius: 1rem !important; padding: 0.75rem 1rem !important;
         font-weight: 600 !important; font-size: 0.95rem !important;
-        border: 1px solid rgba(51,65,85,0.5) !important; }
-    .tags-page-wrap div[data-testid="stExpander"] summary:hover {
-        background-color: rgba(51,65,85,0.4) !important; }
-    .tags-page-wrap div[data-testid="stExpander"] summary span,
-    .tags-page-wrap div[data-testid="stExpander"] summary p {
-        color: #f1f5f9 !important; }
-    .tags-page-wrap div[data-testid="stExpander"] svg { fill: #94a3b8 !important; }
-    .tags-page-wrap div[data-testid="stExpander"] div[data-testid="stExpanderDetails"] {
+        border: 1px solid #e2e8f0 !important; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stExpander"] summary:hover {
+        background-color: #f1f5f9 !important; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stExpander"] summary span,
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stExpander"] summary p {
+        color: #1e3a8a !important; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stExpander"] svg { fill: #64748b !important; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stExpander"] div[data-testid="stExpanderDetails"] {
         padding: 0.5rem 0.75rem !important; background: transparent !important; }
 
     /* File items inside accordion */
     .tags-file-list { display: flex; flex-direction: column; gap: 0.4rem; }
     .tags-file-item { display: flex; align-items: center; gap: 0.75rem;
-        text-decoration: none; color: #f1f5f9; padding: 0.5rem 0.6rem;
+        text-decoration: none; color: #334155; padding: 0.5rem 0.6rem;
         border-radius: 0.75rem; transition: all 0.2s; cursor: pointer;
         border: 1px solid transparent; }
-    .tags-file-item:hover { background: rgba(30,41,59,0.6); text-decoration: none; color: #f1f5f9; }
-    .tags-file-item.active { background: rgba(59,130,246,0.15);
-        border-color: rgba(59,130,246,0.5); }
+    .tags-file-item:hover { background: #f1f5f9; text-decoration: none; color: #1e3a8a; }
+    .tags-file-item.active { background: #eff6ff;
+        border-color: #3b82f6; }
     .tags-file-item img { width: 48px; height: 48px; object-fit: cover;
-        border-radius: 0.5rem; flex-shrink: 0; }
+        border-radius: 0.5rem; flex-shrink: 0; border: 1px solid #e2e8f0; }
     .tags-file-item .file-title { font-size: 0.85rem; font-weight: 500;
-        color: #f1f5f9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        color: #1e3a8a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         max-width: 180px; margin-bottom: 0.15rem; }
-    .tags-file-item .file-badge { background: rgba(51,65,85,0.5); color: #cbd5e1;
+    .tags-file-item .file-badge { background: #f1f5f9; color: #64748b;
         font-size: 0.7rem; padding: 0.1rem 0.5rem; border-radius: 99px;
-        display: inline-block; }
+        display: inline-block; border: 1px solid #e2e8f0; }
 
-    /* Main content pane */
-    .tags-main { padding: 2rem 2.5rem; min-height: 80vh; }
+    /* Empty state in main content pane */
     .tags-main-empty { display: flex; align-items: center; justify-content: center;
         min-height: 60vh; text-align: center; }
-    .tags-main-empty .icon { font-size: 3.5rem; color: #334155; margin-bottom: 1rem; }
+    .tags-main-empty .icon { font-size: 3.5rem; color: #cbd5e1; margin-bottom: 1rem; }
     .tags-main-empty p { font-size: 1.1rem; color: #64748b; }
 
     /* Badges row */
     .tags-badge-row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
-    .tags-badge-vol { background: rgba(59,130,246,0.2); color: #93c5fd;
-        border: 1px solid rgba(59,130,246,0.5); padding: 0.25rem 0.75rem;
+    .tags-badge-vol { background: #eff6ff; color: #1e40af;
+        border: 1px solid #bfdbfe; padding: 0.25rem 0.75rem;
         border-radius: 99px; font-size: 0.8rem; font-weight: 500; }
-    .tags-badge-cat { background: rgba(51,65,85,0.5); color: #cbd5e1;
-        border: 1px solid rgba(51,65,85,0.5); padding: 0.25rem 0.75rem;
+    .tags-badge-cat { background: #f1f5f9; color: #475569;
+        border: 1px solid #e2e8f0; padding: 0.25rem 0.75rem;
         border-radius: 99px; font-size: 0.8rem; font-weight: 500; }
 
     /* Article content in main pane */
-    .tags-article-block { background: rgba(15,23,42,0.5); border-radius: 1rem;
-        padding: 1.5rem; border: 1px solid rgba(30,41,59,0.5); margin-bottom: 1rem; }
-    .tags-article-block h3 { color: #f1f5f9; font-size: 1.2rem; margin-bottom: 0.75rem; }
-    .tags-article-block .article-text { color: #cbd5e1; font-size: 0.95rem;
+    .tags-article-block { background: #f8fafc; border-radius: 1rem;
+        padding: 1.5rem; border: 1px solid #e2e8f0; margin-bottom: 1rem; }
+    .tags-article-block h3 { color: #1e3a8a; font-size: 1.2rem; margin-bottom: 0.75rem; }
+    .tags-article-block .article-text { color: #334155; font-size: 0.95rem;
         line-height: 1.8; white-space: pre-wrap; }
     .tags-article-block .article-meta { color: #64748b; font-size: 0.85rem;
-        margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid #1e293b; }
+        margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid #e2e8f0; }
 
     /* Stats row at bottom of main content */
     .tags-stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem;
-        margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid #1e293b; }
-    .tags-stat-card { background: rgba(15,23,42,0.3); border: 1px solid rgba(30,41,59,0.5);
+        margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid #e2e8f0; }
+    .tags-stat-card { background: #f8fafc; border: 1px solid #e2e8f0;
         border-radius: 0.75rem; padding: 1rem; text-align: center; }
-    .tags-stat-card .stat-val { font-size: 1.5rem; font-weight: 700; color: #60a5fa; }
-    .tags-stat-card .stat-label { font-size: 0.75rem; color: #94a3b8; margin-top: 0.25rem; }
+    .tags-stat-card .stat-val { font-size: 1.5rem; font-weight: 700; color: #3b82f6; }
+    .tags-stat-card .stat-label { font-size: 0.75rem; color: #64748b; margin-top: 0.25rem; }
 
     .source-tags { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.4rem; }
     .tag-badge { background: #eff6ff; color: #1e40af; font-size: 0.75rem; font-weight: 500;
         padding: 0.2rem 0.6rem; border-radius: 99px; border: 1px solid #bfdbfe; }
 
     .tags-pdf-btn { display: inline-flex; align-items: center; gap: 0.4rem;
-        background: rgba(59,130,246,0.2); color: #93c5fd !important; padding: 0.5rem 1rem;
+        background: #1e3a8a; color: #ffffff !important; padding: 0.5rem 1rem;
         border-radius: 0.5rem; text-decoration: none; font-size: 0.85rem;
-        font-weight: 600; transition: background 0.2s; border: 1px solid rgba(59,130,246,0.3); }
-    .tags-pdf-btn:hover { background: rgba(59,130,246,0.35); text-decoration: none;
-        color: #93c5fd !important; }
+        font-weight: 600; transition: background 0.2s; }
+    .tags-pdf-btn:hover { background: #3b82f6; text-decoration: none;
+        color: #ffffff !important; }
 </style>
 """
 
@@ -1223,20 +1247,23 @@ def _tag_display_name(tag_id, lang):
 
 
 def render_tags_page():
-    """Render tags/categories page — dark two-pane layout matching design reference."""
+    """Render tags/categories page — two-pane layout matching design reference."""
     logger.info("Rendering tags page")
-    st.markdown("<div style='height: 5rem;'></div>", unsafe_allow_html=True)
+
+    # Spacer for fixed nav bar
+    st.markdown("<div style='height: 4.5rem;'></div>", unsafe_allow_html=True)
 
     query_params = st.query_params
     selected_volume = query_params.get("volume", "1")
     selected_issue = query_params.get("issue", "1")
     selected_article = query_params.get("article", None)
 
-    # Dark wrapper
-    st.markdown('<div class="tags-page-wrap">', unsafe_allow_html=True)
+    # Two-pane columns — CSS :has(.tags-sidebar-marker) applies the full-height layout
     left_col, right_col = st.columns([3, 7])
 
     with left_col:
+        # Marker div for CSS :has() selector — must be first element
+        st.markdown('<div class="tags-sidebar-marker"></div>', unsafe_allow_html=True)
         render_tags_sidebar(selected_volume, selected_issue)
 
     with right_col:
@@ -1245,14 +1272,11 @@ def render_tags_page():
         else:
             render_issue_articles(selected_volume, int(selected_issue))
 
-    st.markdown('</div>', unsafe_allow_html=True)
-
 
 def render_tags_sidebar(selected_volume, selected_issue):
-    """Render dark sidebar with category filter, search, and volume accordions."""
+    """Render sidebar with category filter, search, and volume accordions."""
     lang = st.session_state.language
 
-    st.markdown('<div class="tags-sidebar">', unsafe_allow_html=True)
     st.markdown(
         f'<div class="tags-sidebar-title">{t("browse_tags")}</div>',
         unsafe_allow_html=True,
@@ -1318,8 +1342,6 @@ def render_tags_sidebar(selected_volume, selected_issue):
         with st.expander(label, expanded=is_expanded):
             _render_sidebar_issues(vid, selected_issue)
 
-    st.markdown('</div>', unsafe_allow_html=True)
-
 
 def _render_sidebar_issues(volume_id, selected_issue):
     """Render issue file items inside a volume accordion."""
@@ -1344,7 +1366,7 @@ def _render_sidebar_issues(volume_id, selected_issue):
         thumb_html = (
             f'<img src="data:image/jpeg;base64,{thumb_b64}">'
             if thumb_b64
-            else '<div style="width:48px;height:48px;background:#334155;border-radius:0.5rem;"></div>'
+            else '<div style="width:48px;height:48px;background:#f1f5f9;border-radius:0.5rem;border:1px solid #e2e8f0;"></div>'
         )
         issue_label = f"{t('issue')} {inum}"
         html += f"""
@@ -1364,8 +1386,6 @@ def render_issue_articles(volume_id, issue_num):
     """Render main content pane — article list for the selected issue."""
     lang = st.session_state.language
 
-    st.markdown('<div class="tags-main">', unsafe_allow_html=True)
-
     # Badge row
     st.markdown(
         f'<div class="tags-badge-row">'
@@ -1377,7 +1397,7 @@ def render_issue_articles(volume_id, issue_num):
 
     # Title
     st.markdown(
-        f'<h1 style="font-size:2rem;font-weight:700;color:#f1f5f9;margin-bottom:0.5rem;">'
+        f'<h1 style="font-size:2rem;font-weight:700;color:#1e3a8a;margin-bottom:0.5rem;">'
         f'{t("lib_vol")} {volume_id} {t("issue")} {issue_num} — {t("tags_content_list")}</h1>',
         unsafe_allow_html=True,
     )
@@ -1393,7 +1413,7 @@ def render_issue_articles(volume_id, issue_num):
         )
 
     st.markdown(
-        '<hr style="border:none;border-top:1px solid #1e293b;margin:1rem 0;">',
+        '<hr style="border:none;border-top:1px solid #e2e8f0;margin:1rem 0;">',
         unsafe_allow_html=True,
     )
 
@@ -1427,10 +1447,9 @@ def render_issue_articles(volume_id, issue_num):
             f'<p>{t("tags_no_articles")}</p></div></div>',
             unsafe_allow_html=True,
         )
-        st.markdown('</div>', unsafe_allow_html=True)
         return
 
-    # Article list — each in a dark card block, clickable title
+    # Article list — each in a card block, clickable title
     for idx, article in enumerate(articles, 1):
         title = article.get("title") or t("untitled")
         author = article.get("author_name", "")
@@ -1445,15 +1464,15 @@ def render_issue_articles(volume_id, issue_num):
                 for tg in tags
             )
 
-        author_html = f'<span style="color:#94a3b8;font-size:0.85rem;"> — {author}</span>' if author else ''
+        author_html = f'<span style="color:#64748b;font-size:0.85rem;"> — {author}</span>' if author else ''
         link = f"?page=tags&volume={volume_id}&issue={issue_num}&article={doc_id}"
 
         st.markdown(
             f'<div class="tags-article-block">'
             f'<div style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap;">'
-            f'<span style="color:#60a5fa;font-weight:700;font-size:0.9rem;">{idx}.</span>'
+            f'<span style="color:#3b82f6;font-weight:700;font-size:0.9rem;">{idx}.</span>'
             f'<a href="{link}" target="_self" style="text-decoration:none;">'
-            f'<span style="color:#f1f5f9;font-weight:600;font-size:1rem;">{title}</span></a>'
+            f'<span style="color:#1e3a8a;font-weight:600;font-size:1rem;">{title}</span></a>'
             f'{author_html}'
             f'</div>'
             f'<div style="margin-top:0.5rem;">{badges_html}</div>'
@@ -1468,22 +1487,18 @@ def render_issue_articles(volume_id, issue_num):
         f'<div class="tags-stats-row">'
         f'<div class="tags-stat-card"><div class="stat-val">{total}</div>'
         f'<div class="stat-label">{t("articles_count")}</div></div>'
-        f'<div class="tags-stat-card"><div class="stat-val" style="color:#a78bfa;">{unique_authors}</div>'
+        f'<div class="tags-stat-card"><div class="stat-val" style="color:#8b5cf6;">{unique_authors}</div>'
         f'<div class="stat-label">{t("tags_filter_authors")}</div></div>'
-        f'<div class="tags-stat-card"><div class="stat-val" style="color:#34d399;">{unique_tags}</div>'
+        f'<div class="tags-stat-card"><div class="stat-val" style="color:#10b981;">{unique_tags}</div>'
         f'<div class="stat-label">{t("tags_filter_tags")}</div></div>'
         f'</div>',
         unsafe_allow_html=True,
     )
 
-    st.markdown('</div>', unsafe_allow_html=True)
-
 
 def render_article_detail(doc_id, volume_id, issue_num):
     """Render full article view when an article is clicked from the list."""
     lang = st.session_state.language
-
-    st.markdown('<div class="tags-main">', unsafe_allow_html=True)
 
     # Back button
     if st.button(f"\u2190 {t('tags_back_to_articles')}"):
@@ -1501,7 +1516,6 @@ def render_article_detail(doc_id, volume_id, issue_num):
             f'<p>{t("tags_no_articles")}</p></div></div>',
             unsafe_allow_html=True,
         )
-        st.markdown('</div>', unsafe_allow_html=True)
         return
 
     title = article.get("title") or t("untitled")
@@ -1519,7 +1533,7 @@ def render_article_detail(doc_id, volume_id, issue_num):
 
     # Title
     st.markdown(
-        f'<h1 style="font-size:2rem;font-weight:700;color:#f1f5f9;margin-bottom:1rem;">{title}</h1>',
+        f'<h1 style="font-size:2rem;font-weight:700;color:#1e3a8a;margin-bottom:1rem;">{title}</h1>',
         unsafe_allow_html=True,
     )
 
@@ -1557,7 +1571,6 @@ def render_article_detail(doc_id, volume_id, issue_num):
             unsafe_allow_html=True,
         )
 
-    st.markdown('</div>', unsafe_allow_html=True)
 
 
 def render_about_page():
