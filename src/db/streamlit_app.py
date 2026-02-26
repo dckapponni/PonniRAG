@@ -33,7 +33,7 @@ except ImportError:
 try:
     from hybrid_search import (
         ask_question, ask_question_stream,
-        get_qdrant_client, COLLECTION_NAME as _HYBRID_COLLECTION,
+        get_qdrant_client, COLLECTION_NAME,
     )
     logger.info("Successfully imported hybrid_search module")
 except ImportError as e:
@@ -41,12 +41,7 @@ except ImportError as e:
     ask_question = None
     ask_question_stream = None
     get_qdrant_client = None
-    _HYBRID_COLLECTION = None
-
-# The qdrant_indexer script indexes into "qdrant_indexer" collection.
-# Use that for tags/browse queries; fall back to hybrid_search collection for chat.
-TAGS_COLLECTION = "qdrant_indexer"
-COLLECTION_NAME = _HYBRID_COLLECTION
+    COLLECTION_NAME = None
 
 
 TRANSLATIONS = {
@@ -1011,7 +1006,7 @@ def fetch_all_tags():
         offset = None
         while True:
             points, offset = client.scroll(
-                collection_name=TAGS_COLLECTION,
+                collection_name=COLLECTION_NAME,
                 scroll_filter=qdrant_models.Filter(must=[
                     qdrant_models.FieldCondition(
                         key="type", match=qdrant_models.MatchValue(value="article")),
@@ -1060,7 +1055,7 @@ def fetch_tag_articles(tag_id):
         offset = None
         while True:
             points, offset = client.scroll(
-                collection_name=TAGS_COLLECTION,
+                collection_name=COLLECTION_NAME,
                 scroll_filter=qdrant_models.Filter(must=[
                     qdrant_models.FieldCondition(
                         key="type", match=qdrant_models.MatchValue(value="article")),
@@ -1109,7 +1104,12 @@ def get_volume_issue_counts():
 
 @st.cache_data(ttl=300)
 def fetch_issue_articles(volume_id, issue_num):
-    """Fetch articles for a specific volume + issue from Qdrant."""
+    """Fetch articles for a specific volume + issue from Qdrant.
+
+    Uses metadata.doc_id (மலர் number) for volume filtering and
+    metadata.doc_issue (இதழ் number) for issue filtering, since
+    metadata.volume (from S3 key) may be 'unknown'.
+    """
     if get_qdrant_client is None or qdrant_models is None:
         logger.warning("Qdrant client or models not available")
         return []
@@ -1117,42 +1117,42 @@ def fetch_issue_articles(volume_id, issue_num):
         client = get_qdrant_client()
         seen = set()
         articles = []
+        vol_str = str(volume_id)
+        issue_str = str(issue_num)
 
-        # Step 1: Query only by type=article and chunk_id=0 for the volume.
-        # Try both "vol_N" and "Vol_N" to handle case variations from S3 keys.
-        vol_keys = [f"vol_{volume_id}", f"Vol_{volume_id}"]
+        # Step 1: Query by type=article, chunk_id=0, doc_id=volume number.
+        # doc_id is the மலர் (volume) number extracted from the document text.
         all_points = []
-        for vol_key in vol_keys:
-            scroll_offset = None
-            while True:
-                points, scroll_offset = client.scroll(
-                    collection_name=TAGS_COLLECTION,
-                    scroll_filter=qdrant_models.Filter(must=[
-                        qdrant_models.FieldCondition(
-                            key="type", match=qdrant_models.MatchValue(value="article")),
-                        qdrant_models.FieldCondition(
-                            key="metadata.chunk_id", match=qdrant_models.MatchValue(value=0)),
-                        qdrant_models.FieldCondition(
-                            key="metadata.volume", match=qdrant_models.MatchValue(value=vol_key)),
-                    ]),
-                    limit=500,
-                    offset=scroll_offset,
-                    with_payload=True,
-                )
-                all_points.extend(points)
-                if scroll_offset is None:
-                    break
+        scroll_offset = None
+        while True:
+            points, scroll_offset = client.scroll(
+                collection_name=COLLECTION_NAME,
+                scroll_filter=qdrant_models.Filter(must=[
+                    qdrant_models.FieldCondition(
+                        key="type", match=qdrant_models.MatchValue(value="article")),
+                    qdrant_models.FieldCondition(
+                        key="metadata.chunk_id", match=qdrant_models.MatchValue(value=0)),
+                    qdrant_models.FieldCondition(
+                        key="metadata.doc_id", match=qdrant_models.MatchValue(value=vol_str)),
+                ]),
+                limit=500,
+                offset=scroll_offset,
+                with_payload=True,
+            )
+            all_points.extend(points)
+            if scroll_offset is None:
+                break
 
-        logger.info(f"fetch_issue_articles: vol={volume_id}, issue={issue_num}, "
-                     f"total chunk_0 points found: {len(all_points)}")
+        logger.info(f"fetch_issue_articles: vol={volume_id} (doc_id filter), "
+                     f"issue={issue_num}, chunk_0 points: {len(all_points)}")
 
-        # If no results with volume filter, try without it and filter client-side
+        # Fallback: if doc_id filter found nothing, fetch all and filter client-side
         if not all_points:
-            logger.info("No points with volume filter — trying without volume filter")
+            logger.info("No points with doc_id filter — fetching all chunk_0 articles")
             scroll_offset = None
             while True:
                 points, scroll_offset = client.scroll(
-                    collection_name=TAGS_COLLECTION,
+                    collection_name=COLLECTION_NAME,
                     scroll_filter=qdrant_models.Filter(must=[
                         qdrant_models.FieldCondition(
                             key="type", match=qdrant_models.MatchValue(value="article")),
@@ -1166,33 +1166,37 @@ def fetch_issue_articles(volume_id, issue_num):
                 all_points.extend(points)
                 if scroll_offset is None:
                     break
-            logger.info(f"Without volume filter: {len(all_points)} chunk_0 article points")
-            # Log sample volume values to help debug
+            logger.info(f"Total chunk_0 articles (unfiltered): {len(all_points)}")
+            # Log sample doc_id and doc_issue values for debugging
             if all_points:
-                sample_vols = set()
+                sample_info = set()
                 for p in all_points[:20]:
                     meta = (p.payload or {}).get("metadata", {})
-                    sample_vols.add(meta.get("volume", "MISSING"))
-                logger.info(f"Sample volume values in data: {sample_vols}")
-            # Client-side volume filter
-            vol_lower = f"vol_{volume_id}".lower()
+                    sample_info.add(
+                        f"doc_id={meta.get('doc_id', 'MISSING')}, "
+                        f"doc_issue={meta.get('doc_issue', 'MISSING')}, "
+                        f"volume={meta.get('volume', 'MISSING')}"
+                    )
+                logger.info(f"Sample metadata: {sample_info}")
+            # Client-side filter by doc_id (volume number)
             all_points = [
                 p for p in all_points
-                if str((p.payload or {}).get("metadata", {}).get("volume", "")).lower() == vol_lower
+                if str((p.payload or {}).get("metadata", {}).get("doc_id", "")) == vol_str
             ]
-            logger.info(f"After client-side volume filter: {len(all_points)}")
+            logger.info(f"After client-side doc_id filter: {len(all_points)}")
 
-        # Step 2: Filter by issue number client-side
-        issue_str = str(issue_num)
+        # Step 2: Filter by issue number (exact match on doc_issue)
         for p in all_points:
             metadata = (p.payload or {}).get("metadata", {})
             doc_issue = str(metadata.get("doc_issue", ""))
-            if issue_str not in doc_issue:
+            if doc_issue != issue_str:
                 continue
             doc_id = metadata.get("doc_id")
-            if doc_id in seen:
+            article_no = str(metadata.get("article_no", ""))
+            unique_key = f"{doc_id}_{doc_issue}_{article_no}"
+            if unique_key in seen:
                 continue
-            seen.add(doc_id)
+            seen.add(unique_key)
             articles.append({
                 "doc_id": doc_id,
                 "title": metadata.get("title"),
@@ -1200,9 +1204,11 @@ def fetch_issue_articles(volume_id, issue_num):
                 "year": metadata.get("year"),
                 "tags": metadata.get("tags", []),
                 "doc_issue": doc_issue,
+                "article_no": article_no,
             })
 
-        logger.info(f"fetch_issue_articles result: {len(articles)} articles for vol {volume_id} issue {issue_num}")
+        logger.info(f"fetch_issue_articles result: {len(articles)} articles "
+                     f"for vol {volume_id} issue {issue_num}")
         return articles
     except Exception as e:
         logger.error(f"Error fetching issue articles: {e}", exc_info=True)
@@ -1210,23 +1216,39 @@ def fetch_issue_articles(volume_id, issue_num):
 
 
 @st.cache_data(ttl=300)
-def fetch_article_content(doc_id):
-    """Fetch all chunks of a specific article and concatenate content."""
+def fetch_article_content(doc_id, doc_issue, article_no):
+    """Fetch all chunks of a specific article and concatenate content.
+
+    Identifies the article by the combination of doc_id (volume/மலர்),
+    doc_issue (issue/இதழ்), and article_no (sequence within the issue).
+    """
     if get_qdrant_client is None or qdrant_models is None:
         return None
     try:
         client = get_qdrant_client()
         chunks = []
+
+        # Build filter: doc_id + doc_issue + article_no uniquely identify an article
+        filter_conditions = [
+            qdrant_models.FieldCondition(
+                key="type", match=qdrant_models.MatchValue(value="article")),
+            qdrant_models.FieldCondition(
+                key="metadata.doc_id", match=qdrant_models.MatchValue(value=str(doc_id))),
+            qdrant_models.FieldCondition(
+                key="metadata.doc_issue", match=qdrant_models.MatchValue(value=str(doc_issue))),
+        ]
+        if article_no:
+            filter_conditions.append(
+                qdrant_models.FieldCondition(
+                    key="metadata.article_no",
+                    match=qdrant_models.MatchValue(value=int(article_no) if str(article_no).isdigit() else article_no)),
+            )
+
         offset = None
         while True:
             points, offset = client.scroll(
-                collection_name=TAGS_COLLECTION,
-                scroll_filter=qdrant_models.Filter(must=[
-                    qdrant_models.FieldCondition(
-                        key="type", match=qdrant_models.MatchValue(value="article")),
-                    qdrant_models.FieldCondition(
-                        key="metadata.doc_id", match=qdrant_models.MatchValue(value=doc_id)),
-                ]),
+                collection_name=COLLECTION_NAME,
+                scroll_filter=qdrant_models.Filter(must=filter_conditions),
                 limit=100,
                 offset=offset,
                 with_payload=True,
@@ -1241,6 +1263,10 @@ def fetch_article_content(doc_id):
                 })
             if offset is None:
                 break
+
+        logger.info(f"fetch_article_content: doc_id={doc_id}, doc_issue={doc_issue}, "
+                     f"article_no={article_no}, chunks found: {len(chunks)}")
+
         if not chunks:
             return None
         chunks.sort(key=lambda c: c["chunk_id"])
@@ -1504,7 +1530,7 @@ def render_issue_articles(volume_id, issue_num):
         title = article.get("title") or t("untitled")
         author = article.get("author_name", "")
         tags = article.get("tags", [])
-        doc_id = article.get("doc_id", "")
+        article_no = article.get("article_no", "")
 
         # Tag badges
         badges_html = ""
@@ -1515,7 +1541,7 @@ def render_issue_articles(volume_id, issue_num):
             )
 
         author_html = f'<span style="color:#64748b;font-size:0.85rem;"> — {author}</span>' if author else ''
-        link = f"?page=tags&volume={volume_id}&issue={issue_num}&article={doc_id}"
+        link = f"?page=tags&volume={volume_id}&issue={issue_num}&article={article_no}"
 
         st.markdown(
             f'<div class="tags-article-block">'
@@ -1546,7 +1572,7 @@ def render_issue_articles(volume_id, issue_num):
     )
 
 
-def render_article_detail(doc_id, volume_id, issue_num):
+def render_article_detail(article_no, volume_id, issue_num):
     """Render full article view when an article is clicked from the list."""
     lang = st.session_state.language
 
@@ -1558,7 +1584,7 @@ def render_article_detail(doc_id, volume_id, issue_num):
         st.query_params.update(new_params)
         st.rerun()
 
-    article = fetch_article_content(doc_id)
+    article = fetch_article_content(volume_id, issue_num, article_no)
     if not article:
         st.markdown(
             f'<div class="tags-main-empty"><div>'
