@@ -268,22 +268,23 @@ def get_app_styles():
     /* === Tags/Categories page — two-pane layout (design ref) === */
     .tags-sidebar-marker { display: none; }
 
-    /* Reduce top gap — just enough for fixed nav bar */
+    /* Reduce top gap — just enough for fixed nav bar; add side margins */
     div[data-testid="stApp"]:has(.tags-sidebar-marker) .block-container {
-        max-width: 100% !important; padding: 3.5rem 0 0 0 !important; }
+        max-width: calc(100% - 4rem) !important; padding: 3.5rem 2rem 0 2rem !important; }
 
-    /* Kill global column card styles on tags page */
+    /* Gap between left and right panes */
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stHorizontalBlock"] {
-        gap: 0 !important; }
+        gap: 1.5rem !important; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] {
         background: #ffffff !important; box-shadow: none !important;
-        transform: none !important; padding: 0 !important; border-radius: 0 !important; }
+        transform: none !important; padding: 0 !important;
+        border-radius: 0.75rem !important; overflow: hidden; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:hover {
         box-shadow: none !important; transform: none !important; }
 
     /* Left column — light bg sidebar */
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child {
-        background: #f8fafc !important; border-right: 1px solid #e2e8f0; }
+        background: #f8fafc !important; border: 1px solid #e2e8f0; }
 
     /* Style the st.container(height=...) scrollable boxes — stretch to fill viewport */
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stVerticalBlockBorderWrapper"] {
@@ -292,9 +293,13 @@ def get_app_styles():
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stVerticalBlockBorderWrapper"] > div {
         padding: 0 !important; max-height: calc(100vh - 3.5rem) !important; }
 
+    /* Right column — subtle border */
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:last-child {
+        border: 1px solid #e2e8f0; }
+
     /* Left scrollable container inner padding */
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child
-        div[data-testid="stVerticalBlockBorderWrapper"] > div { padding: 1.5rem !important; }
+        div[data-testid="stVerticalBlockBorderWrapper"] > div { padding: 1.25rem 1.5rem !important; }
 
     /* Right scrollable container inner padding */
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:last-child
@@ -313,6 +318,14 @@ def get_app_styles():
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child label {
         color: #334155 !important; font-size: 0.85rem !important;
         font-weight: 500 !important; }
+    /* Text input and selectbox styling in sidebar */
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child input {
+        color: #1e293b !important; background: #ffffff !important;
+        border: 1px solid #cbd5e1 !important; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child input::placeholder {
+        color: #94a3b8 !important; opacity: 1 !important; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child
+        div[data-baseweb="select"] { color: #1e293b !important; }
     .result-count { font-size: 0.85rem; color: #64748b; margin-top: 0.75rem;
         margin-bottom: 0.5rem; }
     .result-count strong { color: #1e3a8a; }
@@ -359,10 +372,10 @@ def get_app_styles():
 
     /* Badges row */
     .tags-badge-row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
-    .tags-badge-vol { background: #eff6ff; color: #1e40af;
+    .tags-badge-vol { background: #eff6ff; color: #1e3a8a;
         border: 1px solid #bfdbfe; padding: 0.25rem 0.75rem;
         border-radius: 99px; font-size: 0.8rem; font-weight: 500; }
-    .tags-badge-cat { background: #f1f5f9; color: #475569;
+    .tags-badge-cat { background: #f1f5f9; color: #64748b;
         border: 1px solid #e2e8f0; padding: 0.25rem 0.75rem;
         border-radius: 99px; font-size: 0.8rem; font-weight: 500; }
 
@@ -384,7 +397,7 @@ def get_app_styles():
     .tags-stat-card .stat-label { font-size: 0.75rem; color: #64748b; margin-top: 0.25rem; }
 
     .source-tags { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.4rem; }
-    .tag-badge { background: #eff6ff; color: #1e40af; font-size: 0.75rem; font-weight: 500;
+    .tag-badge { background: #eff6ff; color: #1e3a8a; font-size: 0.75rem; font-weight: 500;
         padding: 0.2rem 0.6rem; border-radius: 99px; border: 1px solid #bfdbfe; }
 
     .tags-pdf-btn { display: inline-flex; align-items: center; gap: 0.4rem;
@@ -1351,6 +1364,7 @@ def render_tags_page():
     selected_volume = query_params.get("volume", "1")
     selected_issue = query_params.get("issue", "1")
     selected_article = query_params.get("article", None)
+    actual_doc_issue = query_params.get("di", None)  # actual doc_issue from Qdrant
 
     # Calculate pane height: viewport minus nav bar
     pane_height = 700  # px — fallback; CSS will stretch to calc(100vh - 3.5rem)
@@ -1367,7 +1381,9 @@ def render_tags_page():
     with right_col:
         with st.container(height=pane_height, border=False):
             if selected_article:
-                render_article_detail(selected_article, selected_volume, selected_issue)
+                render_article_detail(
+                    selected_article, selected_volume, selected_issue,
+                    actual_doc_issue)
             else:
                 render_issue_articles(selected_volume, int(selected_issue))
 
@@ -1563,8 +1579,9 @@ def render_issue_articles(volume_id, issue_num):
                 for tg in tags
             )
 
+        doc_issue = article.get("doc_issue", "")
         author_html = f'<span style="color:#64748b;font-size:0.85rem;"> — {author}</span>' if author else ''
-        link = f"?page=tags&volume={volume_id}&issue={issue_num}&article={article_no}"
+        link = f"?page=tags&volume={volume_id}&issue={issue_num}&article={article_no}&di={doc_issue}"
 
         st.markdown(
             f'<div class="tags-article-block">'
@@ -1595,7 +1612,7 @@ def render_issue_articles(volume_id, issue_num):
     )
 
 
-def render_article_detail(article_no, volume_id, issue_num):
+def render_article_detail(article_no, volume_id, issue_num, actual_doc_issue=None):
     """Render full article view when an article is clicked from the list."""
     lang = st.session_state.language
 
@@ -1603,11 +1620,14 @@ def render_article_detail(article_no, volume_id, issue_num):
     if st.button(f"\u2190 {t('tags_back_to_articles')}"):
         new_params = dict(st.query_params)
         new_params.pop("article", None)
+        new_params.pop("di", None)
         st.query_params.clear()
         st.query_params.update(new_params)
         st.rerun()
 
-    article = fetch_article_content(volume_id, issue_num, article_no)
+    # Use the actual doc_issue from Qdrant if available, otherwise fall back to sidebar issue
+    doc_issue_for_query = actual_doc_issue if actual_doc_issue else issue_num
+    article = fetch_article_content(volume_id, doc_issue_for_query, article_no)
     if not article:
         st.markdown(
             f'<div class="tags-main-empty"><div>'
