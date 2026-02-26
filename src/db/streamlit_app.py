@@ -1185,15 +1185,38 @@ def fetch_issue_articles(volume_id, issue_num):
             ]
             logger.info(f"After client-side doc_id filter: {len(all_points)}")
 
-        # Step 2: Filter by issue number (exact match on doc_issue)
+        # Collect all unique doc_issue values for this volume
+        all_issue_vals = set()
+        for p in all_points:
+            meta = (p.payload or {}).get("metadata", {})
+            raw_val = meta.get("doc_issue")
+            all_issue_vals.add(str(raw_val).strip() if raw_val is not None else "NA")
+        sorted_issues = sorted(
+            [v for v in all_issue_vals if v not in ("NA", "None", "")],
+            key=lambda x: int(x) if x.isdigit() else float("inf"),
+        )
+        logger.info(f"All doc_issue values in vol {volume_id}: {sorted_issues}")
+
+        # Build a mapping: sidebar issue position (1-based) → actual doc_issue value.
+        # The sidebar numbers issues sequentially (1, 2, 3...) based on image files,
+        # but doc_issue in Qdrant is the actual magazine issue number (இதழ்).
+        issue_position_map = {i + 1: v for i, v in enumerate(sorted_issues)}
+        # The actual doc_issue to match: look up by position, fall back to direct match
+        target_issue = issue_position_map.get(int(issue_num), issue_str)
+        logger.info(f"Issue mapping: sidebar position {issue_num} → doc_issue '{target_issue}' "
+                     f"(map: {issue_position_map})")
+
+        # Step 2: Filter by issue number using the mapped value.
         for p in all_points:
             metadata = (p.payload or {}).get("metadata", {})
-            doc_issue = str(metadata.get("doc_issue", ""))
-            if doc_issue != issue_str:
+            raw_issue = metadata.get("doc_issue", "")
+            doc_issue_str = str(raw_issue).strip()
+
+            if doc_issue_str != str(target_issue):
                 continue
             doc_id = metadata.get("doc_id")
             article_no = str(metadata.get("article_no", ""))
-            unique_key = f"{doc_id}_{doc_issue}_{article_no}"
+            unique_key = f"{doc_id}_{doc_issue_str}_{article_no}"
             if unique_key in seen:
                 continue
             seen.add(unique_key)
@@ -1203,12 +1226,12 @@ def fetch_issue_articles(volume_id, issue_num):
                 "author_name": metadata.get("author_name"),
                 "year": metadata.get("year"),
                 "tags": metadata.get("tags", []),
-                "doc_issue": doc_issue,
+                "doc_issue": doc_issue_str,
                 "article_no": article_no,
             })
 
         logger.info(f"fetch_issue_articles result: {len(articles)} articles "
-                     f"for vol {volume_id} issue {issue_num}")
+                     f"for vol {volume_id} issue {issue_num} (doc_issue={target_issue})")
         return articles
     except Exception as e:
         logger.error(f"Error fetching issue articles: {e}", exc_info=True)
