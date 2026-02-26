@@ -265,53 +265,56 @@ def get_app_styles():
     .issue-card-title { padding: 1rem; text-align: center; color: #1e3a8a;
         font-weight: 600; font-size: 1.1rem; background: #f8fafc; }
 
-    /* === Tags/Categories page — light two-pane layout (design ref) === */
+    /* === Tags/Categories page — two-pane layout (design ref) === */
     /* .tags-sidebar-marker is injected in left column; :has() detects tags page */
     .tags-sidebar-marker { display: none; }
 
-    /* Widen block container on tags page */
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) .block-container,
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) section.main .block-container {
-        max-width: 100% !important; padding-left: 1rem !important; padding-right: 1rem !important;
-        padding-bottom: 0 !important; overflow: hidden !important; }
-
-    /* Hide the scrollbar on main section so only panes scroll */
+    /* Lock the entire page — no page-level scroll, only panes scroll */
     div[data-testid="stApp"]:has(.tags-sidebar-marker) section.main {
-        overflow: hidden !important; }
+        overflow: hidden !important; height: 100vh !important; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) .block-container {
+        max-width: 100% !important; padding: 0 !important;
+        overflow: hidden !important; height: 100% !important; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) .block-container > div[data-testid="stVerticalBlock"] {
+        height: 100% !important; gap: 0 !important; padding-top: 3.5rem !important; }
 
-    /* The stHorizontalBlock (st.columns) — full viewport height */
+    /* The st.columns wrapper — fill remaining height */
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stHorizontalBlock"] {
         gap: 0 !important; flex-wrap: nowrap !important;
-        height: calc(100vh - 6rem) !important;
-        background: #ffffff; border-radius: 1rem; border: 1px solid #e2e8f0;
+        height: 100% !important;
+        border-top: 1px solid #e2e8f0;
         overflow: hidden !important; }
 
-    /* Both columns fill height */
+    /* Both columns fill height, no global card styles */
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] {
         background: #ffffff !important; box-shadow: none !important;
         transform: none !important; padding: 0 !important; border-radius: 0 !important;
         height: 100% !important; overflow: hidden !important; }
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] > div {
-        height: 100% !important; overflow: hidden !important; }
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] > div > div[data-testid="stVerticalBlock"] {
-        height: 100% !important; gap: 0 !important; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:hover {
         box-shadow: none !important; transform: none !important; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] .stButton > button {
         background-color: #ffffff !important; color: #1e3a8a !important;
-        width: auto !important; }
+        width: auto !important; box-shadow: none !important; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] h3 {
         color: #1e3a8a !important; text-align: left !important; }
 
-    /* Left column (sidebar) — scroll independently, light bg */
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child {
-        background: #f8fafc !important; border-right: 1px solid #e2e8f0; }
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child > div {
-        overflow-y: auto !important; padding: 1.5rem; }
+    /* Propagate height through all Streamlit wrapper divs inside columns */
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] > div,
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] > div > div,
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] > div > div > div,
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] > div > div[data-testid="stVerticalBlock"] {
+        height: 100% !important; overflow-y: auto !important; }
 
-    /* Right column (main) — scroll independently, with padding */
+    /* Left column (sidebar) — own scrollbar, light bg, border-right */
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child {
+        background: #f8fafc !important; border-right: 1px solid #e2e8f0;
+        max-width: 380px !important; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child > div {
+        padding: 1.5rem !important; }
+
+    /* Right column (main) — own scrollbar, padding */
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:last-child > div {
-        overflow-y: auto !important; padding: 2rem 2.5rem; }
+        padding: 2rem 2.5rem !important; }
 
     /* Sidebar title and form elements */
     .tags-sidebar-title { font-size: 1.4rem; font-weight: 700; color: #1e3a8a;
@@ -1249,9 +1252,6 @@ def _tag_display_name(tag_id, lang):
 def render_tags_page():
     """Render tags/categories page — two-pane layout matching design reference."""
     logger.info("Rendering tags page")
-
-    # Spacer for fixed nav bar
-    st.markdown("<div style='height: 4.5rem;'></div>", unsafe_allow_html=True)
 
     query_params = st.query_params
     selected_volume = query_params.get("volume", "1")
