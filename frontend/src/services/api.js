@@ -251,6 +251,31 @@ export const getPDFLink = async (volumeId, issueId) => {
 };
 
 /**
+ * Get all articles for a specific volume and issue
+ * @param {number} volumeId - Volume number (1-8)
+ * @param {number} issueId - Issue number within the volume
+ * @returns {Promise<{success: boolean, volume_id: number, issue_id: number, count: number, articles: Array}>}
+ */
+export const getIssueArticles = async (volumeId, issueId) => {
+  const response = await api.get(`/api/library/volumes/${volumeId}/issues/${issueId}/articles`);
+  return response.data;
+};
+
+/**
+ * Get full content of a specific article
+ * @param {string} docId - Document/volume ID
+ * @param {string} docIssue - Issue number
+ * @param {string} articleNo - Article number within the issue
+ * @returns {Promise<{success: boolean, title: string, author_name: string, content: string, ...}>}
+ */
+export const getArticleContent = async (docId, docIssue, articleNo) => {
+  const response = await api.get('/api/articles/content', {
+    params: { doc_id: docId, doc_issue: docIssue, article_no: articleNo },
+  });
+  return response.data;
+};
+
+/**
  * Get all article tags/categories with counts
  * @returns {Promise<{success: boolean, tags: Array<{id: string, tamil: string, english: string, count: number}>}>}
  */

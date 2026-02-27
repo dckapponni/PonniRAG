@@ -147,6 +147,12 @@ const Home = ({ language }) => {
         <>
           <div className="hero-container">
             <h1 className="hero-title">{t('app_title')}</h1>
+            <p className="hero-subtitle">
+              {language === 'ta'
+                ? '1947\u20131955 வரையிலான பொன்னி இதழின் அறிவுக் களஞ்சியத்தை ஆராயுங்கள்'
+                : 'Explore the knowledge archive of Ponni magazine, 1947\u20131955'}
+            </p>
+            <div className="hero-rule" />
           </div>
           <div className="suggestions-container">
             {suggestions.map((suggestion) => (

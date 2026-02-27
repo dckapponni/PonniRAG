@@ -23,20 +23,23 @@ const VolumeCard = ({ volume, language }) => {
 
   return (
     <Link to={`/library/volume/${volume.id}`} className="volume-card">
-      <img
-        src={imageSrc}
-        alt={`${t('lib_vol')} ${volume.id}`}
-        loading="lazy"
-        width={250}
-        height={375}
-        onError={(e) => {
-          e.target.onerror = null;
-          e.target.src = placeholderSrc;
-        }}
-      />
-      <div className="volume-card-title">
-        பொன்னி<br />
-        {t('lib_vol')} {volume.id}
+      <div className="volume-card-image-wrap">
+        <img
+          src={imageSrc}
+          alt={`${t('lib_vol')} ${volume.id}`}
+          loading="lazy"
+          width={250}
+          height={375}
+          onError={(e) => {
+            e.target.onerror = null;
+            e.target.src = placeholderSrc;
+          }}
+        />
+      </div>
+      <div className="volume-card-info">
+        <div className="volume-card-title">
+          {t('lib_vol')} {volume.id}
+        </div>
         <div className="volume-card-year">{volume.year}</div>
       </div>
     </Link>
@@ -48,8 +51,11 @@ const Library = ({ language }) => {
 
   return (
     <div className="library-container">
-      <h2 className="library-title">{t('lib_title')}</h2>
-      <p className="library-desc">{t('lib_desc')}</p>
+      <div className="library-header">
+        <h2 className="library-title">{t('lib_title')}</h2>
+        <div className="library-title-rule" />
+        <p className="library-desc">{t('lib_desc')}</p>
+      </div>
       <div className="volumes-grid">
         {volumes.map((volume) => (
           <VolumeCard key={volume.id} volume={volume} language={language} />

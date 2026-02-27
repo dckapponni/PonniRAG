@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { getTranslation } from '../services/translations';
 import { getPDFLink } from '../services/api';
 
 const PDFViewer = ({ language }) => {
   const { volumeId, issueId } = useParams();
-  const navigate = useNavigate();
   const [pdfData, setPdfData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -28,18 +27,22 @@ const PDFViewer = ({ language }) => {
     fetchPDFLink();
   }, [volumeId, issueId]);
 
-  const handleBack = () => {
-    navigate(`/library/volume/${volumeId}`);
-  };
-
   return (
     <div className="library-container">
-      <button className="back-btn" onClick={handleBack}>
-        ← {t('lib_back_issues')}
-      </button>
-      <h2 className="library-title">
-        {t('lib_vol')} {volumeId} - {t('issue')} {issueId}
-      </h2>
+      <div className="library-breadcrumb">
+        <Link to="/library">{t('nav_library')}</Link>
+        <span className="breadcrumb-sep">/</span>
+        <Link to={`/library/volume/${volumeId}`}>{t('lib_vol')} {volumeId}</Link>
+        <span className="breadcrumb-sep">/</span>
+        <span className="breadcrumb-current">{t('issue')} {issueId}</span>
+      </div>
+
+      <div className="library-header">
+        <h2 className="library-title">
+          {t('lib_vol')} {volumeId} &mdash; {t('issue')} {issueId}
+        </h2>
+        <div className="library-title-rule" />
+      </div>
 
       {loading ? (
         <div className="loading-spinner">
@@ -47,7 +50,7 @@ const PDFViewer = ({ language }) => {
           <span>{t('loading_pdf')}</span>
         </div>
       ) : error ? (
-        <p>{t('error_loading_pdf')}: {error}</p>
+        <p style={{ color: '#64748b', padding: '1rem 0' }}>{t('error_loading_pdf')}: {error}</p>
       ) : pdfData && pdfData.found ? (
         <>
           <div className="pdf-container">
@@ -57,17 +60,19 @@ const PDFViewer = ({ language }) => {
               allow="autoplay"
             />
           </div>
-          <a
-            href={pdfData.pdf_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="pdf-link"
-          >
-            {t('open_pdf')}
-          </a>
+          <div className="pdf-actions">
+            <a
+              href={pdfData.pdf_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="pdf-link"
+            >
+              {t('open_pdf')}
+            </a>
+          </div>
         </>
       ) : (
-        <p>{t('pdf_not_available')}</p>
+        <p style={{ color: '#64748b', padding: '1rem 0' }}>{t('pdf_not_available')}</p>
       )}
     </div>
   );

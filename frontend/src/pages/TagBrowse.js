@@ -1,126 +1,406 @@
 import React, { useState, useEffect } from 'react';
-import { getTags, getTagArticles } from '../services/api';
+import { getTags, getIssueArticles, getArticleContent, getPDFLink } from '../services/api';
 import { getTranslation } from '../services/translations';
+import { VOLUME_IMAGES } from '../data/volumeImages';
+
+// ============================================================================
+// Static Data
+// ============================================================================
+
+const VOLUMES = [
+  { id: 1, year: '1947' },
+  { id: 2, year: '1948' },
+  { id: 3, year: '1949' },
+  { id: 4, year: '1950' },
+  { id: 5, year: '1951' },
+  { id: 6, year: '1952' },
+  { id: 7, year: '1953' },
+  { id: 8, year: '1954' },
+];
+
+// ============================================================================
+// Component
+// ============================================================================
 
 const TagBrowse = ({ language }) => {
-  const [tags, setTags] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [selectedTag, setSelectedTag] = useState(null);
-  const [articles, setArticles] = useState([]);
-  const [articlesLoading, setArticlesLoading] = useState(false);
   const t = (key) => getTranslation(language, key);
 
+  // State
+  const [tags, setTags] = useState([]);
+  const [expandedVolume, setExpandedVolume] = useState(null);
+  const [selectedIssue, setSelectedIssue] = useState(null);
+  const [selectedArticle, setSelectedArticle] = useState(null);
+  const [articles, setArticles] = useState([]);
+  const [articleContent, setArticleContent] = useState(null);
+  const [categoryFilter, setCategoryFilter] = useState('ALL');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [articlesLoading, setArticlesLoading] = useState(false);
+  const [contentLoading, setContentLoading] = useState(false);
+  const [pdfUrl, setPdfUrl] = useState(null);
+
+  // Load tags on mount for category dropdown
   useEffect(() => {
     getTags()
       .then((data) => {
-        if (data.success) {
-          setTags(data.tags);
-        }
+        if (data.success) setTags(data.tags);
       })
-      .catch((err) => console.error('Failed to load tags:', err))
-      .finally(() => setLoading(false));
+      .catch((err) => console.error('Failed to load tags:', err));
   }, []);
 
-  const handleTagClick = async (tag) => {
-    setSelectedTag(tag);
+  // Handle issue selection
+  const handleSelectIssue = async (volumeId, issueIdx) => {
+    setSelectedIssue({ volumeId, issueIdx });
+    setSelectedArticle(null);
+    setArticleContent(null);
+    setArticles([]);
     setArticlesLoading(true);
+    setPdfUrl(null);
+
     try {
-      const data = await getTagArticles(tag.id);
-      if (data.success) {
-        setArticles(data.articles);
-      }
+      const [articlesData, pdfData] = await Promise.all([
+        getIssueArticles(volumeId, issueIdx),
+        getPDFLink(volumeId, issueIdx),
+      ]);
+      if (articlesData.success) setArticles(articlesData.articles);
+      if (pdfData.found) setPdfUrl(pdfData.pdf_url);
     } catch (err) {
-      console.error('Failed to load tag articles:', err);
+      console.error('Failed to load issue articles:', err);
     } finally {
       setArticlesLoading(false);
     }
   };
 
-  const handleBack = () => {
-    setSelectedTag(null);
-    setArticles([]);
+  // Handle article selection
+  const handleSelectArticle = async (article) => {
+    setSelectedArticle(article);
+    setContentLoading(true);
+    try {
+      const data = await getArticleContent(article.doc_id, article.doc_issue, article.article_no);
+      if (data.success) setArticleContent(data);
+    } catch (err) {
+      console.error('Failed to load article content:', err);
+    } finally {
+      setContentLoading(false);
+    }
   };
 
-  if (loading) {
-    return (
-      <div className="library-container">
-        <div className="loading-spinner">
-          <div className="spinner"></div>
-          <span>{t('searching')}</span>
-        </div>
-      </div>
-    );
-  }
+  // Filter articles client-side
+  const filteredArticles = articles.filter((article) => {
+    if (categoryFilter !== 'ALL' && !(article.tags || []).includes(categoryFilter)) return false;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      return (
+        (article.title || '').toLowerCase().includes(q) ||
+        (article.author_name || '').toLowerCase().includes(q)
+      );
+    }
+    return true;
+  });
 
-  // Article list view for a selected tag
-  if (selectedTag) {
-    return (
-      <div className="library-container">
-        <button className="back-btn" onClick={handleBack}>
-          {t('back_to_tags')}
-        </button>
-        <h1 className="library-title">
-          {language === 'ta' ? selectedTag.tamil : selectedTag.english}
-        </h1>
-        <p className="library-desc">
-          {t('articles_in_category')}: {articles.length}
-        </p>
-        {articlesLoading ? (
-          <div className="loading-spinner">
+  // Get cover image path for an issue
+  const getIssueCoverPath = (volumeId, issueIdx) => {
+    const issues = VOLUME_IMAGES[volumeId] || [];
+    const issue = issues[issueIdx - 1];
+    if (!issue) return null;
+    return `/images/volume${volumeId}-covers/${issue.filename}`;
+  };
+
+  // Placeholder SVG for missing thumbnails
+  const thumbPlaceholder = (label) =>
+    `data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="40" height="48" viewBox="0 0 40 48"%3E%3Crect fill="%23f1f5f9" width="40" height="48" rx="4"/%3E%3Ctext fill="%2394a3b8" font-family="Inter,sans-serif" font-size="8" text-anchor="middle" x="20" y="28"%3E${encodeURIComponent(label)}%3C/text%3E%3C/svg%3E`;
+
+  // ---- Render right pane content ----
+  const renderContent = () => {
+    // State 3: Article detail
+    if (selectedArticle) {
+      if (contentLoading) {
+        return (
+          <div className="tags-loading">
             <div className="spinner"></div>
             <span>{t('searching')}</span>
           </div>
-        ) : (
-          <div className="tag-articles-list">
-            {articles.map((article, idx) => (
-              <div key={idx} className="tag-article-card">
-                <div className="tag-article-title">
-                  {article.title || t('untitled')}
-                </div>
-                <div className="tag-article-meta">
+        );
+      }
+
+      if (!articleContent) {
+        return (
+          <div className="tags-empty-state">
+            <div className="tags-empty-text">{t('tags_no_articles')}</div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="tags-content-animate" key="detail">
+          <button
+            className="tags-detail-back"
+            onClick={() => { setSelectedArticle(null); setArticleContent(null); }}
+          >
+            &larr; {t('tags_back_to_articles')}
+          </button>
+
+          {(articleContent.tags || []).length > 0 && (
+            <div className="tags-badge-row">
+              {articleContent.tags.map((tag) => (
+                <span key={tag} className="tag-badge">{tag}</span>
+              ))}
+            </div>
+          )}
+
+          <h1 className="tags-detail-title">
+            {articleContent.title || t('untitled')}
+          </h1>
+          <div className="tags-detail-title-rule" />
+
+          <div className="tags-detail-content">
+            {articleContent.content}
+          </div>
+
+          <div className="tags-detail-meta">
+            {articleContent.author_name && (
+              <span>{t('author_label')}: {articleContent.author_name}</span>
+            )}
+            {articleContent.doc_issue && (
+              <span>{t('issue_label')}: {articleContent.doc_issue}</span>
+            )}
+            {articleContent.year && <span>{articleContent.year}</span>}
+          </div>
+
+          <div className="tags-stats-row">
+            <div className="tags-stat-card">
+              <div className="tags-stat-value">
+                {selectedIssue ? selectedIssue.volumeId : '-'}
+              </div>
+              <div className="tags-stat-label">{t('tags_volume_label')}</div>
+            </div>
+            <div className="tags-stat-card">
+              <div className="tags-stat-value">{t('browse_tags')}</div>
+              <div className="tags-stat-label">{t('tags_collection')}</div>
+            </div>
+            <div className="tags-stat-card">
+              <div className="tags-stat-value">{articleContent.word_count || '-'}</div>
+              <div className="tags-stat-label">{t('tags_word_count')}</div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // State 2: Issue selected — show articles list
+    if (selectedIssue) {
+      if (articlesLoading) {
+        return (
+          <div className="tags-loading">
+            <div className="spinner"></div>
+            <span>{t('searching')}</span>
+          </div>
+        );
+      }
+
+      const coverPath = getIssueCoverPath(selectedIssue.volumeId, selectedIssue.issueIdx);
+
+      return (
+        <div className="tags-content-animate" key={`issue-${selectedIssue.volumeId}-${selectedIssue.issueIdx}`}>
+          <div className="tags-badge-row">
+            <span className="tags-badge-vol">
+              {t('tags_volume_label')} {selectedIssue.volumeId}
+            </span>
+            <span className="tags-badge-issue">
+              {t('issue_label')} {selectedIssue.issueIdx}
+            </span>
+          </div>
+
+          <div className="tags-issue-header">
+            {coverPath && (
+              <img
+                className="tags-cover-image"
+                src={coverPath}
+                alt={`${t('issue_label')} ${selectedIssue.issueIdx}`}
+                onError={(e) => { e.target.style.display = 'none'; }}
+              />
+            )}
+            <div className="tags-issue-meta-col">
+              {pdfUrl && (
+                <a
+                  href={pdfUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="tags-pdf-btn"
+                >
+                  {t('tags_read_pdf')}
+                </a>
+              )}
+            </div>
+          </div>
+
+          <hr className="tags-divider" />
+
+          {filteredArticles.length === 0 ? (
+            <div className="tags-empty-state" style={{ height: 'auto', padding: '2rem 0' }}>
+              <div className="tags-empty-text">{t('tags_no_articles')}</div>
+            </div>
+          ) : (
+            <div className="tags-articles-grid">
+              {filteredArticles.map((article, idx) => (
+                <div
+                  key={`${article.doc_id}-${article.doc_issue}-${article.article_no}-${idx}`}
+                  className="tags-article-block"
+                  style={{ animationDelay: `${Math.min(idx * 0.04, 0.6)}s` }}
+                  onClick={() => handleSelectArticle(article)}
+                >
+                  <div className="tags-article-block-title">
+                    {article.title || t('untitled')}
+                  </div>
                   {article.author_name && (
-                    <span>{t('author_label')}: {article.author_name}</span>
+                    <div className="tags-article-block-author">
+                      {article.author_name}
+                    </div>
                   )}
-                  {article.doc_issue && (
-                    <span>{t('issue_label')}: {article.doc_issue}</span>
+                  {(article.tags || []).length > 0 && (
+                    <div className="tags-article-block-tags">
+                      {article.tags.map((tag) => (
+                        <span key={tag} className="tag-badge">{tag}</span>
+                      ))}
+                    </div>
                   )}
-                  {article.year && <span>{article.year}</span>}
                 </div>
-                {article.tags && article.tags.length > 0 && (
-                  <div className="source-tags">
-                    {article.tags.map((tag) => (
-                      <span key={tag} className="tag-badge">{tag}</span>
-                    ))}
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // State 1: Empty — no issue selected
+    return (
+      <div className="tags-empty-state">
+        <div className="tags-empty-icon">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            <line x1="8" y1="7" x2="16" y2="7" />
+            <line x1="8" y1="11" x2="13" y2="11" />
+          </svg>
+        </div>
+        <div className="tags-empty-text">{t('tags_select_issue')}</div>
+        <div className="tags-empty-hint">
+          {language === 'ta'
+            ? 'இடது பக்கத்தில் ஒரு தொகுதியை விரிவாக்கி, ஒரு இதழை உருப்படியிடுக'
+            : 'Expand a volume on the left and click an issue to browse its articles'}
+        </div>
+      </div>
+    );
+  };
+
+  // ---- Main Render ----
+  return (
+    <div className="tags-page-container">
+      {/* Left Sidebar */}
+      <div className="tags-sidebar">
+        <div className="tags-sidebar-header">
+          <div className="tags-sidebar-title">{t('tags_library_nav')}</div>
+
+          {/* Category filter dropdown */}
+          <select
+            className="tags-sidebar-select"
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+          >
+            <option value="ALL">{t('tags_all_categories')}</option>
+            {tags.map((tag) => (
+              <option key={tag.id} value={tag.id}>
+                {language === 'ta' ? tag.tamil : tag.english} ({tag.count})
+              </option>
+            ))}
+          </select>
+
+          {/* Search input */}
+          <div className="tags-sidebar-search">
+            <span className="tags-sidebar-search-icon">&#128269;</span>
+            <input
+              type="text"
+              placeholder={t('tags_search_placeholder')}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+
+          {/* Results count (only when issue is selected) */}
+          {selectedIssue && !selectedArticle && (
+            <div className="tags-result-count">
+              {filteredArticles.length} {t('tags_results_found')}
+            </div>
+          )}
+        </div>
+
+        {/* Volume accordions */}
+        <div className="tags-volumes-list">
+          {VOLUMES.map((volume) => {
+            const issues = VOLUME_IMAGES[volume.id] || [];
+            const isExpanded = expandedVolume === volume.id;
+
+            return (
+              <div key={volume.id} className="tags-volume-accordion">
+                <div
+                  className={`tags-volume-header ${isExpanded ? 'expanded' : ''}`}
+                  onClick={() => setExpandedVolume(isExpanded ? null : volume.id)}
+                >
+                  <span>
+                    <span className="tags-volume-label">
+                      {t('tags_volume_label')} {volume.id}
+                    </span>
+                    <span className="tags-volume-year">{volume.year}</span>
+                    <span className="tags-volume-count">
+                      &middot; {issues.length} {t('tags_files')}
+                    </span>
+                  </span>
+                  <span className={`tags-volume-chevron ${isExpanded ? 'expanded' : ''}`}>
+                    &#9654;
+                  </span>
+                </div>
+
+                {isExpanded && (
+                  <div className="tags-issue-list">
+                    {issues.map((issue, idx) => {
+                      const issueIdx = idx + 1;
+                      const isActive =
+                        selectedIssue &&
+                        selectedIssue.volumeId === volume.id &&
+                        selectedIssue.issueIdx === issueIdx;
+                      const imgPath = `/images/volume${volume.id}-covers/${issue.filename}`;
+
+                      return (
+                        <div
+                          key={issue.issue_num}
+                          className={`tags-issue-item ${isActive ? 'active' : ''}`}
+                          onClick={() => handleSelectIssue(volume.id, issueIdx)}
+                        >
+                          <img
+                            className="tags-issue-thumb"
+                            src={imgPath}
+                            alt={`${t('issue_label')} ${issue.issue_num}`}
+                            onError={(e) => {
+                              e.target.src = thumbPlaceholder(String(issue.issue_num));
+                            }}
+                            loading="lazy"
+                          />
+                          <span className="tags-issue-label">
+                            {t('issue_label')} {issue.issue_num}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
-            ))}
-          </div>
-        )}
+            );
+          })}
+        </div>
       </div>
-    );
-  }
 
-  // Tag grid view
-  return (
-    <div className="library-container">
-      <h1 className="library-title">{t('browse_tags')}</h1>
-      <p className="library-desc">{t('browse_tags_desc')}</p>
-      <div className="tags-grid">
-        {tags.map((tag) => (
-          <div
-            key={tag.id}
-            className="tag-card"
-            onClick={() => handleTagClick(tag)}
-          >
-            <div className="tag-card-name">
-              {language === 'ta' ? tag.tamil : tag.english}
-            </div>
-            <div className="tag-card-count">
-              {tag.count} {t('articles_count')}
-            </div>
-          </div>
-        ))}
+      {/* Right Content Pane */}
+      <div className="tags-content">
+        {renderContent()}
       </div>
     </div>
   );
