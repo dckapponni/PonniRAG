@@ -299,7 +299,7 @@ def get_app_styles():
 
     /* Left scrollable container inner padding */
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child
-        div[data-testid="stVerticalBlockBorderWrapper"] > div { padding: 1.25rem 1.5rem !important; }
+        div[data-testid="stVerticalBlockBorderWrapper"] > div { padding: 2.5rem !important; }
 
     /* Right scrollable container inner padding */
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:last-child
@@ -307,33 +307,49 @@ def get_app_styles():
 
     /* Button overrides inside tags page */
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] .stButton > button {
-        background-color: #ffffff !important; color: #1e3a8a !important;
+        background-color: #ffffff !important; color: #64748b !important;
         width: auto !important; box-shadow: none !important; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] h3 {
-        color: #1e3a8a !important; text-align: left !important; }
+        color: #64748b !important; text-align: left !important;
+        font-size: 0.95rem !important; font-weight: 600 !important; }
+
+    /* Sidebar collapse/expand toggle buttons */
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) > section > div > div > div > div > .stButton > button {
+        background: #f1f5f9 !important; color: #64748b !important;
+        border: 1px solid #e2e8f0 !important; border-radius: 0.5rem !important;
+        padding: 0.25rem 0.75rem !important; font-size: 1.2rem !important;
+        font-weight: 700 !important; width: auto !important; min-height: 0 !important;
+        box-shadow: none !important; line-height: 1 !important; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child > .stButton > button {
+        background: transparent !important; border: none !important;
+        padding: 0.1rem 0.5rem !important; font-size: 1.4rem !important;
+        position: absolute; right: 0.5rem; top: 0.5rem; z-index: 10; }
 
     /* Sidebar title and form elements */
-    .tags-sidebar-title { font-size: 1.4rem; font-weight: 700; color: #1e3a8a;
+    .tags-sidebar-title { font-size: 1rem; font-weight: 600; color: #64748b;
         margin-bottom: 1.25rem; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child label {
         color: #334155 !important; font-size: 0.85rem !important;
         font-weight: 500 !important; }
     /* Text input and selectbox styling in sidebar */
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child input {
-        color: #1e293b !important; background: #ffffff !important;
-        border: 1px solid #cbd5e1 !important; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child input,
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child input[type="text"],
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child div[data-baseweb="input"] input,
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child div[data-testid="stTextInput"] input {
+        color: #1e293b !important; -webkit-text-fill-color: #1e293b !important;
+        background: #ffffff !important; border: 1px solid #cbd5e1 !important; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child input::placeholder {
-        color: #94a3b8 !important; opacity: 1 !important; }
+        color: #94a3b8 !important; -webkit-text-fill-color: #94a3b8 !important; opacity: 1 !important; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child
-        div[data-baseweb="select"] { color: #1e293b !important; }
+        div[data-baseweb="select"] { color: #1e293b !important; -webkit-text-fill-color: #1e293b !important; }
     .result-count { font-size: 0.85rem; color: #64748b; margin-top: 0.75rem;
         margin-bottom: 0.5rem; }
-    .result-count strong { color: #1e3a8a; }
+    .result-count strong { color: #64748b; }
 
     /* Volume accordions in sidebar */
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stExpander"] { margin-bottom: 0.5rem; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stExpander"] summary {
-        background-color: #ffffff !important; color: #1e3a8a !important;
+        background-color: #ffffff !important; color: #64748b !important;
         border-radius: 1rem !important; padding: 0.75rem 1rem !important;
         font-weight: 600 !important; font-size: 0.95rem !important;
         border: 1px solid #e2e8f0 !important; }
@@ -341,7 +357,7 @@ def get_app_styles():
         background-color: #f1f5f9 !important; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stExpander"] summary span,
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stExpander"] summary p {
-        color: #1e3a8a !important; }
+        color: #64748b !important; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stExpander"] svg { fill: #64748b !important; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stExpander"] div[data-testid="stExpanderDetails"] {
         padding: 0.5rem 0.75rem !important; background: transparent !important; }
@@ -352,13 +368,13 @@ def get_app_styles():
         text-decoration: none; color: #334155; padding: 0.5rem 0.6rem;
         border-radius: 0.75rem; transition: all 0.2s; cursor: pointer;
         border: 1px solid transparent; }
-    .tags-file-item:hover { background: #f1f5f9; text-decoration: none; color: #1e3a8a; }
+    .tags-file-item:hover { background: #f1f5f9; text-decoration: none; color: #64748b; }
     .tags-file-item.active { background: #eff6ff;
         border-color: #3b82f6; }
     .tags-file-item img { width: 48px; height: 48px; object-fit: cover;
         border-radius: 0.5rem; flex-shrink: 0; border: 1px solid #e2e8f0; }
     .tags-file-item .file-title { font-size: 0.85rem; font-weight: 500;
-        color: #1e3a8a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         max-width: 180px; margin-bottom: 0.15rem; }
     .tags-file-item .file-badge { background: #f1f5f9; color: #64748b;
         font-size: 0.7rem; padding: 0.1rem 0.5rem; border-radius: 99px;
@@ -372,7 +388,7 @@ def get_app_styles():
 
     /* Badges row */
     .tags-badge-row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
-    .tags-badge-vol { background: #eff6ff; color: #1e3a8a;
+    .tags-badge-vol { background: #eff6ff; color: #64748b;
         border: 1px solid #bfdbfe; padding: 0.25rem 0.75rem;
         border-radius: 99px; font-size: 0.8rem; font-weight: 500; }
     .tags-badge-cat { background: #f1f5f9; color: #64748b;
@@ -382,7 +398,7 @@ def get_app_styles():
     /* Article content in main pane */
     .tags-article-block { background: #f8fafc; border-radius: 1rem;
         padding: 1.5rem; border: 1px solid #e2e8f0; margin-bottom: 1rem; }
-    .tags-article-block h3 { color: #1e3a8a; font-size: 1.2rem; margin-bottom: 0.75rem; }
+    .tags-article-block h3 { color: #64748b; font-size: 0.95rem; font-weight: 600; margin-bottom: 0.75rem; }
     .tags-article-block .article-text { color: #334155; font-size: 0.95rem;
         line-height: 1.8; white-space: pre-wrap; }
     .tags-article-block .article-meta { color: #64748b; font-size: 0.85rem;
@@ -1366,19 +1382,41 @@ def render_tags_page():
     selected_article = query_params.get("article", None)
     actual_doc_issue = query_params.get("di", None)  # actual doc_issue from Qdrant
 
+    # Sidebar collapsed state — expanded by default
+    if "tags_sidebar_open" not in st.session_state:
+        st.session_state.tags_sidebar_open = True
+
     # Calculate pane height: viewport minus nav bar
     pane_height = 700  # px — fallback; CSS will stretch to calc(100vh - 3.5rem)
 
-    # Two-pane columns
-    left_col, right_col = st.columns([3, 7])
+    # Marker div for CSS :has() selector (must be outside columns)
+    st.markdown('<div class="tags-sidebar-marker"></div>', unsafe_allow_html=True)
 
-    with left_col:
-        # Marker div for CSS :has() selector
-        st.markdown('<div class="tags-sidebar-marker"></div>', unsafe_allow_html=True)
-        with st.container(height=pane_height, border=False):
-            render_tags_sidebar(selected_volume, selected_issue)
+    if st.session_state.tags_sidebar_open:
+        # Two-pane layout
+        left_col, right_col = st.columns([2.5, 7.5])
 
-    with right_col:
+        with left_col:
+            # Collapse button at top of sidebar
+            if st.button("\u2039", key="tags_collapse_btn", help="Collapse sidebar"):
+                st.session_state.tags_sidebar_open = False
+                st.rerun()
+            with st.container(height=pane_height, border=False):
+                render_tags_sidebar(selected_volume, selected_issue)
+
+        with right_col:
+            with st.container(height=pane_height, border=False):
+                if selected_article:
+                    render_article_detail(
+                        selected_article, selected_volume, selected_issue,
+                        actual_doc_issue)
+                else:
+                    render_issue_articles(selected_volume, int(selected_issue))
+    else:
+        # Collapsed — full-width right pane with expand button
+        if st.button("\u203a", key="tags_expand_btn", help="Expand sidebar"):
+            st.session_state.tags_sidebar_open = True
+            st.rerun()
         with st.container(height=pane_height, border=False):
             if selected_article:
                 render_article_detail(
@@ -1512,7 +1550,7 @@ def render_issue_articles(volume_id, issue_num):
 
     # Title
     st.markdown(
-        f'<h1 style="font-size:2rem;font-weight:700;color:#1e3a8a;margin-bottom:0.5rem;">'
+        f'<h1 style="font-size:1rem;font-weight:600;color:#64748b;margin-bottom:0.5rem;">'
         f'{t("lib_vol")} {volume_id} {t("issue")} {issue_num} — {t("tags_content_list")}</h1>',
         unsafe_allow_html=True,
     )
@@ -1586,9 +1624,9 @@ def render_issue_articles(volume_id, issue_num):
         st.markdown(
             f'<div class="tags-article-block">'
             f'<div style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap;">'
-            f'<span style="color:#3b82f6;font-weight:700;font-size:0.9rem;">{idx}.</span>'
+            f'<span style="color:#64748b;font-weight:700;font-size:0.95rem;">{idx}.</span>'
             f'<a href="{link}" target="_self" style="text-decoration:none;">'
-            f'<span style="color:#1e3a8a;font-weight:600;font-size:1rem;">{title}</span></a>'
+            f'<span style="color:#64748b;font-weight:600;font-size:0.95rem;">{title}</span></a>'
             f'{author_html}'
             f'</div>'
             f'<div style="margin-top:0.5rem;">{badges_html}</div>'
@@ -1652,7 +1690,7 @@ def render_article_detail(article_no, volume_id, issue_num, actual_doc_issue=Non
 
     # Title
     st.markdown(
-        f'<h1 style="font-size:2rem;font-weight:700;color:#1e3a8a;margin-bottom:1rem;">{title}</h1>',
+        f'<h1 style="font-size:1rem;font-weight:600;color:#64748b;margin-bottom:1rem;">{title}</h1>',
         unsafe_allow_html=True,
     )
 
