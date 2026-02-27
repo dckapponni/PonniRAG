@@ -9,7 +9,9 @@ import logging
 import asyncio
 import time
 
-from cache import ResponseCache, _response_cache 
+from config.config import MAX_QUERY_LENGTH
+
+from cache import ResponseCache, _response_cache
 from embeddings import (
     USE_CUDA, DEVICE, COLLECTION_NAME,
     EMBEDDING_MODEL, SCORE_THRESHOLD, BASE_DIR, CSV_PATH,
@@ -37,6 +39,30 @@ def verify_files():
 
 
 verify_files()
+
+
+def truncate_query(question: str, max_length: int = MAX_QUERY_LENGTH) -> str:
+    """Truncate a query to max_length at a word boundary.
+
+    Long queries cause embedding latency spikes (E5 tokenizer caps at 512
+    tokens), waste LLM prompt budget (question is injected twice), and
+    degrade retrieval quality. This truncates at the last whitespace
+    before the limit so words aren't split mid-character.
+    """
+    if len(question) <= max_length:
+        return question
+
+    truncated = question[:max_length]
+    # Cut at last whitespace to avoid splitting a word/Tamil character
+    last_space = truncated.rfind(" ")
+    if last_space > max_length // 2:
+        truncated = truncated[:last_space]
+
+    logger.warning(
+        f"Query truncated from {len(question)} to {len(truncated)} chars "
+        f"(limit {max_length})"
+    )
+    return truncated
 
 
 # ============================================================================
@@ -68,6 +94,7 @@ def ask_question(question: str, return_formatted: bool = False, use_llm: bool = 
                 - error (str/dict): Error details if failed (optional)
             - If True: Formatted string with answer and sources
     """
+    question = truncate_query(question)
     t_start = time.time()
     health_status = check_qdrant_health()
     logger.info(f"[TIMING] health_check: {time.time() - t_start:.2f}s")
@@ -233,6 +260,7 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
     Gemini async LLM calls. This allows multiple user requests
     to be processed concurrently without blocking the event loop.
     """
+    question = truncate_query(question)
     t_start = time.time()
     health_status = await asyncio.to_thread(check_qdrant_health)
     logger.info(f"[TIMING] async health_check: {time.time() - t_start:.2f}s")
@@ -398,6 +426,7 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
     and {"type": "sources", "sources": list} at the end.
     For non-streamable responses (CSV queries, errors), yields complete answer as single token.
     """
+    question = truncate_query(question)
     # 1. Check health
     health_status = check_qdrant_health()
     if not health_status["healthy"]:

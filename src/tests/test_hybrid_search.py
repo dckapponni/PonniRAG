@@ -1404,6 +1404,75 @@ class TestThreadSafety:
         assert temp_csv_file in hs._author_system_cache
 
 
+class TestTruncateQuery:
+    """Tests for query length truncation."""
+
+    def test_short_query_unchanged(self):
+        """Queries under the limit are returned as-is."""
+        q = "பொன்னி பத்திரிகை எப்போது தொடங்கியது?"
+        assert hs.truncate_query(q) == q
+
+    def test_exact_limit_unchanged(self):
+        """Query exactly at the limit is not truncated."""
+        q = "x" * 500
+        assert hs.truncate_query(q, max_length=500) == q
+
+    def test_long_query_truncated(self):
+        """Query exceeding limit is truncated."""
+        q = "word " * 200  # 1000 chars
+        result = hs.truncate_query(q, max_length=100)
+        assert len(result) <= 100
+
+    def test_truncates_at_word_boundary(self):
+        """Truncation should not split a word."""
+        q = "abcde fghij klmno pqrst uvwxy"
+        result = hs.truncate_query(q, max_length=18)
+        # Should cut at space before "pqrst", not mid-word
+        assert not result.endswith("p")
+        assert result == "abcde fghij klmno"
+
+    def test_tamil_word_boundary(self):
+        """Tamil words separated by spaces are not split."""
+        q = "தமிழ் மொழி பற்றிய கேள்வி இது மிகவும் நீண்ட வாக்கியம்"
+        result = hs.truncate_query(q, max_length=30)
+        assert len(result) <= 30
+        # Should end at a space boundary, not mid-Tamil-word
+        assert not result[-1].strip() == ""
+
+    def test_empty_query(self):
+        """Empty query returned as-is."""
+        assert hs.truncate_query("") == ""
+
+    def test_no_spaces_falls_back_to_hard_cut(self):
+        """When no space in first half, falls back to hard truncation at limit."""
+        q = "a" * 600
+        result = hs.truncate_query(q, max_length=500)
+        assert len(result) == 500
+
+    def test_custom_max_length(self):
+        """Custom max_length is respected."""
+        q = "word " * 100
+        result = hs.truncate_query(q, max_length=50)
+        assert len(result) <= 50
+
+    def test_logs_warning_on_truncation(self):
+        """Truncation logs a warning."""
+        q = "word " * 200
+        with patch.object(hs.logger, 'warning') as mock_warn:
+            hs.truncate_query(q, max_length=100)
+            mock_warn.assert_called_once()
+            assert "truncated" in mock_warn.call_args[0][0].lower()
+
+    def test_ask_question_truncates_long_query(self):
+        """ask_question applies truncation before processing."""
+        long_q = "word " * 200
+        with patch('hybrid_search.check_qdrant_health') as mock_health, \
+             patch('hybrid_search.truncate_query', wraps=hs.truncate_query) as mock_trunc:
+            mock_health.return_value = {"healthy": False, "message": "down", "error": "test", "details": "x", "action": "x"}
+            hs.ask_question(long_q)
+            mock_trunc.assert_called_once_with(long_q)
+
+
 # Run tests with coverage
 if __name__ == '__main__':
     pytest.main([

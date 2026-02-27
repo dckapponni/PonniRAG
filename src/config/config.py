@@ -34,4 +34,10 @@ QDRANT_PORT = int(os.environ.get("QDRANT_PORT", "6333"))
 # S3 snapshot persistence
 SNAPSHOT_S3_PREFIX = "qdrant_snapshots/"
 
+# Query length limit (characters). Queries longer than this are truncated
+# at word boundaries before embedding/LLM processing. The E5 model tokenizer
+# caps at 512 tokens (~300-500 Tamil chars), so 500 is a safe ceiling that
+# covers any reasonable question while preventing latency spikes.
+MAX_QUERY_LENGTH = 500
+
 
