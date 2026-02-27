@@ -34,6 +34,13 @@ const Home = ({ language }) => {
     const thisRequestId = ++requestIdRef.current;
 
     const userMessage = { role: 'user', content: question };
+
+    // Build history from last 3 Q&A turns (before adding the new messages)
+    const historyMessages = messages.slice(-6); // last 3 turns = 6 messages max
+    const history = historyMessages
+      .filter((m) => m.content)
+      .map((m) => ({ role: m.role, content: m.content }));
+
     setMessages((prev) => [
       ...prev,
       userMessage,
@@ -78,7 +85,7 @@ const Home = ({ language }) => {
         console.error('Streaming error, falling back:', error);
         activeStreamRef.current = null;
         // Fall back to non-streaming
-        askQuestion(question)
+        askQuestion(question, true, history)
           .then((result) => {
             if (requestIdRef.current !== thisRequestId) return;
             setMessages((prev) => {
@@ -109,7 +116,7 @@ const Home = ({ language }) => {
             }
           });
       },
-    });
+    }, history);
 
     activeStreamRef.current = streamController;
   };

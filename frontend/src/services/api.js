@@ -81,11 +81,10 @@ export const getApiInfo = async () => {
  * @param {boolean} useLLM - Whether to use LLM for answer generation
  * @returns {Promise<{answer: string, sources: Array, query_type: string, error: object}>}
  */
-export const askQuestion = async (question, useLLM = true) => {
-  const response = await api.post('/api/ask', {
-    question,
-    use_llm: useLLM,
-  });
+export const askQuestion = async (question, useLLM = true, history = []) => {
+  const body = { question, use_llm: useLLM };
+  if (history.length > 0) body.history = history;
+  const response = await api.post('/api/ask', body);
   return response.data;
 };
 
@@ -97,7 +96,7 @@ export const askQuestion = async (question, useLLM = true) => {
  * @param {object} callbacks - { onToken, onSources, onDone, onError }
  * @returns {AbortController} - Call .abort() to cancel the stream
  */
-export const askQuestionStream = (question, { onToken, onSources, onDone, onError }) => {
+export const askQuestionStream = (question, { onToken, onSources, onDone, onError }, history = []) => {
   const controller = new AbortController();
   let doneFired = false;
 
@@ -108,10 +107,13 @@ export const askQuestionStream = (question, { onToken, onSources, onDone, onErro
     }
   };
 
+  const body = { question, use_llm: true };
+  if (history.length > 0) body.history = history;
+
   fetch(`${API_BASE_URL}/api/ask/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question, use_llm: true }),
+    body: JSON.stringify(body),
     signal: controller.signal,
   })
     .then(async (response) => {

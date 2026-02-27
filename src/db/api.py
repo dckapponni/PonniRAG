@@ -39,11 +39,18 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+class HistoryMessage(BaseModel):
+    """A single conversation turn (user or assistant)."""
+    role: str  # "user" or "assistant"
+    content: str
+
+
 class QuestionRequest(BaseModel):
     """Request model for asking questions."""
     question: str = Field(..., min_length=1, description="The question to ask")
     use_llm: bool = Field(default=True, description="Use LLM for answer generation")
     tags: Optional[List[str]] = Field(default=None, description="Filter by tag IDs")
+    history: Optional[List[HistoryMessage]] = Field(default=None, description="Previous Q&A turns for context")
 
 
 class SourceDocument(BaseModel):
@@ -308,11 +315,13 @@ async def ask_question_endpoint(request: QuestionRequest):
     try:
         logger.info(f"Question received: {request.question[:100]}...")
 
+        history = [h.model_dump() for h in request.history] if request.history else None
         result = await ask_question_async(
             question=request.question,
             return_formatted=False,
             use_llm=request.use_llm,
             filter_tags=request.tags,
+            history=history,
         )
 
         return QuestionResponse(
@@ -337,11 +346,14 @@ async def ask_question_stream_endpoint(request: QuestionRequest):
     - event: sources — source documents (JSON array)
     - event: done — signals completion
     """
+    history = [h.model_dump() for h in request.history] if request.history else None
+
     def event_generator():
         try:
             for event in ask_question_stream(
                 question=request.question,
                 filter_tags=request.tags,
+                history=history,
             ):
                 if event["type"] == "token":
                     yield f"event: token\ndata: {json.dumps({'content': event['content']})}\n\n"

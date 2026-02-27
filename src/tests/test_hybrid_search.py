@@ -638,6 +638,108 @@ class TestAskQuestion:
             result = hs.ask_question('test', return_formatted=True)
             assert isinstance(result, str)
 
+    @patch('hybrid_search.check_qdrant_health')
+    @patch('hybrid_search.get_qdrant_client')
+    @patch('hybrid_search.HybridQdrantSearch')
+    @patch('hybrid_search.merge_consecutive_chunks')
+    @patch('hybrid_search.generate_llm_answer')
+    def test_ask_question_with_history(self, mock_llm, mock_merge, mock_search_class, mock_client, mock_health):
+        """Test that history is passed through to generate_llm_answer."""
+        mock_health.return_value = {'healthy': True, 'points_count': 1000}
+        mock_client.return_value = MagicMock()
+
+        mock_searcher = MagicMock()
+        point = MagicMock()
+        point.score = 0.95
+        point.payload = {'type': 'intro', 'content': 'test'}
+        mock_searcher.search.return_value = [point]
+        mock_search_class.return_value = mock_searcher
+
+        mock_merge.return_value = [{
+            'content': 'தமிழ் மொழி விவரம்',
+            'volume': 'vol1',
+            'heading': 'தமிழ்',
+            'doc_issue': '1',
+            'word_count': 50,
+            'chunk_count': 2,
+            'score': 0.95
+        }]
+
+        mock_llm.return_value = 'பதில் வரலாற்றுடன்'
+
+        history = [
+            {"role": "user", "content": "பொன்னி என்றால் என்ன?"},
+            {"role": "assistant", "content": "பொன்னி ஒரு தமிழ் இதழ்."},
+        ]
+
+        result = hs.ask_question('அதைப் பற்றி மேலும் கூறுங்கள்', history=history)
+        assert 'answer' in result
+        # Verify history was passed to generate_llm_answer
+        _, kwargs = mock_llm.call_args
+        assert kwargs.get('history') == history
+
+    @patch('hybrid_search.check_qdrant_health')
+    @patch('hybrid_search._response_cache')
+    def test_ask_question_cache_bypass_with_history(self, mock_cache, mock_health):
+        """Test that cache is bypassed when history is present."""
+        mock_health.return_value = {'healthy': True, 'points_count': 1000}
+        mock_cache.get.return_value = {"answer": "cached answer", "sources": []}
+
+        history = [
+            {"role": "user", "content": "முதல் கேள்வி"},
+            {"role": "assistant", "content": "முதல் பதில்"},
+        ]
+
+        # With history, cache.get should NOT be called
+        with patch('hybrid_search.handle_author_query', return_value=(False, None)), \
+             patch('hybrid_search.get_qdrant_client') as mock_client, \
+             patch('hybrid_search.HybridQdrantSearch') as mock_search_class:
+            mock_client.return_value = MagicMock()
+            mock_searcher = MagicMock()
+            mock_searcher.search.return_value = []
+            mock_search_class.return_value = mock_searcher
+
+            result = hs.ask_question('follow up question', history=history)
+            # Cache get should not have been called
+            mock_cache.get.assert_not_called()
+
+    @patch('hybrid_search._response_cache')
+    @patch('hybrid_search.check_qdrant_health')
+    @patch('hybrid_search.get_qdrant_client')
+    @patch('hybrid_search.HybridQdrantSearch')
+    @patch('hybrid_search.merge_consecutive_chunks')
+    @patch('hybrid_search.generate_llm_answer')
+    def test_ask_question_without_history_unchanged(self, mock_llm, mock_merge, mock_search_class, mock_client, mock_health, mock_cache):
+        """Test that ask_question without history works exactly as before."""
+        mock_health.return_value = {'healthy': True, 'points_count': 1000}
+        mock_client.return_value = MagicMock()
+        mock_cache.get.return_value = None
+
+        mock_searcher = MagicMock()
+        point = MagicMock()
+        point.score = 0.95
+        point.payload = {'type': 'intro', 'content': 'test'}
+        mock_searcher.search.return_value = [point]
+        mock_search_class.return_value = mock_searcher
+
+        mock_merge.return_value = [{
+            'content': 'தமிழ் மொழி விவரம்',
+            'volume': 'vol1',
+            'heading': 'தமிழ்',
+            'doc_issue': '1',
+            'word_count': 50,
+            'chunk_count': 2,
+            'score': 0.95
+        }]
+
+        mock_llm.return_value = 'தமிழ் மொழி பற்றிய விரிவான பதில்'
+
+        result = hs.ask_question('வரலாறு பற்றி கூறுக')
+        assert 'answer' in result
+        # Verify history is None (not passed) when not provided
+        _, kwargs = mock_llm.call_args
+        assert kwargs.get('history') is None
+
 
 # Test model loading functions
 class TestModelLoading:

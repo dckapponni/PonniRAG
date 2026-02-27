@@ -43,7 +43,7 @@ verify_files()
 # ORCHESTRATOR FUNCTIONS
 # ============================================================================
 
-def ask_question(question: str, return_formatted: bool = False, use_llm: bool = True, filter_tags: List[str] = None) -> Dict:
+def ask_question(question: str, return_formatted: bool = False, use_llm: bool = True, filter_tags: List[str] = None, history: List[Dict] = None) -> Dict:
     """
     Main question answering function with database health check and hybrid search.
 
@@ -91,13 +91,14 @@ Error Type: {health_status['error']}
 
     logger.info("Database is healthy - proceeding with query")
 
-    # --- RESPONSE CACHE LOOKUP ---
-    cached = _response_cache.get(question)
-    if cached is not None:
-        logger.info(f"[TIMING] TOTAL ask_question (CACHED): {time.time() - t_start:.2f}s")
-        if return_formatted:
-            return format_answer_output(cached["answer"], cached["sources"])
-        return cached
+    # --- RESPONSE CACHE LOOKUP (skip when conversation history is present) ---
+    if not history:
+        cached = _response_cache.get(question)
+        if cached is not None:
+            logger.info(f"[TIMING] TOTAL ask_question (CACHED): {time.time() - t_start:.2f}s")
+            if return_formatted:
+                return format_answer_output(cached["answer"], cached["sources"])
+            return cached
     # --- END CACHE LOOKUP ---
 
     # 2. CHECK CSV QUERIES FIRST (BEFORE VECTOR SEARCH)
@@ -129,7 +130,8 @@ Error Type: {health_status['error']}
                     "sources": [],
                     "query_type": "author_csv",
                 }
-                _response_cache.put(question, result)
+                if not history:
+                    _response_cache.put(question, result)
 
                 if return_formatted:
                     return format_answer_output(combined_answer, [])
@@ -190,6 +192,7 @@ Error Type: {health_status['error']}
             answer = generate_llm_answer(
                 question, context, csv_context,
                 context_doc_count=context_doc_count,
+                history=history,
             )
             logger.info(f"[TIMING] gemini_llm: {time.time() - t0:.2f}s")
 
@@ -206,7 +209,8 @@ Error Type: {health_status['error']}
         logger.info(f"[TIMING] TOTAL ask_question: {time.time() - t_start:.2f}s | {len(sources)} sources")
 
         result = {"answer": answer, "sources": sources}
-        _response_cache.put(question, result)
+        if not history:
+            _response_cache.put(question, result)
 
         if return_formatted:
             return format_answer_output(answer, sources)
@@ -221,7 +225,7 @@ Error Type: {health_status['error']}
         return {"answer": error_msg, "sources": [], "error": str(e)}
 
 
-async def ask_question_async(question: str, return_formatted: bool = False, use_llm: bool = True, filter_tags: List[str] = None) -> Dict:
+async def ask_question_async(question: str, return_formatted: bool = False, use_llm: bool = True, filter_tags: List[str] = None, history: List[Dict] = None) -> Dict:
     """
     Async version of ask_question for FastAPI concurrent request handling.
 
@@ -252,13 +256,14 @@ Error Type: {health_status['error']}
 
     logger.info("Database is healthy - proceeding with async query")
 
-    # --- RESPONSE CACHE LOOKUP ---
-    cached = _response_cache.get(question)
-    if cached is not None:
-        logger.info(f"[TIMING] TOTAL ask_question_async (CACHED): {time.time() - t_start:.2f}s")
-        if return_formatted:
-            return format_answer_output(cached["answer"], cached["sources"])
-        return cached
+    # --- RESPONSE CACHE LOOKUP (skip when conversation history is present) ---
+    if not history:
+        cached = _response_cache.get(question)
+        if cached is not None:
+            logger.info(f"[TIMING] TOTAL ask_question_async (CACHED): {time.time() - t_start:.2f}s")
+            if return_formatted:
+                return format_answer_output(cached["answer"], cached["sources"])
+            return cached
     # --- END CACHE LOOKUP ---
 
     if CSV_PATH.exists():
@@ -291,7 +296,8 @@ Error Type: {health_status['error']}
                     "sources": [],
                     "query_type": "author_csv",
                 }
-                _response_cache.put(question, result)
+                if not history:
+                    _response_cache.put(question, result)
 
                 if return_formatted:
                     return format_answer_output(combined_answer, [])
@@ -353,6 +359,7 @@ Error Type: {health_status['error']}
             answer = await generate_llm_answer_async(
                 question, context, csv_context,
                 context_doc_count=context_doc_count,
+                history=history,
             )
             logger.info(f"[TIMING] async gemini_llm: {time.time() - t0:.2f}s")
 
@@ -368,7 +375,8 @@ Error Type: {health_status['error']}
         logger.info(f"[TIMING] TOTAL ask_question_async: {time.time() - t_start:.2f}s | {len(sources)} sources")
 
         result = {"answer": answer, "sources": sources}
-        _response_cache.put(question, result)
+        if not history:
+            _response_cache.put(question, result)
 
         if return_formatted:
             return format_answer_output(answer, sources)
@@ -383,7 +391,7 @@ Error Type: {health_status['error']}
         return {"answer": error_msg, "sources": [], "error": str(e)}
 
 
-def ask_question_stream(question: str, filter_tags: List[str] = None):
+def ask_question_stream(question: str, filter_tags: List[str] = None, history: List[Dict] = None):
     """
     Streaming version of ask_question.
     Yields dicts: {"type": "token", "content": str} for answer tokens,
@@ -397,13 +405,14 @@ def ask_question_stream(question: str, filter_tags: List[str] = None):
         yield {"type": "sources", "sources": []}
         return
 
-    # --- RESPONSE CACHE LOOKUP ---
-    cached = _response_cache.get(question)
-    if cached is not None:
-        logger.info("[CACHE] Streaming cache hit - yielding full cached answer")
-        yield {"type": "token", "content": cached["answer"]}
-        yield {"type": "sources", "sources": cached["sources"]}
-        return
+    # --- RESPONSE CACHE LOOKUP (skip when conversation history is present) ---
+    if not history:
+        cached = _response_cache.get(question)
+        if cached is not None:
+            logger.info("[CACHE] Streaming cache hit - yielding full cached answer")
+            yield {"type": "token", "content": cached["answer"]}
+            yield {"type": "sources", "sources": cached["sources"]}
+            return
     # --- END CACHE LOOKUP ---
 
     # 2. Check CSV queries first — stream LLM summary of CSV data
@@ -444,7 +453,8 @@ def ask_question_stream(question: str, filter_tags: List[str] = None):
                 yield {"type": "token", "content": csv_suffix}
 
                 combined_answer = _combine_csv_answer(llm_summary, csv_response)
-                _response_cache.put(question, {"answer": combined_answer, "sources": []})
+                if not history:
+                    _response_cache.put(question, {"answer": combined_answer, "sources": []})
                 yield {"type": "sources", "sources": []}
                 return
         except Exception as e:
@@ -489,6 +499,7 @@ def ask_question_stream(question: str, filter_tags: List[str] = None):
         for token in generate_llm_answer_stream(
             question, context, csv_context,
             context_doc_count=context_doc_count,
+            history=history,
         ):
             token_count += 1
             accumulated_tokens.append(token)
@@ -505,9 +516,9 @@ def ask_question_stream(question: str, filter_tags: List[str] = None):
 
         sources = format_sources(merged_docs)
 
-        # --- CACHE STORE ---
+        # --- CACHE STORE (skip when conversation history is present) ---
         full_answer = "".join(accumulated_tokens)
-        if full_answer and len(full_answer) >= 50:
+        if not history and full_answer and len(full_answer) >= 50:
             _response_cache.put(question, {"answer": full_answer, "sources": sources})
         # --- END CACHE STORE ---
 
@@ -569,6 +580,7 @@ from llm import (  # noqa: E402, F401
     _gemini_generation_config,
     _build_user_content,
     _build_csv_user_content,
+    _build_multi_turn_contents,
     _WH_PATTERNS,
     _is_wh_question,
     _YES_NO_PATTERNS,

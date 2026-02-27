@@ -284,10 +284,26 @@ def _build_csv_user_content(question: str, csv_data: str) -> str:
 """
 
 
+def _build_multi_turn_contents(history: list, current_user_content: str) -> list:
+    """Build Gemini multi-turn contents list from conversation history.
+
+    Each history entry is {"role": "user"|"assistant", "content": str}.
+    Maps to Gemini format: role="user" or role="model".
+    The current question (with document context) goes last.
+    """
+    contents = []
+    for turn in history:
+        role = "model" if turn["role"] == "assistant" else "user"
+        contents.append({"role": role, "parts": [{"text": turn["content"]}]})
+    contents.append({"role": "user", "parts": [{"text": current_user_content}]})
+    return contents
+
+
 def generate_llm_answer(
     question: str, context: str, csv_context: str, max_words: int = 500,
     user_content: str = None, system_prompt: str = None,
     disable_thinking: bool = False, context_doc_count: int = 0,
+    history: list = None,
 ) -> str:
     """
     Generate LLM answer using Gemini API (synchronous).
@@ -301,9 +317,11 @@ def generate_llm_answer(
                 context_doc_count=context_doc_count,
             )
 
+        contents = _build_multi_turn_contents(history, user_content) if history else user_content
+
         response = client.models.generate_content(
             model=GEMINI_MODEL,
-            contents=user_content,
+            contents=contents,
             config=_gemini_generation_config(system_prompt, disable_thinking=disable_thinking),
         )
 
@@ -333,6 +351,7 @@ async def generate_llm_answer_async(
     question: str, context: str, csv_context: str, max_words: int = 500,
     user_content: str = None, system_prompt: str = None,
     disable_thinking: bool = False, context_doc_count: int = 0,
+    history: list = None,
 ) -> str:
     """
     Async version of generate_llm_answer using Gemini API.
@@ -346,9 +365,11 @@ async def generate_llm_answer_async(
                 context_doc_count=context_doc_count,
             )
 
+        contents = _build_multi_turn_contents(history, user_content) if history else user_content
+
         response = await client.aio.models.generate_content(
             model=GEMINI_MODEL,
-            contents=user_content,
+            contents=contents,
             config=_gemini_generation_config(system_prompt, disable_thinking=disable_thinking),
         )
 
@@ -377,6 +398,7 @@ def generate_llm_answer_stream(
     question: str, context: str, csv_context: str,
     user_content: str = None, system_prompt: str = None,
     disable_thinking: bool = False, context_doc_count: int = 0,
+    history: list = None,
 ):
     """
     Generate LLM answer using Gemini API with streaming.
@@ -391,9 +413,11 @@ def generate_llm_answer_stream(
                 context_doc_count=context_doc_count,
             )
 
+        contents = _build_multi_turn_contents(history, user_content) if history else user_content
+
         for chunk in client.models.generate_content_stream(
             model=GEMINI_MODEL,
-            contents=user_content,
+            contents=contents,
             config=_gemini_generation_config(system_prompt, disable_thinking=disable_thinking),
         ):
             token = chunk.text
