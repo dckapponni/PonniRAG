@@ -330,22 +330,22 @@ def get_app_styles():
     .tags-sidebar-title { font-size: 1rem; font-weight: 600; color: #1e3a8a;
         margin-bottom: 1.25rem; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child label {
-        color: #334155 !important; font-size: 0.85rem !important;
-        font-weight: 500 !important; }
+        color: #1e3a8a !important; -webkit-text-fill-color: #1e3a8a !important;
+        font-size: 0.85rem !important; font-weight: 500 !important; }
     /* Text input and selectbox styling in sidebar */
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child input,
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child input[type="text"],
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child div[data-baseweb="input"] input,
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child div[data-testid="stTextInput"] input {
-        color: #1e293b !important; -webkit-text-fill-color: #1e293b !important;
+        color: #1e3a8a !important; -webkit-text-fill-color: #1e3a8a !important;
         background: #ffffff !important; border: 1px solid #e2e8f0 !important;
-        caret-color: #1e293b !important; }
+        caret-color: #1e3a8a !important; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child input::placeholder {
         color: #94a3b8 !important; -webkit-text-fill-color: #94a3b8 !important; opacity: 1 !important; }
     /* Selectbox (category dropdown) — nuclear override: target ALL descendants */
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stSelectbox"] * {
         background: #ffffff !important; background-color: #ffffff !important;
-        color: #1e293b !important; -webkit-text-fill-color: #1e293b !important; }
+        color: #1e3a8a !important; -webkit-text-fill-color: #1e3a8a !important; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stSelectbox"]
         div[data-baseweb="select"] > div:first-child {
         border: 1px solid #e2e8f0 !important; border-radius: 0.5rem !important; }
@@ -358,7 +358,7 @@ def get_app_styles():
     ul[role="listbox"],
     li[role="option"] {
         background: #ffffff !important; background-color: #ffffff !important;
-        color: #1e293b !important; -webkit-text-fill-color: #1e293b !important; }
+        color: #1e3a8a !important; -webkit-text-fill-color: #1e3a8a !important; }
     li[role="option"]:hover,
     li[role="option"][aria-selected="true"],
     div[data-baseweb="popover"] ul li:hover,
