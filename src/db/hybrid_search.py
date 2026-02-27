@@ -42,13 +42,16 @@ verify_files()
 
 
 def truncate_query(question: str, max_length: int = MAX_QUERY_LENGTH) -> str:
-    """Truncate a query to max_length at a word boundary.
+    """Normalize Unicode to NFC and truncate to max_length at a word boundary.
 
-    Long queries cause embedding latency spikes (E5 tokenizer caps at 512
-    tokens), waste LLM prompt budget (question is injected twice), and
-    degrade retrieval quality. This truncates at the last whitespace
-    before the limit so words aren't split mid-character.
+    NFC normalization ensures visually identical Tamil text always has
+    identical byte representation (composed form).  Truncation prevents
+    embedding latency spikes (E5 tokenizer caps at 512 tokens) and
+    wasted LLM prompt budget (question is injected twice).
     """
+    from tamil_text import normalize_unicode
+    question = normalize_unicode(question)
+
     if len(question) <= max_length:
         return question
 

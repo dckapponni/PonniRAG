@@ -11,6 +11,7 @@ import re
 import os
 import logging
 import hashlib
+import unicodedata
 from pathlib import Path
 import torch
 torch.set_grad_enabled(False)
@@ -131,6 +132,7 @@ def get_csv_embeddings():
 
 def dense_embed_query(text: str):
     model = get_embed_model()
+    text = unicodedata.normalize("NFC", text)
     with _embed_lock:
         return model.encode(
             f"query: {text}",
@@ -149,6 +151,7 @@ def _deterministic_token_hash(token: str) -> int:
 
 def sparse_embed(text: str):
     """Generate sparse BM25-style embedding for text."""
+    text = unicodedata.normalize("NFC", text)
     tokens = re.findall(r"\b\w+\b", text.lower())
     counts = defaultdict(int)
     for t in tokens:

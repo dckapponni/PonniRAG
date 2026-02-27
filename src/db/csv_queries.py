@@ -21,6 +21,7 @@ from tamil_text import (
     _PatternBank,
     _RE_INITIALS_NAME,
     _RE_TAMIL_WORD,
+    normalize_unicode,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ _author_system_lock = threading.Lock()
 def normalize_author_name(name: str) -> str:
     if not name:
         return ""
+    name = normalize_unicode(name)
     prefixes_to_remove = [
         r'மு\.,?\s*', r'டாக்டர்\.?\s*', r'திரு\.,?\s*',
         r'திருமதி\.?\s*', r'Dr\.?\s*', r'Mr\.?\s*', r'Mrs\.?\s*',

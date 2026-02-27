@@ -7,19 +7,38 @@ This is a leaf module with no internal project imports.
 """
 from difflib import SequenceMatcher
 import re
+import unicodedata
 
 FUZZY_THRESHOLD = 0.95
 TYPO_DISTANCE   = 1
 
 
+def normalize_unicode(text: str) -> str:
+    """Normalize text to NFC (composed) form.
+
+    Tamil text can arrive in different Unicode representations —
+    e.g. a base consonant + separate vowel sign (NFD) vs a single
+    precomposed codepoint (NFC).  Normalizing to NFC before any
+    comparison, hashing, or embedding ensures identical visual text
+    always has identical byte representation.
+    """
+    if not text:
+        return text
+    return unicodedata.normalize("NFC", text)
+
+
 def fuzzy_match_score(a: str, b: str) -> float:
     if not a or not b:
         return 0.0
-    return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+    return SequenceMatcher(
+        None,
+        normalize_unicode(a).lower(),
+        normalize_unicode(b).lower(),
+    ).ratio()
 
 
 def _edit_distance_one(a: str, b: str) -> bool:
-    a, b = a.lower(), b.lower()
+    a, b = normalize_unicode(a).lower(), normalize_unicode(b).lower()
     if abs(len(a) - len(b)) > TYPO_DISTANCE:
         return False
     if a == b:
@@ -57,6 +76,7 @@ def _strip_tamil_possessive_suffixes(text: str) -> str:
         கண்ணதாசனால்         -> கண்ணதாசன்        (னால் suffix)
         கதையை               -> கதை              (யை suffix)
     """
+    text = normalize_unicode(text)
     # Order matters: longer/more-specific suffixes first to avoid partial stripping
     suffix_rules = [
         # னின் → ன்  (e.g. பாரதிதாசனின் → பாரதிதாசன்)

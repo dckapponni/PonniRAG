@@ -6,6 +6,7 @@ import hashlib
 import time
 import threading
 import logging
+import unicodedata
 from collections import OrderedDict
 from typing import Optional, Dict
 
@@ -26,7 +27,8 @@ class ResponseCache:
 
     @staticmethod
     def _make_key(question: str) -> str:
-        normalized = re.sub(r'\s+', ' ', question.strip().lower())
+        normalized = unicodedata.normalize("NFC", question)
+        normalized = re.sub(r'\s+', ' ', normalized.strip().lower())
         return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
 
     def get(self, question: str) -> Optional[Dict]:

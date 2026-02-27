@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import os
+import unicodedata
 import uuid
 from pathlib import Path
 from typing import Dict, List
@@ -71,19 +72,21 @@ def dense_embed_doc(text: str) -> List[float]:
     Returns:
         list: Normalized dense embedding vector
     """
+    text = unicodedata.normalize("NFC", text)
     return dense_model.encode(f"passage: {text}", normalize_embeddings=True).tolist()
 
 
 def dense_embed_query(text: str) -> List[float]:
     """
     Generate dense embedding for search queries.
-    
+
     Args:
         text (str): Query text to embed
-        
+
     Returns:
         list: Normalized dense embedding vector
     """
+    text = unicodedata.normalize("NFC", text)
     return dense_model.encode(f"query: {text}", normalize_embeddings=True).tolist()
 
 
@@ -107,6 +110,7 @@ def sparse_embed(text: str) -> models.SparseVector:
     Returns:
         models.SparseVector: Sparse vector with token indices and frequencies
     """
+    text = unicodedata.normalize("NFC", text)
     tokens = re.findall(r"\b\w+\b", text.lower())
     counts = Counter(tokens)
 
