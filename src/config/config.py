@@ -1,5 +1,7 @@
 
+import os
 from pathlib import Path
+
 BUCKET_NAME = "ponni-dev"
 REGION_NAME = "ap-south-1"
 
@@ -10,10 +12,7 @@ EXTRACTED_OUTPUT= "extracted_text/"
 
 
 CONFIG_DIR = Path(__file__).resolve().parent
-CSV_PATH = CONFIG_DIR.parent / "data" / "summary.csv" 
-
-BASE_DIR = Path(__file__).resolve().parents[1]/"ui"
-QDRANT_PATH = str(BASE_DIR / "qdrant_storage")
+CSV_PATH = CONFIG_DIR.parent / "data" / "summary.csv"
 
 COLLECTION_NAME = "qdrant_indexer"
 VECTOR_DISTANCE = "cosine"
@@ -27,5 +26,12 @@ BATCH_SIZE = 100
 S3_BUCKET = "ponni-dev"
 S3_PREFIX = "output_json/"
 S3_SUFFIX = ".json"
+
+# Qdrant server connection (replaces local path mode)
+QDRANT_HOST = os.environ.get("QDRANT_HOST", "localhost")
+QDRANT_PORT = int(os.environ.get("QDRANT_PORT", "6333"))
+
+# S3 snapshot persistence
+SNAPSHOT_S3_PREFIX = "qdrant_snapshots/"
 
 

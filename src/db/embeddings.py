@@ -34,7 +34,8 @@ else:
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-QDRANT_PATH = str(BASE_DIR / "db" / "qdrant_data_tags")
+QDRANT_HOST = os.environ.get("QDRANT_HOST", "localhost")
+QDRANT_PORT = int(os.environ.get("QDRANT_PORT", "6333"))
 COLLECTION_NAME = "qdrant_indexer"
 
 EMBEDDING_MODEL = "intfloat/multilingual-e5-large"
@@ -77,15 +78,12 @@ def get_embed_model():
 
 
 def get_qdrant_client() -> QdrantClient:
-    """Embedded Qdrant only (local mode, thread-safe singleton)."""
+    """Qdrant server mode (thread-safe singleton)."""
     if 'qdrant_client' not in _singletons:
         with _singleton_locks['qdrant_client']:
             if 'qdrant_client' not in _singletons:
-                if not os.path.exists(QDRANT_PATH):
-                    raise FileNotFoundError(f"Qdrant data not found at: {QDRANT_PATH}")
-
-                logger.info(f"Using LOCAL Qdrant -> {QDRANT_PATH}")
-                client = QdrantClient(path=QDRANT_PATH)
+                logger.info(f"Using Qdrant server at {QDRANT_HOST}:{QDRANT_PORT}")
+                client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
                 collection_info = client.get_collection(COLLECTION_NAME)
                 logger.info(f"Connected: {collection_info.points_count} points")
                 _singletons['qdrant_client'] = client
@@ -216,7 +214,7 @@ def check_qdrant_health() -> Dict:
             "error": "connection_failed",
             "message": "Failed to connect to Qdrant server",
             "details": str(e),
-            "action": "Run the indexer to create the local database"
+            "action": "Check Qdrant server connection or run the indexer"
         }
 
 

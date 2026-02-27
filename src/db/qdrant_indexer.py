@@ -1,3 +1,4 @@
+import argparse
 import hashlib
 import json
 import logging
@@ -21,15 +22,20 @@ from src.config.config import (
     EMBEDDING_DIM,
     CHUNK_SIZE,
     BATCH_SIZE,
+    QDRANT_HOST,
+    QDRANT_PORT,
 )
 from src.db.article_tagger import ArticleTagger
+from src.db.snapshot_manager import (
+    needs_reindex,
+    save_snapshot_to_s3,
+    restore_snapshot_from_s3,
+    save_index_metadata,
+    build_index_metadata,
+    compute_source_data_hash,
+)
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-QDRANT_PATH = str(BASE_DIR / "db" / "qdrant_data_tags")
 COLLECTION_NAME = "qdrant_indexer"
-
-# ensure folder exists
-Path(QDRANT_PATH).mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -488,23 +494,12 @@ def load_authors_from_s3() -> List[Dict]:
     return documents
 
 
-def main():
-    """
-    Main indexing function.
-    
-    Performs:
-    1. Connects to Qdrant database
-    2. Resets collection if exists
-    3. Creates new collection with hybrid search support
-    4. Indexes article documents with chunking and validation
-    5. Indexes author metadata
-    6. Logs statistics and completion status
-    """
-    client = QdrantClient(path=QDRANT_PATH)
-
+def _do_full_index(client):
+    """Run full indexing: create collection, embed articles + authors, upsert."""
     if client.collection_exists(COLLECTION_NAME):
         client.delete_collection(COLLECTION_NAME)
-        logger.info(f"Deleted existing collection")
+        logger.info("Deleted existing collection")
+
     client.create_collection(
         collection_name=COLLECTION_NAME,
         vectors_config={
@@ -519,15 +514,14 @@ def main():
             )
         }
     )
-
     logger.info(f"Created collection: {COLLECTION_NAME}")
 
     logger.info(f"\n{'-'*60}")
     logger.info("INDEXING ARTICLE DOCUMENTS")
     logger.info(f"{'-'*60}")
-    
+
     documents = load_documents_from_s3()
-    
+
     if not documents:
         logger.warning("No documents found")
         return
@@ -575,9 +569,9 @@ def main():
     logger.info(f"\n{'-'*60}")
     logger.info("INDEXING AUTHORS")
     logger.info(f"{'-'*60}")
-    
+
     author_documents = load_authors_from_s3()
-    
+
     points = []
     indexed_authors = 0
 
@@ -619,15 +613,93 @@ def main():
         logger.info(f"  Indexed {indexed_authors}/{len(author_documents)} authors")
 
     info = client.get_collection(COLLECTION_NAME)
-    
+
     logger.info(f"\n{'='*60}")
     logger.info("INDEXING COMPLETE")
     logger.info(f"{'='*60}")
     logger.info(f"Total points: {info.points_count}")
     logger.info(f"  Article chunks: {indexed}")
     logger.info(f"  Authors: {indexed_authors}")
-    logger.info(f"Database ready at: {QDRANT_PATH}")
+
+
+def main(force_reindex: bool = False):
+    """
+    Smart indexing entry point.
+
+    Flow:
+    1. Connect to Qdrant server
+    2. Check if re-indexing is needed (embedding config or source data changed)
+    3. If no reindex needed and collection exists -> done
+    4. If no reindex needed but collection missing -> restore from S3 snapshot
+    5. If reindex needed (or restore failed) -> full re-index + save snapshot
+    """
+    logger.info(f"Connecting to Qdrant server at {QDRANT_HOST}:{QDRANT_PORT}")
+    client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+
+    s3_client = s3
+
+    if force_reindex:
+        logger.info("--force-reindex: skipping change detection, running full index")
+        _do_full_index(client)
+        _save_snapshot_and_metadata(client, s3_client)
+        return
+
+    # Check if re-indexing is needed
+    reindex_needed, reason = needs_reindex(s3_client, S3_BUCKET, S3_PREFIX, S3_SUFFIX)
+
+    if not reindex_needed:
+        logger.info(f"No reindex needed: {reason}")
+
+        # Check if collection already exists in Qdrant (e.g. Docker volume survived)
+        if client.collection_exists(COLLECTION_NAME):
+            info = client.get_collection(COLLECTION_NAME)
+            logger.info(
+                f"Collection '{COLLECTION_NAME}' exists with {info.points_count} points — nothing to do"
+            )
+            return
+
+        # Collection missing — try to restore from S3 snapshot
+        logger.info("Collection not found in Qdrant — attempting S3 snapshot restore")
+        restored = restore_snapshot_from_s3(client, s3_client, S3_BUCKET, COLLECTION_NAME)
+        if restored:
+            info = client.get_collection(COLLECTION_NAME)
+            logger.info(f"Restored collection with {info.points_count} points from S3 snapshot")
+            return
+
+        logger.info("Snapshot restore failed — falling through to full reindex")
+
+    else:
+        logger.info(f"Reindex needed: {reason}")
+
+    # Full re-index
+    _do_full_index(client)
+    _save_snapshot_and_metadata(client, s3_client)
+
+
+def _save_snapshot_and_metadata(client, s3_client):
+    """Save snapshot to S3 and update index metadata after indexing."""
+    try:
+        info = client.get_collection(COLLECTION_NAME)
+        snapshot_key = save_snapshot_to_s3(client, s3_client, S3_BUCKET, COLLECTION_NAME)
+        source_hash = compute_source_data_hash(s3_client, S3_BUCKET, S3_PREFIX, S3_SUFFIX)
+        metadata = build_index_metadata(
+            snapshot_s3_key=snapshot_key,
+            points_count=info.points_count,
+            source_data_hash=source_hash,
+        )
+        save_index_metadata(s3_client, S3_BUCKET, metadata)
+        logger.info("Snapshot and metadata saved to S3")
+    except Exception as e:
+        logger.error(f"Failed to save snapshot/metadata to S3: {e}")
+        logger.info("Index is available in Qdrant but not persisted to S3")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="PonniRAG Qdrant Indexer")
+    parser.add_argument(
+        "--force-reindex",
+        action="store_true",
+        help="Force full re-index ignoring S3 state",
+    )
+    args = parser.parse_args()
+    main(force_reindex=args.force_reindex)
