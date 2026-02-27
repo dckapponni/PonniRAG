@@ -5,10 +5,7 @@ and LLM answer generation. Delegates model loading, embeddings,
 and search to sub-modules (cache, embeddings, search, llm, etc.).
 """
 from typing import List, Dict, Optional
-import re
-import os
 import logging
-from pathlib import Path
 import asyncio
 import time
 
@@ -16,7 +13,7 @@ from cache import ResponseCache, _response_cache
 from embeddings import (
     USE_CUDA, DEVICE, COLLECTION_NAME,
     EMBEDDING_MODEL, SCORE_THRESHOLD, BASE_DIR, CSV_PATH,
-    _embed_lock,
+    _embed_lock, _clear_singletons,
     get_embed_model, get_qdrant_client, get_csv_dataframe, get_csv_embeddings,
     dense_embed_query, _deterministic_token_hash, sparse_embed, search_csv_semantic,
     check_qdrant_health, HybridQdrantSearch,
@@ -523,10 +520,11 @@ def ask_question_stream(question: str, filter_tags: List[str] = None):
 
 
 # ============================================================================
-# RE-EXPORTS FOR BACKWARD COMPATIBILITY
-# All names that were previously available on `hybrid_search` continue to
-# resolve here so that `import hybrid_search as hs; hs.X` and
-# `from hybrid_search import X` keep working for every consumer.
+# DEPRECATED RE-EXPORTS — Backward compatibility only.
+# New code should import from the source modules directly:
+#   embeddings, csv_queries, llm, search, tamil_text, cache
+# These re-exports exist because test_hybrid_search.py uses `hs.X` for ~50+
+# names. Do not add new names here.
 # ============================================================================
 
 from tamil_text import (  # noqa: E402, F401

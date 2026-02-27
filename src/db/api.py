@@ -22,20 +22,11 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 # Import real hybrid_search module
 from qdrant_client import models
 
-from hybrid_search import (
-    ask_question_async,
-    ask_question_stream,
-    check_qdrant_health,
-    EnhancedAuthorQuerySystem,
-    get_issue_count,
-    CSV_PATH,
-    _author_system_cache,
-    _author_system_lock,
-    validate_gemini_api,
-    _response_cache,
-    get_qdrant_client,
-    COLLECTION_NAME,
-)
+from hybrid_search import ask_question_async, ask_question_stream
+from embeddings import check_qdrant_health, get_qdrant_client, COLLECTION_NAME, CSV_PATH
+from csv_queries import EnhancedAuthorQuerySystem, get_issue_count, _author_system_cache, _author_system_lock
+from llm import validate_gemini_api
+from cache import _response_cache
 
 from article_tagger import TAXONOMY
 
@@ -195,6 +186,39 @@ class TagArticlesResponse(BaseModel):
     tag_tamil: str
     count: int
     articles: List[TagArticleInfo]
+
+
+class IssueArticleInfo(BaseModel):
+    """Response model for an article within a specific issue."""
+    doc_id: Optional[str] = None
+    doc_issue: Optional[str] = None
+    article_no: Optional[str] = None
+    title: Optional[str] = None
+    author_name: Optional[str] = None
+    year: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+
+class IssueArticlesResponse(BaseModel):
+    """Response model for articles in a volume/issue."""
+    success: bool
+    volume_id: int
+    issue_id: int
+    count: int
+    articles: List[IssueArticleInfo]
+
+
+class ArticleContentResponse(BaseModel):
+    """Response model for full article content."""
+    success: bool
+    title: Optional[str] = None
+    author_name: Optional[str] = None
+    year: Optional[str] = None
+    doc_issue: Optional[str] = None
+    tags: Optional[List[str]] = None
+    content: Optional[str] = None
+    word_count: Optional[int] = None
+    chunk_count: Optional[int] = None
 
 
 @asynccontextmanager
@@ -730,6 +754,204 @@ async def get_pdf_link(volume_id: int, issue_id: int):
         embed_url=embed_url,
         found=True
     )
+
+@app.get(
+    "/api/library/volumes/{volume_id}/issues/{issue_id}/articles",
+    response_model=IssueArticlesResponse,
+    tags=["Library"],
+)
+async def get_issue_articles(volume_id: int, issue_id: int):
+    """
+    Get all articles for a specific volume and issue.
+
+    Replicates the Streamlit fetch_issue_articles logic:
+    1. Query Qdrant for chunk_0 articles with matching doc_id (volume).
+    2. Fallback: fetch all chunk_0 articles, filter client-side.
+    3. Build position-based mapping from sorted doc_issue values.
+    4. Filter by mapped doc_issue for the requested issue_id.
+    5. Deduplicate by doc_id + doc_issue + article_no.
+    """
+    try:
+        client = get_qdrant_client()
+        vol_str = str(volume_id)
+
+        # Step 1: fetch chunk_0 articles filtered by doc_id
+        all_points = []
+        scroll_offset = None
+        while True:
+            points, scroll_offset = await asyncio.to_thread(
+                client.scroll,
+                collection_name=COLLECTION_NAME,
+                scroll_filter=models.Filter(must=[
+                    models.FieldCondition(key="type", match=models.MatchValue(value="article")),
+                    models.FieldCondition(key="metadata.chunk_id", match=models.MatchValue(value=0)),
+                    models.FieldCondition(key="metadata.doc_id", match=models.MatchValue(value=vol_str)),
+                ]),
+                limit=500,
+                offset=scroll_offset,
+                with_payload=True,
+            )
+            all_points.extend(points)
+            if scroll_offset is None:
+                break
+
+        logger.info(f"get_issue_articles: vol={volume_id}, doc_id filter → {len(all_points)} points")
+
+        # Fallback: if doc_id filter found nothing, fetch all chunk_0 and filter client-side
+        if not all_points:
+            logger.info("No points with doc_id filter — fetching all chunk_0 articles")
+            scroll_offset = None
+            while True:
+                points, scroll_offset = await asyncio.to_thread(
+                    client.scroll,
+                    collection_name=COLLECTION_NAME,
+                    scroll_filter=models.Filter(must=[
+                        models.FieldCondition(key="type", match=models.MatchValue(value="article")),
+                        models.FieldCondition(key="metadata.chunk_id", match=models.MatchValue(value=0)),
+                    ]),
+                    limit=500,
+                    offset=scroll_offset,
+                    with_payload=True,
+                )
+                all_points.extend(points)
+                if scroll_offset is None:
+                    break
+            all_points = [
+                p for p in all_points
+                if str((p.payload or {}).get("metadata", {}).get("doc_id", "")) == vol_str
+            ]
+            logger.info(f"After client-side doc_id filter: {len(all_points)}")
+
+        # Collect and sort unique doc_issue values
+        all_issue_vals = set()
+        for p in all_points:
+            meta = (p.payload or {}).get("metadata", {})
+            raw_val = meta.get("doc_issue")
+            val = str(raw_val).strip() if raw_val is not None else "NA"
+            all_issue_vals.add(val)
+        sorted_issues = sorted(
+            [v for v in all_issue_vals if v not in ("NA", "None", "")],
+            key=lambda x: int(x) if x.isdigit() else float("inf"),
+        )
+
+        # Position-based mapping: sidebar position (1-based) → actual doc_issue
+        issue_position_map = {i + 1: v for i, v in enumerate(sorted_issues)}
+        target_issue = issue_position_map.get(issue_id, str(issue_id))
+        logger.info(f"Issue mapping: position {issue_id} → doc_issue '{target_issue}'")
+
+        # Filter and deduplicate
+        seen = set()
+        articles = []
+        for p in all_points:
+            metadata = (p.payload or {}).get("metadata", {})
+            doc_issue_str = str(metadata.get("doc_issue", "")).strip()
+            if doc_issue_str != str(target_issue):
+                continue
+            doc_id = metadata.get("doc_id")
+            article_no = str(metadata.get("article_no", ""))
+            unique_key = f"{doc_id}_{doc_issue_str}_{article_no}"
+            if unique_key in seen:
+                continue
+            seen.add(unique_key)
+            articles.append(IssueArticleInfo(
+                doc_id=doc_id,
+                doc_issue=doc_issue_str,
+                article_no=article_no,
+                title=metadata.get("title"),
+                author_name=metadata.get("author_name"),
+                year=metadata.get("year"),
+                tags=metadata.get("tags", []),
+            ))
+
+        return IssueArticlesResponse(
+            success=True,
+            volume_id=volume_id,
+            issue_id=issue_id,
+            count=len(articles),
+            articles=articles,
+        )
+
+    except Exception as e:
+        logger.error(f"Error fetching issue articles: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/articles/content", response_model=ArticleContentResponse, tags=["Library"])
+async def get_article_content(
+    doc_id: str = Query(..., description="Document/volume ID"),
+    doc_issue: str = Query(..., description="Issue number"),
+    article_no: Optional[str] = Query(default=None, description="Article number within the issue"),
+):
+    """
+    Get the full content of a specific article by concatenating all its chunks.
+
+    Identifies the article by doc_id + doc_issue + optional article_no.
+    """
+    try:
+        client = get_qdrant_client()
+
+        filter_conditions = [
+            models.FieldCondition(key="type", match=models.MatchValue(value="article")),
+            models.FieldCondition(key="metadata.doc_id", match=models.MatchValue(value=str(doc_id))),
+            models.FieldCondition(key="metadata.doc_issue", match=models.MatchValue(value=str(doc_issue))),
+        ]
+        if article_no:
+            match_val = int(article_no) if str(article_no).isdigit() else article_no
+            filter_conditions.append(
+                models.FieldCondition(
+                    key="metadata.article_no",
+                    match=models.MatchValue(value=match_val),
+                )
+            )
+
+        chunks = []
+        scroll_offset = None
+        while True:
+            points, scroll_offset = await asyncio.to_thread(
+                client.scroll,
+                collection_name=COLLECTION_NAME,
+                scroll_filter=models.Filter(must=filter_conditions),
+                limit=100,
+                offset=scroll_offset,
+                with_payload=True,
+            )
+            for p in points:
+                payload = p.payload or {}
+                metadata = payload.get("metadata", {})
+                chunks.append({
+                    "chunk_id": metadata.get("chunk_id", 0),
+                    "content": payload.get("content", ""),
+                    "metadata": metadata,
+                })
+            if scroll_offset is None:
+                break
+
+        logger.info(f"get_article_content: doc_id={doc_id}, doc_issue={doc_issue}, "
+                     f"article_no={article_no}, chunks={len(chunks)}")
+
+        if not chunks:
+            return ArticleContentResponse(success=True)
+
+        chunks.sort(key=lambda c: c["chunk_id"])
+        first_meta = chunks[0]["metadata"]
+        full_content = "\n".join(c["content"] for c in chunks)
+
+        return ArticleContentResponse(
+            success=True,
+            title=first_meta.get("title"),
+            author_name=first_meta.get("author_name"),
+            year=first_meta.get("year"),
+            doc_issue=first_meta.get("doc_issue"),
+            tags=first_meta.get("tags", []),
+            content=full_content,
+            word_count=len(full_content.split()),
+            chunk_count=len(chunks),
+        )
+
+    except Exception as e:
+        logger.error(f"Error fetching article content: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     import uvicorn

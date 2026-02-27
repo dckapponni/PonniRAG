@@ -11,9 +11,9 @@ from typing import List, Dict, Tuple
 from qdrant_client import QdrantClient
 from qdrant_client import models
 
-logger = logging.getLogger(__name__)
+from embeddings import COLLECTION_NAME
 
-COLLECTION_NAME = "qdrant_indexer"
+logger = logging.getLogger(__name__)
 
 
 def retrieve_all_chunks_for_document(client: QdrantClient, doc_id: str, doc_issue: str, volume: str) -> List[Dict]:

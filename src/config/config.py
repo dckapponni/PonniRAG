@@ -15,7 +15,7 @@ CSV_PATH = CONFIG_DIR.parent / "data" / "summary.csv"
 BASE_DIR = Path(__file__).resolve().parents[1]/"ui"
 QDRANT_PATH = str(BASE_DIR / "qdrant_storage")
 
-COLLECTION_NAME = "tamil_nexus_documents"
+COLLECTION_NAME = "qdrant_indexer"
 VECTOR_DISTANCE = "cosine"
 
 EMBEDDING_MODEL = "intfloat/multilingual-e5-large"

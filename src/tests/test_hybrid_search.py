@@ -1,10 +1,6 @@
 """
 Comprehensive test suite for Tamil Document Processing.
 Achieves 90%+ code coverage.
-
-FIXES:
-1. Fixed test_get_llm to properly handle missing pipeline import
-2. Fixed test_check_qdrant_health_collection_not_found to match actual error behavior
 """
 import pytest
 import asyncio
@@ -19,11 +15,9 @@ import os
 import hybrid_search as hs
 
 def clear_all_caches():
-    """Clear all Streamlit caches before tests."""
-    if hasattr(hs.get_qdrant_client, 'clear'):
-        hs.get_qdrant_client.clear()
-    if hasattr(hs.get_embed_model, 'clear'):
-        hs.get_embed_model.clear()
+    """Clear all singleton caches before tests."""
+    from embeddings import _clear_singletons
+    _clear_singletons()
 
 @pytest.fixture
 def mock_csv_data():
@@ -660,29 +654,6 @@ class TestModelLoading:
         
         model2 = hs.get_embed_model()
         assert model is model2
-    
-    def test_get_llm(self):
-        """Test LLM model loading - FIXED VERSION."""
-        # Check if get_llm function exists
-        if not hasattr(hs, 'get_llm'):
-            pytest.skip("get_llm function not found in hybrid_search module")
-        
-        # Reset global state if it exists
-        if hasattr(hs, '_llm'):
-            hs._llm = None
-        if hasattr(hs, '_llm_lock'):
-            hs._llm_lock = False
-        
-        # Try patching transformers.pipeline at the source
-        try:
-            with patch('transformers.pipeline') as mock_pipeline:
-                mock_llm = MagicMock()
-                mock_pipeline.return_value = mock_llm
-                
-                llm = hs.get_llm()
-                assert llm is not None
-        except ImportError:
-            pytest.skip("transformers library not available")
     
 
 # Test get_qdrant_client

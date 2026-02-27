@@ -12,8 +12,6 @@ import os
 import logging
 import hashlib
 from pathlib import Path
-import streamlit as st
-
 import torch
 torch.set_grad_enabled(False)
 from qdrant_client import models
@@ -34,9 +32,6 @@ else:
     except RuntimeError:
         pass  # Already configured by another module
 
-# QDRANT_HOST = os.getenv("QDRANT_HOST", "qdrant")
-# QDRANT_PORT = int(os.getenv("QDRANT_PORT"))
-# QDRANT_HOST= os.getenv("QDRANT_HOST", "localhost") 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 QDRANT_PATH = str(BASE_DIR / "db" / "qdrant_data_tags")
@@ -52,93 +47,88 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# STREAMLIT-CACHED MODEL LOADERS (PERSISTENT ACROSS RERUNS)
+# THREAD-SAFE SINGLETON LOADERS
 # ============================================================================
 
-@st.cache_resource(show_spinner=False)
+_singletons = {}
+_singleton_locks = {
+    'embed_model': threading.Lock(),
+    'qdrant_client': threading.Lock(),
+    'csv_dataframe': threading.Lock(),
+    'csv_embeddings': threading.Lock(),
+}
+
+
+def _clear_singletons():
+    """Clear all cached singletons. For testing only."""
+    _singletons.clear()
+
+
 def get_embed_model():
-    """
-    Load and cache embedding model using Streamlit's cache_resource.
-    This ensures the model loads ONCE and persists across all reruns.
-    Spinner is disabled - will only show during preload_models().
-    """
-    logger.info(f"Loading embedding model on {DEVICE} (this happens only once)...")
-    model = SentenceTransformer(EMBEDDING_MODEL, device=DEVICE)
-    logger.info(f"Embedding model loaded on {DEVICE} and cached")
-    return model
+    """Load and cache embedding model (thread-safe singleton)."""
+    if 'embed_model' not in _singletons:
+        with _singleton_locks['embed_model']:
+            if 'embed_model' not in _singletons:
+                logger.info(f"Loading embedding model on {DEVICE} (this happens only once)...")
+                model = SentenceTransformer(EMBEDDING_MODEL, device=DEVICE)
+                logger.info(f"Embedding model loaded on {DEVICE} and cached")
+                _singletons['embed_model'] = model
+    return _singletons['embed_model']
 
 
-# @st.cache_resource(show_spinner=False)
-# def get_qdrant_client() -> QdrantClient:
-#     """
-#     Get or initialize Qdrant client (singleton pattern with Streamlit caching).
-#     Spinner is disabled - will only show during preload_models().
-#     """
-#     logger.info("🔄 Connecting to Qdrant SERVER...")
-
-#     client = QdrantClient(
-#         host=QDRANT_HOST,
-#         port=QDRANT_PORT,
-#         prefer_grpc=False,
-#         timeout=30.0
-#     )
-
-#     collection_info = client.get_collection(COLLECTION_NAME)
-#     logger.info(f"Connected: {collection_info.points_count} points")
-
-#     return client
-@st.cache_resource(show_spinner=False)
 def get_qdrant_client() -> QdrantClient:
-    """
-    Embedded Qdrant only (local mode).
-    """
-    if not os.path.exists(QDRANT_PATH):
-        raise FileNotFoundError(f"Qdrant data not found at: {QDRANT_PATH}")
+    """Embedded Qdrant only (local mode, thread-safe singleton)."""
+    if 'qdrant_client' not in _singletons:
+        with _singleton_locks['qdrant_client']:
+            if 'qdrant_client' not in _singletons:
+                if not os.path.exists(QDRANT_PATH):
+                    raise FileNotFoundError(f"Qdrant data not found at: {QDRANT_PATH}")
 
-    logger.info(f"🔄 Using LOCAL Qdrant → {QDRANT_PATH}")
+                logger.info(f"Using LOCAL Qdrant -> {QDRANT_PATH}")
+                client = QdrantClient(path=QDRANT_PATH)
+                collection_info = client.get_collection(COLLECTION_NAME)
+                logger.info(f"Connected: {collection_info.points_count} points")
+                _singletons['qdrant_client'] = client
+    return _singletons['qdrant_client']
 
-    client = QdrantClient(path=QDRANT_PATH)
 
-    collection_info = client.get_collection(COLLECTION_NAME)
-    logger.info(f"✅ Connected: {collection_info.points_count} points")
-
-    return client
-
-@st.cache_resource(show_spinner=False)
 def get_csv_dataframe():
-    """Load CSV once and cache it."""
-    if not CSV_PATH.exists():
-        return pd.DataFrame()
+    """Load CSV once and cache it (thread-safe singleton)."""
+    if 'csv_dataframe' not in _singletons:
+        with _singleton_locks['csv_dataframe']:
+            if 'csv_dataframe' not in _singletons:
+                if not CSV_PATH.exists():
+                    _singletons['csv_dataframe'] = pd.DataFrame()
+                else:
+                    df = pd.read_csv(CSV_PATH, encoding="utf-8", on_bad_lines="skip")
+                    df.columns = df.columns.str.strip()
+                    _singletons['csv_dataframe'] = df
+    return _singletons['csv_dataframe']
 
-    df = pd.read_csv(CSV_PATH, encoding="utf-8", on_bad_lines="skip")
-    df.columns = df.columns.str.strip()
-    return df
 
-
-@st.cache_resource(show_spinner=False)
 def get_csv_embeddings():
-    """
-    Precompute embeddings for CSV rows.
-    Cached permanently like embedding model.
-    """
-    df = get_csv_dataframe()
-    model = get_embed_model()
+    """Precompute embeddings for CSV rows (thread-safe singleton)."""
+    if 'csv_embeddings' not in _singletons:
+        with _singleton_locks['csv_embeddings']:
+            if 'csv_embeddings' not in _singletons:
+                df = get_csv_dataframe()
+                model = get_embed_model()
 
-    if df.empty:
-        return []
+                if df.empty:
+                    _singletons['csv_embeddings'] = []
+                else:
+                    texts = []
+                    for _, row in df.iterrows():
+                        text = " | ".join([str(v) for v in row.values if pd.notna(v)])
+                        texts.append(text)
 
-    texts = []
-    for _, row in df.iterrows():
-        text = " | ".join([str(v) for v in row.values if pd.notna(v)])
-        texts.append(text)
-
-    embeddings = model.encode(
-        [f"passage: {t}" for t in texts],
-        show_progress_bar=False,
-        normalize_embeddings=True
-    )
-
-    return list(zip(texts, embeddings))
+                    embeddings = model.encode(
+                        [f"passage: {t}" for t in texts],
+                        show_progress_bar=False,
+                        normalize_embeddings=True
+                    )
+                    _singletons['csv_embeddings'] = list(zip(texts, embeddings))
+    return _singletons['csv_embeddings']
 
 
 def dense_embed_query(text: str):
