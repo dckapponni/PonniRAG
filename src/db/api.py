@@ -41,8 +41,8 @@ logger = logging.getLogger(__name__)
 
 class HistoryMessage(BaseModel):
     """A single conversation turn (user or assistant)."""
-    role: str  # "user" or "assistant"
-    content: str
+    role: str = Field(..., pattern=r'^(user|assistant)$')
+    content: str = Field(..., min_length=1, max_length=5000)
 
 
 class QuestionRequest(BaseModel):
@@ -332,8 +332,8 @@ async def ask_question_endpoint(request: QuestionRequest):
         )
 
     except Exception as e:
-        logger.error(f"Error processing question: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error processing question: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="An internal error occurred. Please try again.")
 
 
 @app.post("/api/ask/stream", tags=["Search"])
@@ -361,8 +361,8 @@ async def ask_question_stream_endpoint(request: QuestionRequest):
                     yield f"event: sources\ndata: {json.dumps({'sources': event['sources']})}\n\n"
             yield "event: done\ndata: {}\n\n"
         except Exception as e:
-            logger.error(f"Streaming error: {e}")
-            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+            logger.error(f"Streaming error: {e}", exc_info=True)
+            yield f"event: error\ndata: {json.dumps({'error': 'An internal error occurred. Please try again.'})}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -419,7 +419,7 @@ async def search_endpoint(
 
     except Exception as e:
         logger.error(f"Error in search: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred. Please try again.")
 
 
 @app.get("/api/tags", response_model=TagsResponse, tags=["Tags"])
@@ -471,7 +471,7 @@ async def list_tags():
 
     except Exception as e:
         logger.error(f"Error listing tags: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred. Please try again.")
 
 
 @app.get("/api/tags/{tag_id}/articles", response_model=TagArticlesResponse, tags=["Tags"])
@@ -530,7 +530,7 @@ async def get_tag_articles(tag_id: str):
 
     except Exception as e:
         logger.error(f"Error getting tag articles: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred. Please try again.")
 
 
 @app.get("/api/authors", response_model=AuthorsListResponse, tags=["Authors"])
@@ -567,7 +567,7 @@ async def list_authors():
         raise
     except Exception as e:
         logger.error(f"Error listing authors: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred. Please try again.")
 
 
 @app.get("/api/authors/{author_name}/articles", response_model=AuthorArticlesResponse, tags=["Authors"])
@@ -602,7 +602,7 @@ async def get_author_articles(author_name: str):
 
     except Exception as e:
         logger.error(f"Error getting author articles: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred. Please try again.")
 
 
 @app.get("/api/topics/search", response_model=TopicSearchResponse, tags=["Topics"])
@@ -638,7 +638,7 @@ async def search_by_topic(
 
     except Exception as e:
         logger.error(f"Error searching topic: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred. Please try again.")
 
 
 
@@ -666,7 +666,7 @@ async def get_issue_statistics():
 
     except Exception as e:
         logger.error(f"Error getting issue stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred. Please try again.")
 
 
 @app.get("/api/library/volumes", response_model=List[VolumeInfo], tags=["Library"])
@@ -885,7 +885,7 @@ async def get_issue_articles(volume_id: int, issue_id: int):
 
     except Exception as e:
         logger.error(f"Error fetching issue articles: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred. Please try again.")
 
 
 @app.get("/api/articles/content", response_model=ArticleContentResponse, tags=["Library"])
@@ -962,7 +962,7 @@ async def get_article_content(
 
     except Exception as e:
         logger.error(f"Error fetching article content: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred. Please try again.")
 
 
 if __name__ == "__main__":

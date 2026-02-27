@@ -10,6 +10,7 @@ from typing import List, Dict
 
 from google import genai
 from google.genai import types as genai_types
+from guardrails import ANTI_INJECTION_PREAMBLE, sanitize_output
 
 logger = logging.getLogger(__name__)
 
@@ -81,10 +82,10 @@ TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இத�
 - இந்த வகையான கேள்விகளுக்கு, ஆவண சூழலை (document context) விட பொன்னி பின்னணி தகவலுக்கு முன்னுரிமை கொடுக்கவும்
 - பொன்னி பின்னணி தகவலுடன் ஆவண சூழலையும் இணைத்து முழுமையான பதிலை எழுதுக
 - கேள்வி "செய்திகள்", "பற்றி", "விவரம்" போன்றதாக இருந்தால்,மொழி பகுப்பாய்வு அல்லது இலக்கண விளக்கம் எழுதக்கூடாது.ஆவணங்களில் உள்ள தகவலை மட்டும் சுருக்கமாக விளக்க வேண்டும்.
-========================
+---
 பொன்னி பின்னணி தகவல்:
 """ + PONNI_ABOUT_CONTEXT + """
-========================
+---
 
 மிக முக்கியமான வடிவமைப்பு விதிகள் (Formatting Rules):
 - கேள்வி **புள்ளிவாரியான (points-wise)** பதிலை எதிர்பார்க்குமானால்:
@@ -112,7 +113,7 @@ TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இத�
 - "சூழலின் படி", "ஆதாரத்தின் படி" போன்ற சொற்களை பயன்படுத்த வேண்டாம்
 - வாசிப்பவரின் கண்களுக்கு சோர்வு வராத வகையில் பதிலை அமைக்க வேண்டும்
 
-இப்போது, கீழே கொடுக்கப்பட்ட கேள்வி மற்றும் சூழலின் அடிப்படையில், மேலுள்ள அனைத்து விதிகளையும் கட்டாயமாக பின்பற்றி, தெளிவாகவும் வாசிக்க எளிதாகவும் விரிவான பதிலை எழுதுக."""
+இப்போது, கீழே கொடுக்கப்பட்ட கேள்வி மற்றும் சூழலின் அடிப்படையில், மேலுள்ள அனைத்து விதிகளையும் கட்டாயமாக பின்பற்றி, தெளிவாகவும் வாசிக்க எளிதாகவும் விரிவான பதிலை எழுதுக.""" + ANTI_INJECTION_PREAMBLE
 
 _CSV_SYSTEM_PROMPT = """நீங்கள் பொன்னி இதழ் கட்டுரை தரவுத்தளத்தின் தகவல்களை வைத்து கேள்விகளுக்கு பதிலளிக்கும் தமிழ் உதவியாளர்.
 
@@ -136,7 +137,7 @@ _CSV_SYSTEM_PROMPT = """நீங்கள் பொன்னி இதழ் �
 - பதிலை இயல்பான தமிழ் உரைநடையில் எழுதுக
 - பதில் 30 முதல் 150 சொற்கள் வரை இருக்க வேண்டும்
 - பதிலை ஒரு முடிவு வாக்கியத்துடன் நிறுத்த வேண்டும்
-- தரவில் "Error" அல்லது "கண்டுபிடிக்க முடியவில்லை" இருந்தால், "இல்லை" என்று தெளிவாகக் கூறுக"""
+- தரவில் "Error" அல்லது "கண்டுபிடிக்க முடியவில்லை" இருந்தால், "இல்லை" என்று தெளிவாகக் கூறுக""" + ANTI_INJECTION_PREAMBLE
 
 
 def _truncate_at_sentence_boundary(text: str) -> str:
@@ -340,6 +341,7 @@ def generate_llm_answer(
         word_count = len(re.findall(r'[\u0B80-\u0BFF]+|\w+', answer))
         logger.info(f"Gemini answer generated: {word_count} words")
 
+        answer = sanitize_output(answer)
         return answer
 
     except Exception as e:
@@ -387,6 +389,7 @@ async def generate_llm_answer_async(
         word_count = len(re.findall(r'[\u0B80-\u0BFF]+|\w+', answer))
         logger.info(f"Gemini async answer generated: {word_count} words")
 
+        answer = sanitize_output(answer)
         return answer
 
     except Exception as e:

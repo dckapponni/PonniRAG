@@ -11,6 +11,11 @@ import time
 
 from config.config import MAX_QUERY_LENGTH
 
+from guardrails import (
+    sanitize_query, detect_injection, validate_history,
+    safe_error_response, safe_error_message, sanitize_output,
+    SAFE_ERROR_MESSAGE,
+)
 from cache import ResponseCache, _response_cache
 from embeddings import (
     USE_CUDA, DEVICE, COLLECTION_NAME,
@@ -51,6 +56,7 @@ def truncate_query(question: str, max_length: int = MAX_QUERY_LENGTH) -> str:
     """
     from tamil_text import normalize_unicode
     question = normalize_unicode(question)
+    question = sanitize_query(question)
 
     if len(question) <= max_length:
         return question
@@ -98,25 +104,28 @@ def ask_question(question: str, return_formatted: bool = False, use_llm: bool = 
             - If True: Formatted string with answer and sources
     """
     question = truncate_query(question)
+    history = validate_history(history)
+
+    is_injection, severity = detect_injection(question)
+    if is_injection and severity == "high":
+        refusal = "மன்னிக்கவும், இந்தக் கேள்விக்கு பதிலளிக்க இயலவில்லை. பொன்னி இதழ் தொடர்பான கேள்விகளை கேளுங்கள்."
+        if return_formatted:
+            return refusal
+        return {"answer": refusal, "sources": []}
+
     t_start = time.time()
     health_status = check_qdrant_health()
     logger.info(f"[TIMING] health_check: {time.time() - t_start:.2f}s")
 
     if not health_status["healthy"]:
-        error_message = f"""
-Database Error: {health_status['message']}
-
-Details: {health_status.get('details', 'No additional details')}
-Action: {health_status.get('action', 'Contact administrator')}
-
-Error Type: {health_status['error']}
-"""
+        logger.error(f"Database unhealthy: {health_status}")
+        error_message = SAFE_ERROR_MESSAGE
         if return_formatted:
             return error_message
         return {
             "answer": error_message,
             "sources": [],
-            "error": health_status
+            "error": "database_unavailable"
         }
 
     logger.info("Database is healthy - proceeding with query")
@@ -248,11 +257,10 @@ Error Type: {health_status['error']}
         return result
 
     except Exception as e:
-        error_msg = f"Query error: {str(e)}"
-        logger.error(error_msg)
+        logger.error(f"Query error: {e}", exc_info=True)
         if return_formatted:
-            return f"Error: {error_msg}"
-        return {"answer": error_msg, "sources": [], "error": str(e)}
+            return SAFE_ERROR_MESSAGE
+        return safe_error_response()
 
 
 async def ask_question_async(question: str, return_formatted: bool = False, use_llm: bool = True, filter_tags: List[str] = None, history: List[Dict] = None) -> Dict:
@@ -264,25 +272,28 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
     to be processed concurrently without blocking the event loop.
     """
     question = truncate_query(question)
+    history = validate_history(history)
+
+    is_injection, severity = detect_injection(question)
+    if is_injection and severity == "high":
+        refusal = "மன்னிக்கவும், இந்தக் கேள்விக்கு பதிலளிக்க இயலவில்லை. பொன்னி இதழ் தொடர்பான கேள்விகளை கேளுங்கள்."
+        if return_formatted:
+            return refusal
+        return {"answer": refusal, "sources": []}
+
     t_start = time.time()
     health_status = await asyncio.to_thread(check_qdrant_health)
     logger.info(f"[TIMING] async health_check: {time.time() - t_start:.2f}s")
 
     if not health_status["healthy"]:
-        error_message = f"""
-Database Error: {health_status['message']}
-
-Details: {health_status.get('details', 'No additional details')}
-Action: {health_status.get('action', 'Contact administrator')}
-
-Error Type: {health_status['error']}
-"""
+        logger.error(f"Database unhealthy: {health_status}")
+        error_message = SAFE_ERROR_MESSAGE
         if return_formatted:
             return error_message
         return {
             "answer": error_message,
             "sources": [],
-            "error": health_status
+            "error": "database_unavailable"
         }
 
     logger.info("Database is healthy - proceeding with async query")
@@ -415,11 +426,10 @@ Error Type: {health_status['error']}
         return result
 
     except Exception as e:
-        error_msg = f"Query error: {str(e)}"
-        logger.error(error_msg)
+        logger.error(f"Async query error: {e}", exc_info=True)
         if return_formatted:
-            return f"Error: {error_msg}"
-        return {"answer": error_msg, "sources": [], "error": str(e)}
+            return SAFE_ERROR_MESSAGE
+        return safe_error_response()
 
 
 def ask_question_stream(question: str, filter_tags: List[str] = None, history: List[Dict] = None):
@@ -430,10 +440,19 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
     For non-streamable responses (CSV queries, errors), yields complete answer as single token.
     """
     question = truncate_query(question)
+    history = validate_history(history)
+
+    is_injection, severity = detect_injection(question)
+    if is_injection and severity == "high":
+        yield {"type": "token", "content": "மன்னிக்கவும், இந்தக் கேள்விக்கு பதிலளிக்க இயலவில்லை. பொன்னி இதழ் தொடர்பான கேள்விகளை கேளுங்கள்."}
+        yield {"type": "sources", "sources": []}
+        return
+
     # 1. Check health
     health_status = check_qdrant_health()
     if not health_status["healthy"]:
-        yield {"type": "token", "content": f"Database Error: {health_status['message']}"}
+        logger.error(f"Database unhealthy: {health_status}")
+        yield {"type": "token", "content": SAFE_ERROR_MESSAGE}
         yield {"type": "sources", "sources": []}
         return
 
@@ -550,6 +569,7 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
 
         # --- CACHE STORE (skip when conversation history is present) ---
         full_answer = "".join(accumulated_tokens)
+        full_answer = sanitize_output(full_answer)
         if not history and full_answer and len(full_answer) >= 50:
             _response_cache.put(question, {"answer": full_answer, "sources": sources})
         # --- END CACHE STORE ---
@@ -557,8 +577,8 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
         yield {"type": "sources", "sources": sources}
 
     except Exception as e:
-        logger.error(f"Streaming query error: {e}")
-        yield {"type": "token", "content": f"Query error: {str(e)}"}
+        logger.error(f"Streaming query error: {e}", exc_info=True)
+        yield {"type": "token", "content": SAFE_ERROR_MESSAGE}
         yield {"type": "sources", "sources": []}
 
 
