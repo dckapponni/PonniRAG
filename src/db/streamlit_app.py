@@ -313,17 +313,15 @@ def get_app_styles():
         color: #64748b !important; text-align: left !important;
         font-size: 0.95rem !important; font-weight: 600 !important; }
 
-    /* Sidebar collapse/expand toggle buttons */
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) > section > div > div > div > div > .stButton > button {
-        background: #f1f5f9 !important; color: #64748b !important;
-        border: 1px solid #e2e8f0 !important; border-radius: 0.5rem !important;
-        padding: 0.25rem 0.75rem !important; font-size: 1.2rem !important;
+    /* Sidebar collapse/expand toggle buttons — arrow only, light blue bg */
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) > section > div > div > div > div > .stButton > button,
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child > .stButton > button {
+        background: #eff6ff !important; color: #64748b !important;
+        -webkit-text-fill-color: #64748b !important;
+        border: 1px solid #bfdbfe !important; border-radius: 0.5rem !important;
+        padding: 0.25rem 0.6rem !important; font-size: 1.1rem !important;
         font-weight: 700 !important; width: auto !important; min-height: 0 !important;
         box-shadow: none !important; line-height: 1 !important; }
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child > .stButton > button {
-        background: transparent !important; border: none !important;
-        padding: 0.1rem 0.5rem !important; font-size: 1.4rem !important;
-        position: absolute; right: 0.5rem; top: 0.5rem; z-index: 10; }
 
     /* Sidebar title and form elements */
     .tags-sidebar-title { font-size: 1rem; font-weight: 600; color: #64748b;
@@ -336,12 +334,13 @@ def get_app_styles():
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child input[type="text"],
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child div[data-baseweb="input"] input,
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child div[data-testid="stTextInput"] input {
-        color: #1e293b !important; -webkit-text-fill-color: #1e293b !important;
-        background: #ffffff !important; border: 1px solid #cbd5e1 !important; }
+        color: #000000 !important; -webkit-text-fill-color: #000000 !important;
+        background: #ffffff !important; border: 1px solid #cbd5e1 !important;
+        caret-color: #000000 !important; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child input::placeholder {
         color: #94a3b8 !important; -webkit-text-fill-color: #94a3b8 !important; opacity: 1 !important; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child
-        div[data-baseweb="select"] { color: #1e293b !important; -webkit-text-fill-color: #1e293b !important; }
+        div[data-baseweb="select"] { color: #000000 !important; -webkit-text-fill-color: #000000 !important; }
     .result-count { font-size: 0.85rem; color: #64748b; margin-top: 0.75rem;
         margin-bottom: 0.5rem; }
     .result-count strong { color: #64748b; }
@@ -417,11 +416,11 @@ def get_app_styles():
         padding: 0.2rem 0.6rem; border-radius: 99px; border: 1px solid #bfdbfe; }
 
     .tags-pdf-btn { display: inline-flex; align-items: center; gap: 0.4rem;
-        background: #1e3a8a; color: #ffffff !important; padding: 0.5rem 1rem;
+        background: #eff6ff; color: #64748b !important; padding: 0.5rem 1rem;
         border-radius: 0.5rem; text-decoration: none; font-size: 0.85rem;
-        font-weight: 600; transition: background 0.2s; }
-    .tags-pdf-btn:hover { background: #3b82f6; text-decoration: none;
-        color: #ffffff !important; }
+        font-weight: 600; transition: background 0.2s; border: 1px solid #bfdbfe; }
+    .tags-pdf-btn:hover { background: #dbeafe; text-decoration: none;
+        color: #64748b !important; }
 </style>
 """
 
