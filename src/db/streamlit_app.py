@@ -313,15 +313,18 @@ def get_app_styles():
         color: #1e3a8a !important; text-align: left !important;
         font-size: 0.95rem !important; font-weight: 600 !important; }
 
-    /* Sidebar collapse/expand toggle buttons — arrow only, light blue bg */
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) > section > div > div > div > div > .stButton > button,
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child > .stButton > button {
-        background: #dbeafe !important; color: #1e3a8a !important;
-        -webkit-text-fill-color: #1e3a8a !important;
+    /* Sidebar collapse/expand toggle buttons — badge-style bg matching issues */
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) .stButton > button,
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) .stButton > button[kind="secondary"],
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child > div > .stButton > button,
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child .stButton > button {
+        background: #dbeafe !important; background-color: #dbeafe !important;
+        color: #1e3a8a !important; -webkit-text-fill-color: #1e3a8a !important;
         border: 1px solid #bfdbfe !important; border-radius: 0.5rem !important;
         padding: 0.25rem 0.6rem !important; font-size: 1.1rem !important;
         font-weight: 700 !important; width: auto !important; min-height: 0 !important;
-        box-shadow: none !important; line-height: 1 !important; }
+        box-shadow: none !important; line-height: 1 !important;
+        transform: none !important; }
 
     /* Sidebar title and form elements */
     .tags-sidebar-title { font-size: 1rem; font-weight: 600; color: #1e3a8a;
@@ -339,19 +342,28 @@ def get_app_styles():
         caret-color: #1e293b !important; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child input::placeholder {
         color: #94a3b8 !important; -webkit-text-fill-color: #94a3b8 !important; opacity: 1 !important; }
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child
-        div[data-baseweb="select"] { color: #1e293b !important; -webkit-text-fill-color: #1e293b !important; }
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child
-        div[data-baseweb="select"] > div { background: #ffffff !important;
+    /* Selectbox (category dropdown) — nuclear override: target ALL descendants */
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stSelectbox"] * {
+        background: #ffffff !important; background-color: #ffffff !important;
+        color: #1e293b !important; -webkit-text-fill-color: #1e293b !important; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stSelectbox"]
+        div[data-baseweb="select"] > div:first-child {
         border: 1px solid #e2e8f0 !important; border-radius: 0.5rem !important; }
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child
-        div[data-baseweb="select"] span { color: #1e293b !important; -webkit-text-fill-color: #1e293b !important; }
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child
-        div[data-baseweb="popover"] ul { background: #ffffff !important; }
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child
-        div[data-baseweb="popover"] li { color: #1e293b !important; background: #ffffff !important; }
-    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child
-        div[data-baseweb="popover"] li:hover { background: #f1f5f9 !important; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stSelectbox"] svg {
+        fill: #64748b !important; }
+    /* Dropdown list (popover) — renders as portal at root, target globally */
+    div[data-baseweb="popover"] *,
+    div[data-baseweb="menu"] *,
+    ul[role="listbox"] *,
+    ul[role="listbox"],
+    li[role="option"] {
+        background: #ffffff !important; background-color: #ffffff !important;
+        color: #1e293b !important; -webkit-text-fill-color: #1e293b !important; }
+    li[role="option"]:hover,
+    li[role="option"][aria-selected="true"],
+    div[data-baseweb="popover"] ul li:hover,
+    div[data-baseweb="popover"] ul li[aria-selected="true"] {
+        background: #dbeafe !important; background-color: #dbeafe !important; }
     .result-count { font-size: 0.85rem; color: #64748b; margin-top: 0.75rem;
         margin-bottom: 0.5rem; }
     .result-count strong { color: #1e3a8a; }
