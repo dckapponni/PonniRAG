@@ -307,24 +307,24 @@ def get_app_styles():
 
     /* Button overrides inside tags page */
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] .stButton > button {
-        background-color: #ffffff !important; color: #64748b !important;
+        background-color: #ffffff !important; color: #1e3a8a !important;
         width: auto !important; box-shadow: none !important; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"] h3 {
-        color: #64748b !important; text-align: left !important;
+        color: #1e3a8a !important; text-align: left !important;
         font-size: 0.95rem !important; font-weight: 600 !important; }
 
     /* Sidebar collapse/expand toggle buttons — arrow only, light blue bg */
     div[data-testid="stApp"]:has(.tags-sidebar-marker) > section > div > div > div > div > .stButton > button,
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child > .stButton > button {
-        background: #eff6ff !important; color: #64748b !important;
-        -webkit-text-fill-color: #64748b !important;
+        background: #dbeafe !important; color: #1e3a8a !important;
+        -webkit-text-fill-color: #1e3a8a !important;
         border: 1px solid #bfdbfe !important; border-radius: 0.5rem !important;
         padding: 0.25rem 0.6rem !important; font-size: 1.1rem !important;
         font-weight: 700 !important; width: auto !important; min-height: 0 !important;
         box-shadow: none !important; line-height: 1 !important; }
 
     /* Sidebar title and form elements */
-    .tags-sidebar-title { font-size: 1rem; font-weight: 600; color: #64748b;
+    .tags-sidebar-title { font-size: 1rem; font-weight: 600; color: #1e3a8a;
         margin-bottom: 1.25rem; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child label {
         color: #334155 !important; font-size: 0.85rem !important;
@@ -334,21 +334,32 @@ def get_app_styles():
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child input[type="text"],
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child div[data-baseweb="input"] input,
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child div[data-testid="stTextInput"] input {
-        color: #000000 !important; -webkit-text-fill-color: #000000 !important;
-        background: #ffffff !important; border: 1px solid #cbd5e1 !important;
-        caret-color: #000000 !important; }
+        color: #1e293b !important; -webkit-text-fill-color: #1e293b !important;
+        background: #ffffff !important; border: 1px solid #e2e8f0 !important;
+        caret-color: #1e293b !important; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child input::placeholder {
         color: #94a3b8 !important; -webkit-text-fill-color: #94a3b8 !important; opacity: 1 !important; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child
-        div[data-baseweb="select"] { color: #000000 !important; -webkit-text-fill-color: #000000 !important; }
+        div[data-baseweb="select"] { color: #1e293b !important; -webkit-text-fill-color: #1e293b !important; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child
+        div[data-baseweb="select"] > div { background: #ffffff !important;
+        border: 1px solid #e2e8f0 !important; border-radius: 0.5rem !important; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child
+        div[data-baseweb="select"] span { color: #1e293b !important; -webkit-text-fill-color: #1e293b !important; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child
+        div[data-baseweb="popover"] ul { background: #ffffff !important; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child
+        div[data-baseweb="popover"] li { color: #1e293b !important; background: #ffffff !important; }
+    div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="column"]:first-child
+        div[data-baseweb="popover"] li:hover { background: #f1f5f9 !important; }
     .result-count { font-size: 0.85rem; color: #64748b; margin-top: 0.75rem;
         margin-bottom: 0.5rem; }
-    .result-count strong { color: #64748b; }
+    .result-count strong { color: #1e3a8a; }
 
     /* Volume accordions in sidebar */
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stExpander"] { margin-bottom: 0.5rem; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stExpander"] summary {
-        background-color: #ffffff !important; color: #64748b !important;
+        background-color: #ffffff !important; color: #1e3a8a !important;
         border-radius: 1rem !important; padding: 0.75rem 1rem !important;
         font-weight: 600 !important; font-size: 0.95rem !important;
         border: 1px solid #e2e8f0 !important; }
@@ -356,7 +367,7 @@ def get_app_styles():
         background-color: #f1f5f9 !important; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stExpander"] summary span,
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stExpander"] summary p {
-        color: #64748b !important; }
+        color: #1e3a8a !important; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stExpander"] svg { fill: #64748b !important; }
     div[data-testid="stApp"]:has(.tags-sidebar-marker) div[data-testid="stExpander"] div[data-testid="stExpanderDetails"] {
         padding: 0.5rem 0.75rem !important; background: transparent !important; }
@@ -364,16 +375,16 @@ def get_app_styles():
     /* File items inside accordion */
     .tags-file-list { display: flex; flex-direction: column; gap: 0.4rem; }
     .tags-file-item { display: flex; align-items: center; gap: 0.75rem;
-        text-decoration: none; color: #334155; padding: 0.5rem 0.6rem;
+        text-decoration: none; color: #1e293b; padding: 0.5rem 0.6rem;
         border-radius: 0.75rem; transition: all 0.2s; cursor: pointer;
         border: 1px solid transparent; }
-    .tags-file-item:hover { background: #f1f5f9; text-decoration: none; color: #64748b; }
-    .tags-file-item.active { background: #eff6ff;
+    .tags-file-item:hover { background: #f1f5f9; text-decoration: none; color: #1e3a8a; }
+    .tags-file-item.active { background: #dbeafe;
         border-color: #3b82f6; }
     .tags-file-item img { width: 48px; height: 48px; object-fit: cover;
         border-radius: 0.5rem; flex-shrink: 0; border: 1px solid #e2e8f0; }
     .tags-file-item .file-title { font-size: 0.85rem; font-weight: 500;
-        color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        color: #1e3a8a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         max-width: 180px; margin-bottom: 0.15rem; }
     .tags-file-item .file-badge { background: #f1f5f9; color: #64748b;
         font-size: 0.7rem; padding: 0.1rem 0.5rem; border-radius: 99px;
@@ -387,18 +398,18 @@ def get_app_styles():
 
     /* Badges row */
     .tags-badge-row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
-    .tags-badge-vol { background: #eff6ff; color: #64748b;
+    .tags-badge-vol { background: #dbeafe; color: #1e3a8a;
         border: 1px solid #bfdbfe; padding: 0.25rem 0.75rem;
         border-radius: 99px; font-size: 0.8rem; font-weight: 500; }
-    .tags-badge-cat { background: #f1f5f9; color: #64748b;
-        border: 1px solid #e2e8f0; padding: 0.25rem 0.75rem;
+    .tags-badge-cat { background: #dbeafe; color: #1e3a8a;
+        border: 1px solid #bfdbfe; padding: 0.25rem 0.75rem;
         border-radius: 99px; font-size: 0.8rem; font-weight: 500; }
 
     /* Article content in main pane */
     .tags-article-block { background: #f8fafc; border-radius: 1rem;
         padding: 1.5rem; border: 1px solid #e2e8f0; margin-bottom: 1rem; }
-    .tags-article-block h3 { color: #64748b; font-size: 0.95rem; font-weight: 600; margin-bottom: 0.75rem; }
-    .tags-article-block .article-text { color: #334155; font-size: 0.95rem;
+    .tags-article-block h3 { color: #1e3a8a; font-size: 0.95rem; font-weight: 600; margin-bottom: 0.75rem; }
+    .tags-article-block .article-text { color: #1e293b; font-size: 0.95rem;
         line-height: 1.8; white-space: pre-wrap; }
     .tags-article-block .article-meta { color: #64748b; font-size: 0.85rem;
         margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid #e2e8f0; }
@@ -412,15 +423,15 @@ def get_app_styles():
     .tags-stat-card .stat-label { font-size: 0.75rem; color: #64748b; margin-top: 0.25rem; }
 
     .source-tags { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.4rem; }
-    .tag-badge { background: #eff6ff; color: #1e3a8a; font-size: 0.75rem; font-weight: 500;
+    .tag-badge { background: #dbeafe; color: #1e3a8a; font-size: 0.75rem; font-weight: 500;
         padding: 0.2rem 0.6rem; border-radius: 99px; border: 1px solid #bfdbfe; }
 
     .tags-pdf-btn { display: inline-flex; align-items: center; gap: 0.4rem;
-        background: #eff6ff; color: #64748b !important; padding: 0.5rem 1rem;
+        background: #dbeafe; color: #1e3a8a !important; padding: 0.5rem 1rem;
         border-radius: 0.5rem; text-decoration: none; font-size: 0.85rem;
         font-weight: 600; transition: background 0.2s; border: 1px solid #bfdbfe; }
-    .tags-pdf-btn:hover { background: #dbeafe; text-decoration: none;
-        color: #64748b !important; }
+    .tags-pdf-btn:hover { background: #bfdbfe; text-decoration: none;
+        color: #1e3a8a !important; }
 </style>
 """
 
@@ -1397,7 +1408,7 @@ def render_tags_page():
 
         with left_col:
             # Collapse button at top of sidebar
-            if st.button("\u2039", key="tags_collapse_btn", help="Collapse sidebar"):
+            if st.button("\u2039", key="tags_collapse_btn"):
                 st.session_state.tags_sidebar_open = False
                 st.rerun()
             with st.container(height=pane_height, border=False):
@@ -1413,7 +1424,7 @@ def render_tags_page():
                     render_issue_articles(selected_volume, int(selected_issue))
     else:
         # Collapsed — full-width right pane with expand button
-        if st.button("\u203a", key="tags_expand_btn", help="Expand sidebar"):
+        if st.button("\u203a", key="tags_expand_btn"):
             st.session_state.tags_sidebar_open = True
             st.rerun()
         with st.container(height=pane_height, border=False):
@@ -1549,7 +1560,7 @@ def render_issue_articles(volume_id, issue_num):
 
     # Title
     st.markdown(
-        f'<h1 style="font-size:1rem;font-weight:600;color:#64748b;margin-bottom:0.5rem;">'
+        f'<h1 style="font-size:1rem;font-weight:600;color:#1e3a8a;margin-bottom:0.5rem;">'
         f'{t("lib_vol")} {volume_id} {t("issue")} {issue_num} — {t("tags_content_list")}</h1>',
         unsafe_allow_html=True,
     )
@@ -1623,9 +1634,9 @@ def render_issue_articles(volume_id, issue_num):
         st.markdown(
             f'<div class="tags-article-block">'
             f'<div style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap;">'
-            f'<span style="color:#64748b;font-weight:700;font-size:0.95rem;">{idx}.</span>'
+            f'<span style="color:#3b82f6;font-weight:700;font-size:0.95rem;">{idx}.</span>'
             f'<a href="{link}" target="_self" style="text-decoration:none;">'
-            f'<span style="color:#64748b;font-weight:600;font-size:0.95rem;">{title}</span></a>'
+            f'<span style="color:#1e3a8a;font-weight:600;font-size:0.95rem;">{title}</span></a>'
             f'{author_html}'
             f'</div>'
             f'<div style="margin-top:0.5rem;">{badges_html}</div>'
@@ -1689,7 +1700,7 @@ def render_article_detail(article_no, volume_id, issue_num, actual_doc_issue=Non
 
     # Title
     st.markdown(
-        f'<h1 style="font-size:1rem;font-weight:600;color:#64748b;margin-bottom:1rem;">{title}</h1>',
+        f'<h1 style="font-size:1rem;font-weight:600;color:#1e3a8a;margin-bottom:1rem;">{title}</h1>',
         unsafe_allow_html=True,
     )
 
