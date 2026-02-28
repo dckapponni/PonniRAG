@@ -549,11 +549,13 @@ class TestAskQuestion:
         assert 'error' in result
     
     @patch('hybrid_search.check_qdrant_health')
+    @patch('hybrid_search.check_gemini_health')
     @patch('hybrid_search.handle_author_query')
     @patch('hybrid_search.generate_llm_answer')
-    def test_ask_question_author_query(self, mock_llm, mock_handle, mock_health):
+    def test_ask_question_author_query(self, mock_llm, mock_handle, mock_gemini_health, mock_health):
         """Test CSV query: LLM summary + raw CSV data appended, no evidence card."""
         mock_health.return_value = {'healthy': True, 'points_count': 1000}
+        mock_gemini_health.return_value = {'healthy': True, 'message': 'ok', 'error': None, 'model': 'gemini-2.5-flash', 'latency_ms': 50.0}
         csv_data = 'Author response from CSV'
         mock_handle.return_value = (True, csv_data)
         mock_llm.return_value = 'பொன்னி இதழில் பல எழுத்தாளர்கள் பங்களித்துள்ளனர். கருணாநிதி, பெரியார் போன்றவர்கள் முக்கிய எழுத்தாளர்கள்.'
@@ -639,13 +641,15 @@ class TestAskQuestion:
             assert isinstance(result, str)
 
     @patch('hybrid_search.check_qdrant_health')
+    @patch('hybrid_search.check_gemini_health')
     @patch('hybrid_search.get_qdrant_client')
     @patch('hybrid_search.HybridQdrantSearch')
     @patch('hybrid_search.merge_consecutive_chunks')
     @patch('hybrid_search.generate_llm_answer')
-    def test_ask_question_with_history(self, mock_llm, mock_merge, mock_search_class, mock_client, mock_health):
+    def test_ask_question_with_history(self, mock_llm, mock_merge, mock_search_class, mock_client, mock_gemini_health, mock_health):
         """Test that history is passed through to generate_llm_answer."""
         mock_health.return_value = {'healthy': True, 'points_count': 1000}
+        mock_gemini_health.return_value = {'healthy': True, 'message': 'ok', 'error': None, 'model': 'gemini-2.5-flash', 'latency_ms': 50.0}
         mock_client.return_value = MagicMock()
 
         mock_searcher = MagicMock()
@@ -705,13 +709,15 @@ class TestAskQuestion:
 
     @patch('hybrid_search._response_cache')
     @patch('hybrid_search.check_qdrant_health')
+    @patch('hybrid_search.check_gemini_health')
     @patch('hybrid_search.get_qdrant_client')
     @patch('hybrid_search.HybridQdrantSearch')
     @patch('hybrid_search.merge_consecutive_chunks')
     @patch('hybrid_search.generate_llm_answer')
-    def test_ask_question_without_history_unchanged(self, mock_llm, mock_merge, mock_search_class, mock_client, mock_health, mock_cache):
+    def test_ask_question_without_history_unchanged(self, mock_llm, mock_merge, mock_search_class, mock_client, mock_gemini_health, mock_health, mock_cache):
         """Test that ask_question without history works exactly as before."""
         mock_health.return_value = {'healthy': True, 'points_count': 1000}
+        mock_gemini_health.return_value = {'healthy': True, 'message': 'ok', 'error': None, 'model': 'gemini-2.5-flash', 'latency_ms': 50.0}
         mock_client.return_value = MagicMock()
         mock_cache.get.return_value = None
 

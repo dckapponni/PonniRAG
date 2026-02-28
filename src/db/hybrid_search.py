@@ -148,15 +148,20 @@ def ask_question(question: str, return_formatted: bool = False, use_llm: bool = 
 
             if is_handled and csv_response and csv_response.strip():
                 logger.info("CSV query matched - passing to LLM for summarization")
-                t0 = time.time()
-                csv_content = _build_csv_user_content(question, csv_response)
-                llm_summary = generate_llm_answer(
-                    question, context="", csv_context="",
-                    user_content=csv_content, system_prompt=_CSV_SYSTEM_PROMPT,
-                    disable_thinking=True,
-                )
-                logger.info(f"[TIMING] gemini_llm (csv): {time.time() - t0:.2f}s")
-                logger.info(f"CSV LLM gist length: {len(llm_summary or '')} chars")
+                gemini_health = check_gemini_health()
+                if not gemini_health["healthy"]:
+                    logger.error(f"Gemini unhealthy (csv path): {gemini_health}")
+                    llm_summary = ""
+                else:
+                    t0 = time.time()
+                    csv_content = _build_csv_user_content(question, csv_response)
+                    llm_summary = generate_llm_answer(
+                        question, context="", csv_context="",
+                        user_content=csv_content, system_prompt=_CSV_SYSTEM_PROMPT,
+                        disable_thinking=True,
+                    )
+                    logger.info(f"[TIMING] gemini_llm (csv): {time.time() - t0:.2f}s")
+                    logger.info(f"CSV LLM gist length: {len(llm_summary or '')} chars")
 
                 if not llm_summary or len(llm_summary) < 5:
                     llm_summary = ""
@@ -227,13 +232,17 @@ def ask_question(question: str, return_formatted: bool = False, use_llm: bool = 
 
         answer = ""
         if use_llm:
-            t0 = time.time()
-            answer = generate_llm_answer(
-                question, context, csv_context,
-                context_doc_count=context_doc_count,
-                history=history,
-            )
-            logger.info(f"[TIMING] gemini_llm: {time.time() - t0:.2f}s")
+            gemini_health = check_gemini_health()
+            if not gemini_health["healthy"]:
+                logger.error(f"Gemini unhealthy: {gemini_health}")
+            else:
+                t0 = time.time()
+                answer = generate_llm_answer(
+                    question, context, csv_context,
+                    context_doc_count=context_doc_count,
+                    history=history,
+                )
+                logger.info(f"[TIMING] gemini_llm: {time.time() - t0:.2f}s")
 
         if not answer or len(answer) < 150:
             logger.warning("LLM failed, using extractive answer")
@@ -317,15 +326,20 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
 
             if is_handled and csv_response and csv_response.strip():
                 logger.info("CSV query matched - passing to LLM for summarization")
-                t0 = time.time()
-                csv_content = _build_csv_user_content(question, csv_response)
-                llm_summary = await generate_llm_answer_async(
-                    question, context="", csv_context="",
-                    user_content=csv_content, system_prompt=_CSV_SYSTEM_PROMPT,
-                    disable_thinking=True,
-                )
-                logger.info(f"[TIMING] async gemini_llm (csv): {time.time() - t0:.2f}s")
-                logger.info(f"CSV LLM gist length: {len(llm_summary or '')} chars")
+                gemini_health = await asyncio.to_thread(check_gemini_health)
+                if not gemini_health["healthy"]:
+                    logger.error(f"Gemini unhealthy (async csv path): {gemini_health}")
+                    llm_summary = ""
+                else:
+                    t0 = time.time()
+                    csv_content = _build_csv_user_content(question, csv_response)
+                    llm_summary = await generate_llm_answer_async(
+                        question, context="", csv_context="",
+                        user_content=csv_content, system_prompt=_CSV_SYSTEM_PROMPT,
+                        disable_thinking=True,
+                    )
+                    logger.info(f"[TIMING] async gemini_llm (csv): {time.time() - t0:.2f}s")
+                    logger.info(f"CSV LLM gist length: {len(llm_summary or '')} chars")
 
                 if not llm_summary or len(llm_summary) < 5:
                     llm_summary = ""
@@ -397,13 +411,17 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
 
         answer = ""
         if use_llm:
-            t0 = time.time()
-            answer = await generate_llm_answer_async(
-                question, context, csv_context,
-                context_doc_count=context_doc_count,
-                history=history,
-            )
-            logger.info(f"[TIMING] async gemini_llm: {time.time() - t0:.2f}s")
+            gemini_health = await asyncio.to_thread(check_gemini_health)
+            if not gemini_health["healthy"]:
+                logger.error(f"Gemini unhealthy (async): {gemini_health}")
+            else:
+                t0 = time.time()
+                answer = await generate_llm_answer_async(
+                    question, context, csv_context,
+                    context_doc_count=context_doc_count,
+                    history=history,
+                )
+                logger.info(f"[TIMING] async gemini_llm: {time.time() - t0:.2f}s")
 
         if not answer or len(answer) < 100:
             logger.warning("LLM failed, using extractive answer")
@@ -472,6 +490,15 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
             is_handled, csv_response = handle_author_query(question, str(CSV_PATH))
             if is_handled and csv_response and csv_response.strip():
                 logger.info("CSV query matched - streaming LLM summary")
+                gemini_health = check_gemini_health()
+                if not gemini_health["healthy"]:
+                    logger.error(f"Gemini unhealthy (stream csv path): {gemini_health}")
+                    fallback = "கட்டுரை தரவுத்தளத்திலிருந்து பெறப்பட்ட தகவல்கள்:"
+                    yield {"type": "token", "content": fallback}
+                    csv_suffix = _csv_data_suffix(csv_response)
+                    yield {"type": "token", "content": csv_suffix}
+                    yield {"type": "sources", "sources": []}
+                    return
                 csv_content = _build_csv_user_content(question, csv_response)
                 accumulated = []
                 for token in generate_llm_answer_stream(
@@ -543,6 +570,19 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
         csv_context = ""
         if csv_results:
             csv_context = "\n".join([f"{idx}. {row}" for idx, row in enumerate(csv_results, 1)])
+
+        # Pre-check Gemini health before streaming LLM
+        gemini_health = check_gemini_health()
+        if not gemini_health["healthy"]:
+            logger.error(f"Gemini unhealthy (stream): {gemini_health}")
+            facts = extract_key_facts(merged_docs, question)
+            answer = generate_extractive_answer(facts, question)
+            if answer:
+                yield {"type": "token", "content": answer}
+            else:
+                yield {"type": "token", "content": "மன்னிக்கவும், LLM சேவை தற்போது கிடைக்கவில்லை."}
+            yield {"type": "sources", "sources": format_sources(merged_docs)}
+            return
 
         # Stream LLM tokens and accumulate for caching
         token_count = 0
@@ -643,6 +683,7 @@ from llm import (  # noqa: E402, F401
     generate_extractive_answer,
     _truncate_at_sentence_boundary,
     validate_gemini_api,
+    check_gemini_health,
     GEMINI_API_KEY,
     GEMINI_MODEL,
 )

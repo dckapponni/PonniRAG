@@ -6,6 +6,8 @@ and answer post-processing for the Ponni RAG system.
 import os
 import re
 import logging
+import time
+import threading
 from typing import List, Dict
 
 from google import genai
@@ -162,6 +164,67 @@ def _get_gemini_client():
             raise ValueError("GEMINI_API_KEY environment variable is not set")
         _gemini_client = genai.Client(api_key=GEMINI_API_KEY)
     return _gemini_client
+
+
+_gemini_health_cache = {"result": None, "timestamp": 0}
+_gemini_health_lock = threading.Lock()
+_GEMINI_HEALTH_TTL = 60  # seconds — recheck every 60s
+
+
+def check_gemini_health(ttl: int = _GEMINI_HEALTH_TTL) -> Dict:
+    """Check Gemini API health with TTL caching.
+
+    Returns dict with keys: healthy (bool), message (str), error (str|None),
+    model (str), latency_ms (float|None).
+    """
+    now = time.time()
+    with _gemini_health_lock:
+        cached = _gemini_health_cache
+        if cached["result"] is not None and (now - cached["timestamp"]) < ttl:
+            return cached["result"]
+
+    # Outside lock: perform the actual check
+    if not GEMINI_API_KEY:
+        result = {
+            "healthy": False,
+            "error": "api_key_missing",
+            "message": "GEMINI_API_KEY not configured",
+            "model": GEMINI_MODEL,
+            "latency_ms": None,
+        }
+    else:
+        t0 = time.time()
+        try:
+            client = _get_gemini_client()
+            client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents="ping",
+                config=genai_types.GenerateContentConfig(max_output_tokens=5),
+            )
+            latency = (time.time() - t0) * 1000
+            result = {
+                "healthy": True,
+                "message": "Gemini API is responsive",
+                "error": None,
+                "model": GEMINI_MODEL,
+                "latency_ms": round(latency, 1),
+            }
+        except Exception as e:
+            latency = (time.time() - t0) * 1000
+            result = {
+                "healthy": False,
+                "error": "api_call_failed",
+                "message": "Gemini API is not responding",
+                "model": GEMINI_MODEL,
+                "latency_ms": round(latency, 1),
+            }
+            logger.error(f"Gemini health check failed: {e}")
+
+    with _gemini_health_lock:
+        _gemini_health_cache["result"] = result
+        _gemini_health_cache["timestamp"] = time.time()
+
+    return result
 
 
 def _gemini_generation_config(
@@ -459,18 +522,14 @@ def validate_gemini_api():
     """
     Validate that the Gemini API key is configured and working.
     Called at startup to fail fast if misconfigured.
+    Uses check_gemini_health() to avoid duplicating ping logic.
     """
     if not GEMINI_API_KEY:
         logger.warning("GEMINI_API_KEY not set — LLM generation will be unavailable")
         return
     logger.info(f"Validating Gemini API key (model: {GEMINI_MODEL})...")
-    try:
-        client = _get_gemini_client()
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents="hello",
-            config=genai_types.GenerateContentConfig(max_output_tokens=5),
-        )
+    result = check_gemini_health()
+    if result["healthy"]:
         logger.info("Gemini API validated successfully")
-    except Exception as e:
-        logger.warning(f"Gemini API validation failed (non-fatal): {e}")
+    else:
+        logger.warning(f"Gemini API validation failed (non-fatal): {result['message']}")

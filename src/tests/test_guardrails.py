@@ -2,10 +2,14 @@
 Tests for prompt guardrails module.
 
 Covers injection detection, query sanitization, history validation,
-output leakage checks, error sanitization, and anti-injection preamble.
+output leakage checks, error sanitization, anti-injection preamble,
+and Gemini API health checks.
 """
 
+import time
+import threading
 import pytest
+from unittest.mock import patch, MagicMock
 from guardrails import (
     detect_injection,
     sanitize_query,
@@ -475,3 +479,154 @@ class TestAntiInjectionPreamble:
 
     def test_preamble_mentions_api_keys(self):
         assert "API keys" in ANTI_INJECTION_PREAMBLE or "api keys" in ANTI_INJECTION_PREAMBLE.lower()
+
+
+# ============================================================================
+# TestGeminiHealthCheck
+# ============================================================================
+
+class TestGeminiHealthCheck:
+    """Test Gemini API health check with TTL caching."""
+
+    def _reset_cache(self):
+        """Reset the health check cache between tests."""
+        import llm as llm_mod
+        llm_mod._gemini_health_cache["result"] = None
+        llm_mod._gemini_health_cache["timestamp"] = 0
+
+    def setup_method(self):
+        self._reset_cache()
+
+    def teardown_method(self):
+        self._reset_cache()
+
+    @patch("llm._get_gemini_client")
+    @patch("llm.GEMINI_API_KEY", "test-key")
+    def test_healthy_response_structure(self, mock_client):
+        """Healthy response should have all required dict keys."""
+        from llm import check_gemini_health
+        mock_client.return_value.models.generate_content.return_value = MagicMock(text="ok")
+
+        result = check_gemini_health()
+
+        assert isinstance(result, dict)
+        assert result["healthy"] is True
+        assert result["error"] is None
+        assert "message" in result
+        assert "model" in result
+        assert "latency_ms" in result
+
+    @patch("llm.GEMINI_API_KEY", "")
+    def test_unhealthy_when_api_key_missing(self):
+        """Missing API key should return healthy=False with api_key_missing error."""
+        from llm import check_gemini_health
+
+        result = check_gemini_health()
+
+        assert result["healthy"] is False
+        assert result["error"] == "api_key_missing"
+        assert result["latency_ms"] is None
+
+    @patch("llm._get_gemini_client")
+    @patch("llm.GEMINI_API_KEY", "test-key")
+    def test_unhealthy_when_api_call_fails(self, mock_client):
+        """API exception should return healthy=False with api_call_failed error."""
+        from llm import check_gemini_health
+        mock_client.return_value.models.generate_content.side_effect = Exception("connection refused")
+
+        result = check_gemini_health()
+
+        assert result["healthy"] is False
+        assert result["error"] == "api_call_failed"
+        assert result["latency_ms"] is not None
+
+    @patch("llm._get_gemini_client")
+    @patch("llm.GEMINI_API_KEY", "test-key")
+    def test_cache_returns_previous_result(self, mock_client):
+        """Second call within TTL should return cached result without API call."""
+        from llm import check_gemini_health
+        mock_client.return_value.models.generate_content.return_value = MagicMock(text="ok")
+
+        result1 = check_gemini_health(ttl=60)
+        result2 = check_gemini_health(ttl=60)
+
+        assert result1 is result2
+        assert mock_client.return_value.models.generate_content.call_count == 1
+
+    @patch("llm._get_gemini_client")
+    @patch("llm.GEMINI_API_KEY", "test-key")
+    def test_cache_expires_after_ttl(self, mock_client):
+        """Call after TTL expiry should re-check the API."""
+        import llm as llm_mod
+        from llm import check_gemini_health
+        mock_client.return_value.models.generate_content.return_value = MagicMock(text="ok")
+
+        check_gemini_health(ttl=60)
+        # Simulate cache expiry by backdating the timestamp
+        llm_mod._gemini_health_cache["timestamp"] = time.time() - 120
+
+        check_gemini_health(ttl=60)
+
+        assert mock_client.return_value.models.generate_content.call_count == 2
+
+    @patch("llm._get_gemini_client")
+    @patch("llm.GEMINI_API_KEY", "test-key")
+    def test_thread_safety(self, mock_client):
+        """Concurrent calls should not crash or corrupt the cache."""
+        from llm import check_gemini_health
+        mock_client.return_value.models.generate_content.return_value = MagicMock(text="ok")
+
+        errors = []
+
+        def call_health():
+            try:
+                result = check_gemini_health(ttl=0)
+                assert result["healthy"] is True
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=call_health) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(errors) == 0
+
+    @patch("llm._get_gemini_client")
+    @patch("llm.GEMINI_API_KEY", "test-key")
+    def test_latency_ms_populated(self, mock_client):
+        """Latency should be a non-negative number on successful check."""
+        from llm import check_gemini_health
+        mock_client.return_value.models.generate_content.return_value = MagicMock(text="ok")
+
+        result = check_gemini_health()
+
+        assert isinstance(result["latency_ms"], float)
+        assert result["latency_ms"] >= 0
+
+    @patch("llm._get_gemini_client")
+    @patch("llm.GEMINI_API_KEY", "test-key")
+    def test_model_name_in_result(self, mock_client):
+        """Model field should match GEMINI_MODEL."""
+        from llm import check_gemini_health, GEMINI_MODEL
+        mock_client.return_value.models.generate_content.return_value = MagicMock(text="ok")
+
+        result = check_gemini_health()
+
+        assert result["model"] == GEMINI_MODEL
+
+    @patch("llm._get_gemini_client")
+    @patch("llm.GEMINI_API_KEY", "test-key")
+    def test_no_internal_details_in_error_message(self, mock_client):
+        """Exception text should not leak into the result message."""
+        from llm import check_gemini_health
+        mock_client.return_value.models.generate_content.side_effect = Exception(
+            "SSL: CERTIFICATE_VERIFY_FAILED at /internal/path"
+        )
+
+        result = check_gemini_health()
+
+        assert "SSL" not in result["message"]
+        assert "/internal/path" not in result["message"]
+        assert "CERTIFICATE" not in result["message"]

@@ -25,7 +25,7 @@ from qdrant_client import models
 from hybrid_search import ask_question_async, ask_question_stream
 from embeddings import check_qdrant_health, get_qdrant_client, COLLECTION_NAME, CSV_PATH
 from csv_queries import EnhancedAuthorQuerySystem, get_issue_count, _author_system_cache, _author_system_lock
-from llm import validate_gemini_api
+from llm import validate_gemini_api, check_gemini_health
 from cache import _response_cache
 
 from article_tagger import TAXONOMY
@@ -77,6 +77,7 @@ class HealthResponse(BaseModel):
     """Response model for health check."""
     status: str
     database: Dict[str, Any]
+    llm: Dict[str, Any]
     api: str = "healthy"
 
 
@@ -248,8 +249,12 @@ async def lifespan(app: FastAPI):
                 _author_system_cache[csv_path] = EnhancedAuthorQuerySystem(csv_path)
         logger.info("Author query system cached at startup")
 
-    # Validate Gemini API key
-    validate_gemini_api()
+    # Validate Gemini API key (also primes the health check cache)
+    gemini_health = check_gemini_health()
+    if gemini_health["healthy"]:
+        logger.info(f"Gemini API validated (model: {gemini_health['model']}, latency: {gemini_health['latency_ms']}ms)")
+    else:
+        logger.warning(f"Gemini API not available: {gemini_health['message']}")
 
     yield
 
@@ -276,16 +281,22 @@ app.add_middleware(
 @app.get("/health", response_model=HealthResponse, tags=["Health"])
 async def health_check():
     """
-    Check API and database health status.
+    Check API, database, and LLM health status.
 
-    Returns the health status of the API and Qdrant database connection.
+    Returns the health status of the API, Qdrant database, and Gemini LLM.
     """
     db_health = check_qdrant_health()
+    llm_health = await asyncio.to_thread(check_gemini_health)
+
+    overall = "healthy"
+    if not db_health["healthy"] or not llm_health["healthy"]:
+        overall = "degraded"
 
     return HealthResponse(
-        status="healthy" if db_health["healthy"] else "degraded",
+        status=overall,
         database=db_health,
-        api="healthy"
+        llm=llm_health,
+        api="healthy",
     )
 
 
