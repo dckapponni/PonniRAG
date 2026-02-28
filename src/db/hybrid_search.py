@@ -129,6 +129,7 @@ def ask_question(question: str, return_formatted: bool = False, use_llm: bool = 
         }
 
     logger.info("Database is healthy - proceeding with query")
+    _response_cache.check_version(health_status.get("points_count"))
 
     # --- RESPONSE CACHE LOOKUP (skip when conversation history is present) ---
     if not history:
@@ -306,6 +307,7 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
         }
 
     logger.info("Database is healthy - proceeding with async query")
+    _response_cache.check_version(health_status.get("points_count"))
 
     # --- RESPONSE CACHE LOOKUP (skip when conversation history is present) ---
     if not history:
@@ -473,6 +475,8 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
         yield {"type": "token", "content": SAFE_ERROR_MESSAGE}
         yield {"type": "sources", "sources": []}
         return
+
+    _response_cache.check_version(health_status.get("points_count"))
 
     # --- RESPONSE CACHE LOOKUP (skip when conversation history is present) ---
     if not history:

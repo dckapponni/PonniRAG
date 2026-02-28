@@ -8,7 +8,7 @@ import threading
 import logging
 import unicodedata
 from collections import OrderedDict
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,7 @@ class ResponseCache:
         self._ttl = ttl_seconds
         self._hits = 0
         self._misses = 0
+        self._version: Optional[int] = None  # Tracks Qdrant points_count
 
     @staticmethod
     def _make_key(question: str) -> str:
@@ -67,7 +68,38 @@ class ResponseCache:
         with self._lock:
             self._cache.clear()
             self._timestamps.clear()
+            self._version = None
             logger.info("[CACHE] Cache cleared")
+
+    def check_version(self, points_count: Any) -> None:
+        """Auto-clear cache when Qdrant index changes (detected via points_count).
+
+        Called after each health check. If points_count differs from the stored
+        baseline, all cached entries are invalidated because the underlying
+        documents/embeddings may have changed.
+
+        Args:
+            points_count: Current points_count from Qdrant health check.
+                          None means Qdrant is unreachable — cache is preserved.
+        """
+        if points_count is None:
+            return
+        try:
+            points_count = int(points_count)
+        except (TypeError, ValueError):
+            return
+        with self._lock:
+            if self._version is None:
+                self._version = points_count
+                logger.info(f"[CACHE] Index version initialized: {points_count}")
+                return
+            if points_count != self._version:
+                logger.info(
+                    f"[CACHE] Index version changed: {self._version} → {points_count}. Clearing cache."
+                )
+                self._cache.clear()
+                self._timestamps.clear()
+                self._version = points_count
 
     def stats(self) -> Dict:
         with self._lock:
@@ -79,6 +111,7 @@ class ResponseCache:
                 "hits": self._hits,
                 "misses": self._misses,
                 "hit_rate": f"{self._hits / total:.0%}",
+                "version": self._version,
             }
 
 
