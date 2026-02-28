@@ -26,6 +26,7 @@ from src.config.config import (
     QDRANT_HOST,
     QDRANT_PORT,
 )
+from src.db.retry import with_qdrant_retry
 from src.db.article_tagger import ArticleTagger
 from src.db.snapshot_manager import (
     needs_reindex,
@@ -551,7 +552,8 @@ def _do_full_index(client):
             points.append(point)
 
             if len(points) >= BATCH_SIZE:
-                client.upsert(
+                with_qdrant_retry(
+                    client.upsert,
                     collection_name=COLLECTION_NAME,
                     points=points,
                 )
@@ -563,7 +565,8 @@ def _do_full_index(client):
             logger.error(f"Failed to index: {e}")
 
     if points:
-        client.upsert(
+        with_qdrant_retry(
+            client.upsert,
             collection_name=COLLECTION_NAME,
             points=points,
         )
@@ -597,7 +600,8 @@ def _do_full_index(client):
             points.append(point)
 
             if len(points) >= BATCH_SIZE:
-                client.upsert(
+                with_qdrant_retry(
+                    client.upsert,
                     collection_name=COLLECTION_NAME,
                     points=points,
                 )
@@ -609,7 +613,8 @@ def _do_full_index(client):
             logger.error(f"Failed to index author: {e}")
 
     if points:
-        client.upsert(
+        with_qdrant_retry(
+            client.upsert,
             collection_name=COLLECTION_NAME,
             points=points,
         )

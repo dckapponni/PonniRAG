@@ -13,6 +13,7 @@ from typing import List, Dict
 from google import genai
 from google.genai import types as genai_types
 from guardrails import ANTI_INJECTION_PREAMBLE, sanitize_output
+from retry import with_gemini_retry, with_gemini_retry_async
 
 logger = logging.getLogger(__name__)
 
@@ -383,7 +384,8 @@ def generate_llm_answer(
 
         contents = _build_multi_turn_contents(history, user_content) if history else user_content
 
-        response = client.models.generate_content(
+        response = with_gemini_retry(
+            client.models.generate_content,
             model=GEMINI_MODEL,
             contents=contents,
             config=_gemini_generation_config(system_prompt, disable_thinking=disable_thinking),
@@ -432,7 +434,8 @@ async def generate_llm_answer_async(
 
         contents = _build_multi_turn_contents(history, user_content) if history else user_content
 
-        response = await client.aio.models.generate_content(
+        response = await with_gemini_retry_async(
+            client.aio.models.generate_content,
             model=GEMINI_MODEL,
             contents=contents,
             config=_gemini_generation_config(system_prompt, disable_thinking=disable_thinking),
@@ -481,11 +484,13 @@ def generate_llm_answer_stream(
 
         contents = _build_multi_turn_contents(history, user_content) if history else user_content
 
-        for chunk in client.models.generate_content_stream(
+        stream = with_gemini_retry(
+            client.models.generate_content_stream,
             model=GEMINI_MODEL,
             contents=contents,
             config=_gemini_generation_config(system_prompt, disable_thinking=disable_thinking),
-        ):
+        )
+        for chunk in stream:
             token = chunk.text
             if token:
                 yield token

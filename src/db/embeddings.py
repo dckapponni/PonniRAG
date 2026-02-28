@@ -18,6 +18,7 @@ torch.set_grad_enabled(False)
 from qdrant_client import models
 import pandas as pd
 import threading
+from retry import with_qdrant_retry
 
 USE_CUDA = torch.cuda.is_available()
 DEVICE = "cuda" if USE_CUDA else "cpu"
@@ -253,7 +254,8 @@ class HybridQdrantSearch:
             )
         search_filter = models.Filter(must=filter_conditions)
 
-        response = self.client.query_points(
+        response = with_qdrant_retry(
+            self.client.query_points,
             collection_name=COLLECTION_NAME,
             prefetch=[
                 models.Prefetch(

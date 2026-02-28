@@ -12,6 +12,7 @@ from qdrant_client import QdrantClient
 from qdrant_client import models
 
 from embeddings import COLLECTION_NAME
+from retry import with_qdrant_retry
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,8 @@ def retrieve_all_chunks_for_document(client: QdrantClient, doc_id: str, doc_issu
     all_chunks = []
     offset = None
     while True:
-        points, offset = client.scroll(
+        points, offset = with_qdrant_retry(
+            client.scroll,
             collection_name=COLLECTION_NAME,
             scroll_filter=models.Filter(
                 must=[
