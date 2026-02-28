@@ -71,6 +71,7 @@ class QuestionResponse(BaseModel):
     sources: List[Dict[str, Any]] = []
     query_type: Optional[str] = None
     error: Optional[Dict[str, Any]] = None
+    fallback_reason: Optional[str] = None
 
 
 class HealthResponse(BaseModel):
@@ -339,7 +340,8 @@ async def ask_question_endpoint(request: QuestionRequest):
             answer=result.get("answer", ""),
             sources=result.get("sources", []),
             query_type=result.get("query_type"),
-            error=result.get("error")
+            error=result.get("error"),
+            fallback_reason=result.get("fallback_reason"),
         )
 
     except Exception as e:
@@ -368,6 +370,8 @@ async def ask_question_stream_endpoint(request: QuestionRequest):
             ):
                 if event["type"] == "token":
                     yield f"event: token\ndata: {json.dumps({'content': event['content']})}\n\n"
+                elif event["type"] == "fallback":
+                    yield f"event: fallback\ndata: {json.dumps({'reason': event['reason']})}\n\n"
                 elif event["type"] == "sources":
                     yield f"event: sources\ndata: {json.dumps({'sources': event['sources']})}\n\n"
             yield "event: done\ndata: {}\n\n"
@@ -425,7 +429,8 @@ async def search_endpoint(
             answer=result.get("answer", ""),
             sources=result.get("sources", []),
             query_type=result.get("query_type"),
-            error=result.get("error")
+            error=result.get("error"),
+            fallback_reason=result.get("fallback_reason"),
         )
 
     except Exception as e:

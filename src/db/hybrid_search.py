@@ -46,6 +46,38 @@ def verify_files():
 verify_files()
 
 
+_LLM_MIN_ANSWER_LENGTH = 150  # Minimum chars for an LLM answer to be considered valid
+
+
+def _llm_fallback_answer(question: str, merged_docs, history):
+    """Try cache then extractive fallback when LLM answer is insufficient.
+
+    Called when the LLM returns an empty or too-short answer (rate limit,
+    server error, timeout). Tries the response cache first (even in
+    history mode — a stale LLM answer is better than extractive), then
+    falls back to keyword-based extractive answer.
+
+    Returns:
+        (answer, fallback_reason): answer string and reason tag for the
+        response metadata ("cached_response" or "extractive").
+    """
+    # Try cache — this helps in history mode where cache was skipped at the top
+    cached = _response_cache.get(question)
+    if cached and cached.get("answer") and len(cached["answer"]) >= _LLM_MIN_ANSWER_LENGTH:
+        logger.info("[FALLBACK] Using cached response (LLM unavailable)")
+        return cached["answer"], "cached_response"
+
+    # Fall back to extractive
+    logger.info("[FALLBACK] Using extractive answer (LLM unavailable)")
+    facts = extract_key_facts(merged_docs, question)
+    answer = generate_extractive_answer(facts, question)
+
+    if not answer or len(answer) < 50:
+        answer = "கேள்விக்கான தகவல்கள் ஆதாரங்களில் உள்ளன."
+
+    return answer, "extractive"
+
+
 def truncate_query(question: str, max_length: int = MAX_QUERY_LENGTH) -> str:
     """Normalize Unicode to NFC and truncate to max_length at a word boundary.
 
@@ -232,6 +264,7 @@ def ask_question(question: str, return_formatted: bool = False, use_llm: bool = 
             csv_context = "\n".join([f"{idx}. {row}" for idx, row in enumerate(csv_results, 1)])
 
         answer = ""
+        fallback_reason = None
         if use_llm:
             gemini_health = check_gemini_health()
             if not gemini_health["healthy"]:
@@ -245,19 +278,16 @@ def ask_question(question: str, return_formatted: bool = False, use_llm: bool = 
                 )
                 logger.info(f"[TIMING] gemini_llm: {time.time() - t0:.2f}s")
 
-        if not answer or len(answer) < 150:
-            logger.warning("LLM failed, using extractive answer")
-            facts = extract_key_facts(merged_docs, question)
-            logger.info(f"Extracted {len(facts)} facts")
-            answer = generate_extractive_answer(facts, question)
-
-        if not answer or len(answer) < 50:
-            answer = "கேள்விக்கான தகவல்கள் ஆதாரங்களில் உள்ளன."
+        if not answer or len(answer) < _LLM_MIN_ANSWER_LENGTH:
+            logger.warning("LLM answer insufficient, trying fallback")
+            answer, fallback_reason = _llm_fallback_answer(question, merged_docs, history)
 
         sources = format_sources(merged_docs)
         logger.info(f"[TIMING] TOTAL ask_question: {time.time() - t_start:.2f}s | {len(sources)} sources")
 
         result = {"answer": answer, "sources": sources}
+        if fallback_reason:
+            result["fallback_reason"] = fallback_reason
         if not history:
             _response_cache.put(question, result)
 
@@ -412,6 +442,7 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
             csv_context = "\n".join([f"{idx}. {row}" for idx, row in enumerate(csv_results, 1)])
 
         answer = ""
+        fallback_reason = None
         if use_llm:
             gemini_health = await asyncio.to_thread(check_gemini_health)
             if not gemini_health["healthy"]:
@@ -425,18 +456,16 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
                 )
                 logger.info(f"[TIMING] async gemini_llm: {time.time() - t0:.2f}s")
 
-        if not answer or len(answer) < 100:
-            logger.warning("LLM failed, using extractive answer")
-            facts = extract_key_facts(merged_docs, question)
-            answer = generate_extractive_answer(facts, question)
-
-        if not answer or len(answer) < 50:
-            answer = "கேள்விக்கான தகவல்கள் ஆதாரங்களில் உள்ளன."
+        if not answer or len(answer) < _LLM_MIN_ANSWER_LENGTH:
+            logger.warning("LLM answer insufficient (async), trying fallback")
+            answer, fallback_reason = _llm_fallback_answer(question, merged_docs, history)
 
         sources = format_sources(merged_docs)
         logger.info(f"[TIMING] TOTAL ask_question_async: {time.time() - t_start:.2f}s | {len(sources)} sources")
 
         result = {"answer": answer, "sources": sources}
+        if fallback_reason:
+            result["fallback_reason"] = fallback_reason
         if not history:
             _response_cache.put(question, result)
 
@@ -600,16 +629,18 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
             accumulated_tokens.append(token)
             yield {"type": "token", "content": token}
 
-        # If streaming produced too few tokens, fall back to extractive
+        # If streaming produced too few tokens, try cache then extractive
+        fallback_reason = None
         if token_count < 10:
-            logger.warning("Streaming produced too few tokens, using extractive fallback")
-            facts = extract_key_facts(merged_docs, question)
-            answer = generate_extractive_answer(facts, question)
-            if answer:
-                accumulated_tokens = [answer]
-                yield {"type": "token", "content": answer}
+            logger.warning("Streaming produced too few tokens, trying fallback")
+            answer, fallback_reason = _llm_fallback_answer(question, merged_docs, history)
+            accumulated_tokens = [answer]
+            yield {"type": "token", "content": answer}
 
         sources = format_sources(merged_docs)
+
+        if fallback_reason:
+            yield {"type": "fallback", "reason": fallback_reason}
 
         # --- CACHE STORE (skip when conversation history is present) ---
         full_answer = "".join(accumulated_tokens)

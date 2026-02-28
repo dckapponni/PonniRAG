@@ -13,7 +13,7 @@ from typing import List, Dict
 from google import genai
 from google.genai import types as genai_types
 from guardrails import ANTI_INJECTION_PREAMBLE, sanitize_output
-from retry import with_gemini_retry, with_gemini_retry_async
+from retry import with_gemini_retry, with_gemini_retry_async, is_retryable_gemini
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +228,26 @@ def check_gemini_health(ttl: int = _GEMINI_HEALTH_TTL) -> Dict:
     return result
 
 
+def _mark_gemini_unhealthy(error_msg: str):
+    """Mark Gemini unhealthy in the health cache after a transient LLM failure.
+
+    Called when generate_llm_answer exhausts all retries on a retryable error
+    (429, 5xx, timeout). This prevents subsequent requests from wasting time
+    retrying during the same outage window — they'll see unhealthy status and
+    skip straight to fallback. The TTL (60s) ensures recovery is automatic.
+    """
+    with _gemini_health_lock:
+        _gemini_health_cache["result"] = {
+            "healthy": False,
+            "error": "transient_failure",
+            "message": f"Gemini call failed after retries: {error_msg}",
+            "model": GEMINI_MODEL,
+            "latency_ms": None,
+        }
+        _gemini_health_cache["timestamp"] = time.time()
+    logger.warning("Gemini health cache poisoned due to transient failure")
+
+
 def _gemini_generation_config(
     system_instruction: str = None,
     disable_thinking: bool = False,
@@ -411,6 +431,8 @@ def generate_llm_answer(
 
     except Exception as e:
         logger.error(f"Gemini generation failed: {e}", exc_info=True)
+        if is_retryable_gemini(e):
+            _mark_gemini_unhealthy(str(e))
         return ""
 
 
@@ -460,6 +482,8 @@ async def generate_llm_answer_async(
 
     except Exception as e:
         logger.error(f"Gemini async generation failed: {e}", exc_info=True)
+        if is_retryable_gemini(e):
+            _mark_gemini_unhealthy(str(e))
         return ""
 
 
@@ -497,6 +521,8 @@ def generate_llm_answer_stream(
 
     except Exception as e:
         logger.error(f"Gemini streaming generation failed: {e}", exc_info=True)
+        if is_retryable_gemini(e):
+            _mark_gemini_unhealthy(str(e))
         return
 
 
