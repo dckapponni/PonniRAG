@@ -245,12 +245,12 @@ html, body {
   font-family: 'Lora', 'Noto Serif Tamil', Georgia, serif;
   font-size: 3rem;
   font-weight: 700;
-  margin-bottom: 0.75rem;
+  margin-bottom: 1.25rem;
   background: linear-gradient(135deg, #0f2057, #1e3a8a, #2563eb);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
-  line-height: 1.25;
+  line-height: 1.35;
   letter-spacing: -0.02em;
 }
 
