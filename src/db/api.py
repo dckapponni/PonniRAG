@@ -487,7 +487,13 @@ async def list_tags():
 
     except Exception as e:
         logger.error(f"Error listing tags: {e}")
-        raise HTTPException(status_code=500, detail="An internal error occurred. Please try again.")
+        # Return taxonomy with zero counts instead of 500 error —
+        # lets the dropdown populate even if Qdrant is unavailable.
+        tags_list = [
+            TagInfo(id=cat_id, tamil=cat_info["tamil"], english=cat_info["english"], count=0)
+            for cat_id, cat_info in TAXONOMY.items()
+        ]
+        return TagsResponse(success=True, tags=tags_list)
 
 
 @app.get("/api/tags/{tag_id}/articles", response_model=TagArticlesResponse, tags=["Tags"])
