@@ -116,7 +116,7 @@ TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இத�
 - "சூழலின் படி", "ஆதாரத்தின் படி" போன்ற சொற்களை பயன்படுத்த வேண்டாம்
 - வாசிப்பவரின் கண்களுக்கு சோர்வு வராத வகையில் பதிலை அமைக்க வேண்டும்
 
-இப்போது, கீழே கொடுக்கப்பட்ட கேள்வி மற்றும் சூழலின் அடிப்படையில், மேலுள்ள அனைத்து விதிகளையும் கட்டாயமாக பின்பற்றி, தெளிவாகவும் வாசிக்க எளிதாகவும் விரிவான பதிலை எழுதுக.""" + ANTI_INJECTION_PREAMBLE
+இப்போது, கீழே கொடுக்கப்பட்ட கேள்வி மற்றும் சூழலின் அடிப்படையில், மேலுள்ள அனைத்து விதிகளையும் கட்டாயமாக பின்பற்றி, தெளிவாகவும் வாசிக்க எளிதாகவும் விரிவான பதிலை எழுதுக."""
 
 _CSV_SYSTEM_PROMPT = """நீங்கள் பொன்னி இதழ் கட்டுரை தரவுத்தளத்தின் தகவல்களை வைத்து கேள்விகளுக்கு பதிலளிக்கும் தமிழ் உதவியாளர்.
 
@@ -140,7 +140,7 @@ _CSV_SYSTEM_PROMPT = """நீங்கள் பொன்னி இதழ் �
 - பதிலை இயல்பான தமிழ் உரைநடையில் எழுதுக
 - பதில் 30 முதல் 150 சொற்கள் வரை இருக்க வேண்டும்
 - பதிலை ஒரு முடிவு வாக்கியத்துடன் நிறுத்த வேண்டும்
-- தரவில் "Error" அல்லது "கண்டுபிடிக்க முடியவில்லை" இருந்தால், "இல்லை" என்று தெளிவாகக் கூறுக""" + ANTI_INJECTION_PREAMBLE
+- தரவில் "Error" அல்லது "கண்டுபிடிக்க முடியவில்லை" இருந்தால், "இல்லை" என்று தெளிவாகக் கூறுக"""
 
 
 def _truncate_at_sentence_boundary(text: str) -> str:
@@ -253,12 +253,20 @@ def _gemini_generation_config(
     disable_thinking: bool = False,
     max_output_tokens: int = 4096,
 ):
-    """Return Gemini generation config with the given system instruction."""
+    """Return Gemini generation config with the given system instruction.
+
+    Security preamble is prepended so the response-style rules (which come
+    last in TAMIL_ANSWER_SYSTEM_PROMPT / _CSV_SYSTEM_PROMPT) stay closest
+    to the model's attention window, preserving natural Tamil prose style.
+    """
+    prompt = system_instruction or TAMIL_ANSWER_SYSTEM_PROMPT
+    full_instruction = ANTI_INJECTION_PREAMBLE + "\n\n" + prompt
+
     thinking_config = None
     if disable_thinking:
         thinking_config = genai_types.ThinkingConfig(thinking_budget=0)
     return genai_types.GenerateContentConfig(
-        system_instruction=system_instruction or TAMIL_ANSWER_SYSTEM_PROMPT,
+        system_instruction=full_instruction,
         temperature=0.0,
         max_output_tokens=max_output_tokens,
         top_p=0.9,
