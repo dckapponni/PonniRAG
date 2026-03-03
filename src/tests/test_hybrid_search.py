@@ -118,7 +118,7 @@ class TestUtilityFunctions:
             mock_model.return_value.encode.return_value.tolist.return_value = [0.1, 0.2, 0.3]
             result = hs.dense_embed_query("test query")
             assert result == [0.1, 0.2, 0.3]
-            mock_model.return_value.encode.assert_called_once_with("query: test query")
+            mock_model.return_value.encode.assert_called_once_with("query: test query", normalize_embeddings=True)
     
     def test_sparse_embed(self):
         """Test sparse embedding generation."""

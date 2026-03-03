@@ -85,7 +85,7 @@ def get_qdrant_client() -> QdrantClient:
         with _singleton_locks['qdrant_client']:
             if 'qdrant_client' not in _singletons:
                 logger.info(f"Using Qdrant server at {QDRANT_HOST}:{QDRANT_PORT}")
-                client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+                client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, timeout=30)
                 collection_info = client.get_collection(COLLECTION_NAME)
                 logger.info(f"Connected: {collection_info.points_count} points")
                 _singletons['qdrant_client'] = client
@@ -172,10 +172,11 @@ def search_csv_semantic(question: str, top_k: int = 5):
     if not csv_data:
         return []
 
-    query_emb = model.encode(
-        f"query: {question}",
-        normalize_embeddings=True
-    )
+    with _embed_lock:
+        query_emb = model.encode(
+            f"query: {question}",
+            normalize_embeddings=True
+        )
 
     scored = []
     for text, emb in csv_data:
