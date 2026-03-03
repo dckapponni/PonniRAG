@@ -859,22 +859,9 @@ async def get_issue_articles(volume_id: int, issue_id: int):
             ]
             logger.info(f"After client-side doc_id filter: {len(all_points)}")
 
-        # Collect and sort unique doc_issue values
-        all_issue_vals = set()
-        for p in all_points:
-            meta = (p.payload or {}).get("metadata", {})
-            raw_val = meta.get("doc_issue")
-            val = str(raw_val).strip() if raw_val is not None else "NA"
-            all_issue_vals.add(val)
-        sorted_issues = sorted(
-            [v for v in all_issue_vals if v not in ("NA", "None", "")],
-            key=lambda x: int(x) if x.isdigit() else float("inf"),
-        )
-
-        # Position-based mapping: sidebar position (1-based) → actual doc_issue
-        issue_position_map = {i + 1: v for i, v in enumerate(sorted_issues)}
-        target_issue = issue_position_map.get(issue_id, str(issue_id))
-        logger.info(f"Issue mapping: position {issue_id} → doc_issue '{target_issue}'")
+        # Use issue_id directly as the doc_issue value (actual issue number, not position)
+        target_issue = str(issue_id)
+        logger.info(f"Filtering by doc_issue='{target_issue}'")
 
         # Filter and deduplicate
         seen = set()

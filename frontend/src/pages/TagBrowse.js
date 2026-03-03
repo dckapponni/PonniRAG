@@ -104,10 +104,10 @@ const TagBrowse = ({ language }) => {
     return true;
   });
 
-  // Get cover image path for an issue
-  const getIssueCoverPath = (volumeId, issueIdx) => {
+  // Get cover image path for an issue by its actual issue_num
+  const getIssueCoverPath = (volumeId, issueNum) => {
     const issues = VOLUME_IMAGES[volumeId] || [];
-    const issue = issues[issueIdx - 1];
+    const issue = issues.find((i) => i.issue_num === issueNum);
     if (!issue) return null;
     return `/images/volume${volumeId}-covers/${issue.filename}`;
   };
@@ -368,19 +368,18 @@ const TagBrowse = ({ language }) => {
 
                 {isExpanded && (
                   <div className="tags-issue-list">
-                    {issues.map((issue, idx) => {
-                      const issueIdx = idx + 1;
+                    {issues.map((issue) => {
                       const isActive =
                         selectedIssue &&
                         selectedIssue.volumeId === volume.id &&
-                        selectedIssue.issueIdx === issueIdx;
+                        selectedIssue.issueIdx === issue.issue_num;
                       const imgPath = `/images/volume${volume.id}-covers/${issue.filename}`;
 
                       return (
                         <div
                           key={issue.issue_num}
                           className={`tags-issue-item ${isActive ? 'active' : ''}`}
-                          onClick={() => handleSelectIssue(volume.id, issueIdx)}
+                          onClick={() => handleSelectIssue(volume.id, issue.issue_num)}
                         >
                           <img
                             className="tags-issue-thumb"
