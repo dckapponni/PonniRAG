@@ -11,8 +11,11 @@ Handles:
 import hashlib
 import json
 import logging
+import os
 import tempfile
 from datetime import datetime, timezone
+
+import httpx
 
 from src.config.config import (
     EMBEDDING_MODEL,
@@ -20,6 +23,8 @@ from src.config.config import (
     CHUNK_SIZE,
     SNAPSHOT_S3_PREFIX,
     COLLECTION_NAME,
+    QDRANT_HOST,
+    QDRANT_PORT,
 )
 
 logger = logging.getLogger(__name__)
@@ -121,20 +126,19 @@ def save_snapshot_to_s3(qdrant_client, s3_client, bucket: str, collection_name: 
 
     logger.info(f"Snapshot created: {snapshot_name}")
 
-    with tempfile.NamedTemporaryFile(suffix=".snapshot", delete=True) as tmp:
+    with tempfile.NamedTemporaryFile(suffix=".snapshot", delete=False) as tmp:
         tmp_path = tmp.name
 
-    # Download snapshot from Qdrant to local temp file
-    snapshot_bytes = qdrant_client.get_snapshot(
-        collection_name=collection_name,
-        snapshot_name=snapshot_name,
+    # Download snapshot via Qdrant REST API (get_snapshot was removed in qdrant-client 1.12+)
+    download_url = (
+        f"http://{QDRANT_HOST}:{QDRANT_PORT}"
+        f"/collections/{collection_name}/snapshots/{snapshot_name}"
     )
-
-    with open(tmp_path, "wb") as f:
-        if isinstance(snapshot_bytes, bytes):
-            f.write(snapshot_bytes)
-        else:
-            for chunk in snapshot_bytes:
+    logger.info(f"Downloading snapshot from {download_url}...")
+    with httpx.stream("GET", download_url, timeout=300) as response:
+        response.raise_for_status()
+        with open(tmp_path, "wb") as f:
+            for chunk in response.iter_bytes(chunk_size=8192):
                 f.write(chunk)
 
     s3_key = f"{SNAPSHOT_S3_PREFIX}{snapshot_name}"
@@ -143,8 +147,6 @@ def save_snapshot_to_s3(qdrant_client, s3_client, bucket: str, collection_name: 
     s3_client.upload_file(tmp_path, bucket, s3_key)
     logger.info(f"Snapshot uploaded to s3://{bucket}/{s3_key}")
 
-    # Clean up temp file
-    import os
     try:
         os.unlink(tmp_path)
     except OSError:
@@ -193,7 +195,6 @@ def restore_snapshot_from_s3(qdrant_client, s3_client, bucket: str, collection_n
         logger.error(f"Failed to restore snapshot: {e}")
         return False
     finally:
-        import os
         try:
             os.unlink(tmp_path)
         except OSError:

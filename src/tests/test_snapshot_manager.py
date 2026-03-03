@@ -208,7 +208,8 @@ class TestNeedsReindex:
 
 class TestSaveSnapshotToS3:
     @mock_aws
-    def test_save_snapshot(self):
+    @patch("db.snapshot_manager.httpx")
+    def test_save_snapshot(self, mock_httpx):
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket=BUCKET)
 
@@ -216,20 +217,28 @@ class TestSaveSnapshotToS3:
         mock_snapshot_info = Mock()
         mock_snapshot_info.name = "test-collection-2026-02-27.snapshot"
         mock_qdrant.create_snapshot.return_value = mock_snapshot_info
-        mock_qdrant.get_snapshot.return_value = b"fake_snapshot_data"
+
+        # Mock httpx.stream context manager to write snapshot data to the temp file
+        mock_response = MagicMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.iter_bytes.return_value = [b"fake_snapshot_data"]
+        mock_httpx.stream.return_value.__enter__ = Mock(return_value=mock_response)
+        mock_httpx.stream.return_value.__exit__ = Mock(return_value=False)
 
         key = save_snapshot_to_s3(mock_qdrant, s3, BUCKET, "test-collection")
 
         assert key == f"{SNAPSHOT_PREFIX}test-collection-2026-02-27.snapshot"
         mock_qdrant.create_snapshot.assert_called_once_with(collection_name="test-collection")
+        mock_httpx.stream.assert_called_once()
 
         # Verify the snapshot was uploaded to S3
         obj = s3.get_object(Bucket=BUCKET, Key=key)
         assert obj["Body"].read() == b"fake_snapshot_data"
 
     @mock_aws
-    def test_save_snapshot_streaming(self):
-        """Test that streaming snapshot data (iterator) is handled."""
+    @patch("db.snapshot_manager.httpx")
+    def test_save_snapshot_streaming(self, mock_httpx):
+        """Test that chunked streaming download is handled correctly."""
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket=BUCKET)
 
@@ -237,8 +246,13 @@ class TestSaveSnapshotToS3:
         mock_snapshot_info = Mock()
         mock_snapshot_info.name = "streaming.snapshot"
         mock_qdrant.create_snapshot.return_value = mock_snapshot_info
-        # Return an iterator instead of bytes
-        mock_qdrant.get_snapshot.return_value = iter([b"chunk1", b"chunk2"])
+
+        # Mock httpx.stream to return multiple chunks
+        mock_response = MagicMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.iter_bytes.return_value = [b"chunk1", b"chunk2"]
+        mock_httpx.stream.return_value.__enter__ = Mock(return_value=mock_response)
+        mock_httpx.stream.return_value.__exit__ = Mock(return_value=False)
 
         key = save_snapshot_to_s3(mock_qdrant, s3, BUCKET, "test-collection")
 
