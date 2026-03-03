@@ -85,6 +85,44 @@ def _llm_fallback_answer(question: str, merged_docs, history, language: str = "t
     return answer, "extractive"
 
 
+import re as _re
+
+# Patterns indicating the LLM answer says "data not available / not indexed".
+# When detected, sources should be suppressed because they are partial keyword
+# matches that don't actually answer the user's question.
+_NO_DATA_PATTERNS = [
+    # Tamil
+    _re.compile(r"தகவல்\s*(கள்\s*)?கிடைக்கவில்லை"),
+    _re.compile(r"தகவல்\s*(கள்\s*)?இல்லை"),
+    _re.compile(r"தரவுத்தளத்தில்\s*(தற்போது\s*)?இல்லை"),
+    _re.compile(r"பதிவு\s*செய்யப்படவில்லை"),
+    _re.compile(r"இன்னும்\s*(பதிவு|குறியீடு|நுழைவு)"),
+    _re.compile(r"(indexed|index)\s*செய்யப்படவில்லை"),
+    _re.compile(r"குறிப்பிட்ட\s*(இதழ்|தொகுதி|கட்டுரை).*இல்லை"),
+    _re.compile(r"(இந்த|குறிப்பிட்ட).*தரவு.*இல்லை"),
+    # English
+    _re.compile(r"not\s+(yet\s+)?(been\s+)?indexed", _re.I),
+    _re.compile(r"data\s+is\s+not\s+(currently\s+)?available", _re.I),
+    _re.compile(r"no\s+(relevant\s+)?information\s+(is\s+)?(available|found)", _re.I),
+    _re.compile(r"not\s+(currently\s+)?(available|present)\s+in\s+(the\s+)?(database|archive|collection)", _re.I),
+    _re.compile(r"has\s+not\s+(yet\s+)?been\s+(digitized|processed|extracted|added)", _re.I),
+    _re.compile(r"(this|the)\s+(specific\s+)?(issue|volume|article|data)\s+(is\s+)?not\s+(available|found|indexed)", _re.I),
+    _re.compile(r"no\s+data\s+(is\s+)?(available|found)", _re.I),
+    _re.compile(r"does\s+not\s+(currently\s+)?contain", _re.I),
+]
+
+
+def _answer_indicates_no_data(answer: str) -> bool:
+    """Check if the LLM answer indicates the requested data is not available."""
+    if not answer:
+        return False
+    for pattern in _NO_DATA_PATTERNS:
+        if pattern.search(answer):
+            logger.info(f"[NO_DATA] Answer matches no-data pattern: {pattern.pattern}")
+            return True
+    return False
+
+
 def truncate_query(question: str, max_length: int = MAX_QUERY_LENGTH) -> str:
     """Normalize Unicode to NFC and truncate to max_length at a word boundary.
 
@@ -292,6 +330,12 @@ def ask_question(question: str, return_formatted: bool = False, use_llm: bool = 
             answer, fallback_reason = _llm_fallback_answer(question, merged_docs, history, language)
 
         sources = format_sources(merged_docs)
+
+        # Suppress sources when the answer indicates the data is not available
+        if _answer_indicates_no_data(answer):
+            logger.info("[NO_DATA] Suppressing sources — answer indicates data not available")
+            sources = []
+
         logger.info(f"[TIMING] TOTAL ask_question: {time.time() - t_start:.2f}s | {len(sources)} sources")
 
         result = {"answer": answer, "sources": sources}
@@ -472,6 +516,12 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
             answer, fallback_reason = _llm_fallback_answer(question, merged_docs, history, language)
 
         sources = format_sources(merged_docs)
+
+        # Suppress sources when the answer indicates the data is not available
+        if _answer_indicates_no_data(answer):
+            logger.info("[NO_DATA] Suppressing sources — answer indicates data not available (async)")
+            sources = []
+
         logger.info(f"[TIMING] TOTAL ask_question_async: {time.time() - t_start:.2f}s | {len(sources)} sources")
 
         result = {"answer": answer, "sources": sources}
@@ -665,6 +715,12 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
         # --- CACHE STORE (skip when conversation history is present) ---
         full_answer = "".join(accumulated_tokens)
         full_answer = sanitize_output(full_answer)
+
+        # Suppress sources when the answer indicates the data is not available
+        if _answer_indicates_no_data(full_answer):
+            logger.info("[NO_DATA] Suppressing sources — answer indicates data not available (stream)")
+            sources = []
+
         if not history and full_answer and len(full_answer) >= 50:
             _response_cache.put(question, {"answer": full_answer, "sources": sources})
         # --- END CACHE STORE ---
