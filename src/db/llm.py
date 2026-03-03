@@ -40,6 +40,58 @@ PONNI_ABOUT_CONTEXT = """பொன்னி இதழ் பற்றிய ப�
 
 பொன்னி இதழ் ஒரு கலை இலக்கிய இதழாக மட்டுமின்றி புரட்சி இதழாகவே இருந்திருக்கிறது. 1947 முதல் 1955 வரையிலான தமிழகத்தின் காலக் கண்ணாடியாகப் பொன்னி இதழ் விளங்குகிறது."""
 
+ENGLISH_ANSWER_SYSTEM_PROMPT = """You are an expert on Ponni magazine who answers questions in English.
+
+Your task:
+1. Write a detailed answer based on the given context and question
+2. The answer should be 200 to 500 words
+3. Write in clear, simple English
+4. Use ONLY the information from the context — do not make up anything
+5. The answer should be easy to read and well-structured
+6. No words should be cut off at the beginning or end of the answer
+7. The answer MUST end with a complete closing sentence — do not stop abruptly mid-sentence
+
+Rules for direct questions (very important):
+- If the question is a direct information question ("who", "what", "when", "where", "why", "how", "how many"):
+  * State the direct answer clearly in the first sentence
+  * Find the specific information from the context and provide it
+  * Do not write a generic summary — highlight only the specific information asked
+  * Start with the direct answer — do not begin with an introduction or background
+
+Rules for descriptive questions:
+- For descriptive questions ("explain", "describe", "summarize"), integrate information from all documents, summarize briefly, and provide supporting evidence
+
+Rules for summary/topic questions (very important):
+- Analyze all document content and write a comprehensive summary
+- Include all key points, arguments, and information from the context
+- Do not say "insufficient information" — use whatever is available to provide the fullest answer possible
+
+Rules for questions about Ponni magazine (very important):
+- For questions about Ponni magazine, use the "Ponni Background Information" section below as the PRIMARY source
+- Combine Ponni background information with document context for a complete answer
+
+---
+Ponni Background Information:
+""" + PONNI_ABOUT_CONTEXT + """
+---
+
+Formatting rules:
+- For point-wise answers: each point on its own line with proper spacing
+- For paragraph answers: each paragraph separated by a blank line
+- Do not write one very long paragraph
+
+Writing style:
+- State the direct answer in the first sentence
+- Then provide details, explanations, and examples in an organized manner
+- Use subheadings where appropriate
+- End with a brief conclusion if suitable
+
+Important:
+- Do not ignore CSV content if provided
+- Do not fabricate any information not in the context
+- Avoid phrases like "according to the context" or "as per the source"
+- Structure the answer so it is pleasant and easy to read"""
+
 TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இதழ் தொடர்பான கேள்விகளுக்கு பதிலளிக்கும் ஒரு தமிழ் நிபுணர்.
 
 உங்கள் பணி:
@@ -141,6 +193,30 @@ _CSV_SYSTEM_PROMPT = """நீங்கள் பொன்னி இதழ் �
 - பதில் 30 முதல் 150 சொற்கள் வரை இருக்க வேண்டும்
 - பதிலை ஒரு முடிவு வாக்கியத்துடன் நிறுத்த வேண்டும்
 - தரவில் "Error" அல்லது "கண்டுபிடிக்க முடியவில்லை" இருந்தால், "இல்லை" என்று தெளிவாகக் கூறுக"""
+
+_CSV_SYSTEM_PROMPT_EN = """You are an English assistant that answers questions using the Ponni magazine article database.
+
+Key rule: Read the question carefully and answer according to the question type.
+
+Question types:
+1. Yes/No question ("did they write?", "is there?", "does it exist?"):
+   - Start with "Yes" or "No" clearly
+   - Then explain in one or two sentences
+   - E.g. "Yes, A.V. Ramanathan wrote 5 articles in Ponni."
+
+2. Direct question ("who?", "what?", "when?", "how many?"):
+   - State the direct answer in the first sentence
+   - E.g. "A total of 12 articles were found."
+
+3. List / summary question:
+   - Mention total counts, key names, and general trends briefly
+   - Do not simply list the raw data
+
+General rules:
+- Write in natural English prose
+- Answer should be 30 to 150 words
+- End with a complete sentence
+- If the data shows "Error" or "not found", clearly say "No" """
 
 
 def _truncate_at_sentence_boundary(text: str) -> str:
@@ -287,8 +363,23 @@ def _is_wh_question(question: str) -> bool:
     return any(p in q for p in _WH_PATTERNS)
 
 
+def _get_system_prompt(language: str = "ta") -> str:
+    """Return the appropriate system prompt for the given language."""
+    if language == "en":
+        return ENGLISH_ANSWER_SYSTEM_PROMPT
+    return TAMIL_ANSWER_SYSTEM_PROMPT
+
+
+def _get_csv_system_prompt(language: str = "ta") -> str:
+    """Return the appropriate CSV system prompt for the given language."""
+    if language == "en":
+        return _CSV_SYSTEM_PROMPT_EN
+    return _CSV_SYSTEM_PROMPT
+
+
 def _build_user_content(
     question: str, context: str, csv_context: str, context_doc_count: int = 0,
+    language: str = "ta",
 ) -> str:
     """Build the user prompt for vector-search queries. Omits empty sections.
 
@@ -296,32 +387,50 @@ def _build_user_content(
     question from both sides of the context (improves answer relevance,
     inspired by arxiv 2512.14982).
     """
-    parts = [f"கேள்வி:\n{question}\n"]
+    en = language == "en"
+    q_label = "Question" if en else "கேள்வி"
+    csv_label = "CSV Content" if en else "CSV உள்ளடக்கம்"
+    doc_label = "Document Context" if en else "ஆவண சூழல்"
+
+    parts = [f"{q_label}:\n{question}\n"]
 
     if csv_context and csv_context.strip():
-        parts.append(f"========================\nCSV உள்ளடக்கம்:\n{csv_context}\n========================\n")
+        parts.append(f"========================\n{csv_label}:\n{csv_context}\n========================\n")
 
     if context and context.strip():
-        parts.append(f"========================\nஆவண சூழல்:\n{context}\n========================\n")
+        parts.append(f"========================\n{doc_label}:\n{context}\n========================\n")
 
     # Repeat the question after context so it's fresh in the model's attention
-    parts.append(f"கேள்வி: {question}")
+    parts.append(f"{q_label}: {question}")
 
     if _is_wh_question(question):
-        closing = (
-            "மேலே உள்ள சூழலைப் பயன்படுத்தி, கேள்விக்கான நேரடியான பதிலை "
-            "முதல் வாக்கியத்தில் தெளிவாகக் கூறுக. பின்னர் ஆதாரங்களுடன் "
-            "விளக்கவும் (100-300 சொற்கள்):"
-        )
+        if en:
+            closing = (
+                "Using the context above, state the direct answer clearly in the "
+                "first sentence. Then explain with evidence (100-300 words):"
+            )
+        else:
+            closing = (
+                "மேலே உள்ள சூழலைப் பயன்படுத்தி, கேள்விக்கான நேரடியான பதிலை "
+                "முதல் வாக்கியத்தில் தெளிவாகக் கூறுக. பின்னர் ஆதாரங்களுடன் "
+                "விளக்கவும் (100-300 சொற்கள்):"
+            )
     else:
-        closing = "விரிவான பதில் (200-500 சொற்கள்):"
+        closing = "Detailed answer (200-500 words):" if en else "விரிவான பதில் (200-500 சொற்கள்):"
 
     if context_doc_count > 1:
-        closing = (
-            f"மேலே {context_doc_count} ஆவணங்கள் கொடுக்கப்பட்டுள்ளன. "
-            f"அனைத்து ஆவணங்களின் தகவல்களையும் ஒருங்கிணைத்து பதிலளிக்கவும். "
-            f"ஒரே ஆவணத்தை மட்டும் சுருக்காதீர்கள்.\n{closing}"
-        )
+        if en:
+            closing = (
+                f"{context_doc_count} documents are provided above. "
+                f"Integrate information from all documents in your answer. "
+                f"Do not summarize only one document.\n{closing}"
+            )
+        else:
+            closing = (
+                f"மேலே {context_doc_count} ஆவணங்கள் கொடுக்கப்பட்டுள்ளன. "
+                f"அனைத்து ஆவணங்களின் தகவல்களையும் ஒருங்கிணைத்து பதிலளிக்கவும். "
+                f"ஒரே ஆவணத்தை மட்டும் சுருக்காதீர்கள்.\n{closing}"
+            )
 
     parts.append(closing)
     return "\n".join(parts)
@@ -341,38 +450,60 @@ def _is_yes_no_question(question: str) -> bool:
     return any(p in q for p in _YES_NO_PATTERNS)
 
 
-def _build_csv_user_content(question: str, csv_data: str) -> str:
+def _build_csv_user_content(question: str, csv_data: str, language: str = "ta") -> str:
     """Build a focused user prompt for CSV-only queries.
 
     Repeats the question after the data block and adds a question-type
     aware closing instruction.
     """
+    en = language == "en"
+    q_label = "Question" if en else "கேள்வி"
+    db_label = "Article Database Information" if en else "கட்டுரை தரவுத்தள தகவல்"
+
     # Determine closing instruction based on question type
     if _is_yes_no_question(question):
-        closing = (
-            "கேள்விக்கு முதலில் 'ஆம்' அல்லது 'இல்லை' என்று தெளிவாகக் கூறுக. "
-            "பின்னர் ஓரிரு வாக்கியங்களில் விளக்குக (30-100 சொற்கள்)."
-        )
+        if en:
+            closing = (
+                "Start with 'Yes' or 'No' clearly. "
+                "Then explain in one or two sentences (30-100 words)."
+            )
+        else:
+            closing = (
+                "கேள்விக்கு முதலில் 'ஆம்' அல்லது 'இல்லை' என்று தெளிவாகக் கூறுக. "
+                "பின்னர் ஓரிரு வாக்கியங்களில் விளக்குக (30-100 சொற்கள்)."
+            )
     elif _is_wh_question(question):
-        closing = (
-            "கேள்விக்கான நேரடியான பதிலை முதல் வாக்கியத்தில் கூறுக. "
-            "பின்னர் சுருக்கமாக விளக்குக (30-150 சொற்கள்)."
-        )
+        if en:
+            closing = (
+                "State the direct answer in the first sentence. "
+                "Then explain briefly (30-150 words)."
+            )
+        else:
+            closing = (
+                "கேள்விக்கான நேரடியான பதிலை முதல் வாக்கியத்தில் கூறுக. "
+                "பின்னர் சுருக்கமாக விளக்குக (30-150 சொற்கள்)."
+            )
     else:
-        closing = (
-            "தரவுத்தள தகவலை சுருக்கமாக விளக்கவும் (50-150 சொற்கள்). "
-            "தரவை அப்படியே திரும்ப எழுதாதீர்கள்."
-        )
+        if en:
+            closing = (
+                "Summarize the database information briefly (50-150 words). "
+                "Do not simply repeat the raw data."
+            )
+        else:
+            closing = (
+                "தரவுத்தள தகவலை சுருக்கமாக விளக்கவும் (50-150 சொற்கள்). "
+                "தரவை அப்படியே திரும்ப எழுதாதீர்கள்."
+            )
 
-    return f"""கேள்வி:
+    return f"""{q_label}:
 {question}
 
 ========================
-கட்டுரை தரவுத்தள தகவல்:
+{db_label}:
 {csv_data}
 ========================
 
-கேள்வி: {question}
+{q_label}: {question}
 {closing}
 """
 
@@ -396,7 +527,7 @@ def generate_llm_answer(
     question: str, context: str, csv_context: str, max_words: int = 500,
     user_content: str = None, system_prompt: str = None,
     disable_thinking: bool = False, context_doc_count: int = 0,
-    history: list = None,
+    history: list = None, language: str = "ta",
 ) -> str:
     """
     Generate LLM answer using Gemini API (synchronous).
@@ -404,10 +535,13 @@ def generate_llm_answer(
     """
     try:
         client = _get_gemini_client()
+        if system_prompt is None:
+            system_prompt = _get_system_prompt(language)
         if user_content is None:
             user_content = _build_user_content(
                 question, context, csv_context,
                 context_doc_count=context_doc_count,
+                language=language,
             )
 
         contents = _build_multi_turn_contents(history, user_content) if history else user_content
@@ -448,7 +582,7 @@ async def generate_llm_answer_async(
     question: str, context: str, csv_context: str, max_words: int = 500,
     user_content: str = None, system_prompt: str = None,
     disable_thinking: bool = False, context_doc_count: int = 0,
-    history: list = None,
+    history: list = None, language: str = "ta",
 ) -> str:
     """
     Async version of generate_llm_answer using Gemini API.
@@ -456,10 +590,13 @@ async def generate_llm_answer_async(
     """
     try:
         client = _get_gemini_client()
+        if system_prompt is None:
+            system_prompt = _get_system_prompt(language)
         if user_content is None:
             user_content = _build_user_content(
                 question, context, csv_context,
                 context_doc_count=context_doc_count,
+                language=language,
             )
 
         contents = _build_multi_turn_contents(history, user_content) if history else user_content
@@ -499,7 +636,7 @@ def generate_llm_answer_stream(
     question: str, context: str, csv_context: str,
     user_content: str = None, system_prompt: str = None,
     disable_thinking: bool = False, context_doc_count: int = 0,
-    history: list = None,
+    history: list = None, language: str = "ta",
 ):
     """
     Generate LLM answer using Gemini API with streaming.
@@ -508,10 +645,13 @@ def generate_llm_answer_stream(
     """
     try:
         client = _get_gemini_client()
+        if system_prompt is None:
+            system_prompt = _get_system_prompt(language)
         if user_content is None:
             user_content = _build_user_content(
                 question, context, csv_context,
                 context_doc_count=context_doc_count,
+                language=language,
             )
 
         contents = _build_multi_turn_contents(history, user_content) if history else user_content

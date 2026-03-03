@@ -49,7 +49,12 @@ verify_files()
 _LLM_MIN_ANSWER_LENGTH = 150  # Minimum chars for an LLM answer to be considered valid
 
 
-def _llm_fallback_answer(question: str, merged_docs, history):
+def _msg(language: str, ta: str, en: str) -> str:
+    """Return the appropriate message based on language."""
+    return en if language == "en" else ta
+
+
+def _llm_fallback_answer(question: str, merged_docs, history, language: str = "ta"):
     """Try cache then extractive fallback when LLM answer is insufficient.
 
     Called when the LLM returns an empty or too-short answer (rate limit,
@@ -73,7 +78,9 @@ def _llm_fallback_answer(question: str, merged_docs, history):
     answer = generate_extractive_answer(facts, question)
 
     if not answer or len(answer) < 50:
-        answer = "கேள்விக்கான தகவல்கள் ஆதாரங்களில் உள்ளன."
+        answer = _msg(language,
+                      "கேள்விக்கான தகவல்கள் ஆதாரங்களில் உள்ளன.",
+                      "The information for this question is available in the sources.")
 
     return answer, "extractive"
 
@@ -110,7 +117,7 @@ def truncate_query(question: str, max_length: int = MAX_QUERY_LENGTH) -> str:
 # ORCHESTRATOR FUNCTIONS
 # ============================================================================
 
-def ask_question(question: str, return_formatted: bool = False, use_llm: bool = True, filter_tags: List[str] = None, history: List[Dict] = None) -> Dict:
+def ask_question(question: str, return_formatted: bool = False, use_llm: bool = True, filter_tags: List[str] = None, history: List[Dict] = None, language: str = "ta") -> Dict:
     """
     Main question answering function with database health check and hybrid search.
 
@@ -140,7 +147,9 @@ def ask_question(question: str, return_formatted: bool = False, use_llm: bool = 
 
     is_injection, severity = detect_injection(question)
     if is_injection and severity == "high":
-        refusal = "மன்னிக்கவும், இந்தக் கேள்விக்கு பதிலளிக்க இயலவில்லை. பொன்னி இதழ் தொடர்பான கேள்விகளை கேளுங்கள்."
+        refusal = _msg(language,
+                       "மன்னிக்கவும், இந்தக் கேள்விக்கு பதிலளிக்க இயலவில்லை. பொன்னி இதழ் தொடர்பான கேள்விகளை கேளுங்கள்.",
+                       "Sorry, this query cannot be processed. Please ask questions related to Ponni magazine.")
         if return_formatted:
             return refusal
         return {"answer": refusal, "sources": []}
@@ -151,7 +160,7 @@ def ask_question(question: str, return_formatted: bool = False, use_llm: bool = 
 
     if not health_status["healthy"]:
         logger.error(f"Database unhealthy: {health_status}")
-        error_message = SAFE_ERROR_MESSAGE
+        error_message = _msg(language, SAFE_ERROR_MESSAGE, safe_error_message("en"))
         if return_formatted:
             return error_message
         return {
@@ -187,11 +196,11 @@ def ask_question(question: str, return_formatted: bool = False, use_llm: bool = 
                     llm_summary = ""
                 else:
                     t0 = time.time()
-                    csv_content = _build_csv_user_content(question, csv_response)
+                    csv_content = _build_csv_user_content(question, csv_response, language=language)
                     llm_summary = generate_llm_answer(
                         question, context="", csv_context="",
-                        user_content=csv_content, system_prompt=_CSV_SYSTEM_PROMPT,
-                        disable_thinking=True,
+                        user_content=csv_content, system_prompt=_get_csv_system_prompt(language),
+                        disable_thinking=True, language=language,
                     )
                     logger.info(f"[TIMING] gemini_llm (csv): {time.time() - t0:.2f}s")
                     logger.info(f"CSV LLM gist length: {len(llm_summary or '')} chars")
@@ -228,7 +237,7 @@ def ask_question(question: str, return_formatted: bool = False, use_llm: bool = 
         logger.info(f"[TIMING] hybrid_search: {time.time() - t0:.2f}s ({len(results)} results)")
 
         if not results:
-            answer = "மன்னிக்கவும், தகவல்கள் கிடைக்கவில்லை."
+            answer = _msg(language, "மன்னிக்கவும், தகவல்கள் கிடைக்கவில்லை.", "Sorry, no information found.")
             if return_formatted:
                 return format_answer_output(answer, [])
             return {"answer": answer, "sources": []}
@@ -238,7 +247,7 @@ def ask_question(question: str, return_formatted: bool = False, use_llm: bool = 
         logger.info(f"[TIMING] merge_chunks: {time.time() - t0:.2f}s ({len(merged_docs)} docs)")
 
         if not merged_docs:
-            answer = "போதுமான தகவல்கள் இல்லை."
+            answer = _msg(language, "போதுமான தகவல்கள் இல்லை.", "Insufficient information available.")
             if return_formatted:
                 return format_answer_output(answer, [])
             return {"answer": answer, "sources": []}
@@ -274,13 +283,13 @@ def ask_question(question: str, return_formatted: bool = False, use_llm: bool = 
                 answer = generate_llm_answer(
                     question, context, csv_context,
                     context_doc_count=context_doc_count,
-                    history=history,
+                    history=history, language=language,
                 )
                 logger.info(f"[TIMING] gemini_llm: {time.time() - t0:.2f}s")
 
         if not answer or len(answer) < _LLM_MIN_ANSWER_LENGTH:
             logger.warning("LLM answer insufficient, trying fallback")
-            answer, fallback_reason = _llm_fallback_answer(question, merged_docs, history)
+            answer, fallback_reason = _llm_fallback_answer(question, merged_docs, history, language)
 
         sources = format_sources(merged_docs)
         logger.info(f"[TIMING] TOTAL ask_question: {time.time() - t_start:.2f}s | {len(sources)} sources")
@@ -303,7 +312,7 @@ def ask_question(question: str, return_formatted: bool = False, use_llm: bool = 
         return safe_error_response()
 
 
-async def ask_question_async(question: str, return_formatted: bool = False, use_llm: bool = True, filter_tags: List[str] = None, history: List[Dict] = None) -> Dict:
+async def ask_question_async(question: str, return_formatted: bool = False, use_llm: bool = True, filter_tags: List[str] = None, history: List[Dict] = None, language: str = "ta") -> Dict:
     """
     Async version of ask_question for FastAPI concurrent request handling.
 
@@ -316,7 +325,9 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
 
     is_injection, severity = detect_injection(question)
     if is_injection and severity == "high":
-        refusal = "மன்னிக்கவும், இந்தக் கேள்விக்கு பதிலளிக்க இயலவில்லை. பொன்னி இதழ் தொடர்பான கேள்விகளை கேளுங்கள்."
+        refusal = _msg(language,
+                       "மன்னிக்கவும், இந்தக் கேள்விக்கு பதிலளிக்க இயலவில்லை. பொன்னி இதழ் தொடர்பான கேள்விகளை கேளுங்கள்.",
+                       "Sorry, this query cannot be processed. Please ask questions related to Ponni magazine.")
         if return_formatted:
             return refusal
         return {"answer": refusal, "sources": []}
@@ -327,7 +338,7 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
 
     if not health_status["healthy"]:
         logger.error(f"Database unhealthy: {health_status}")
-        error_message = SAFE_ERROR_MESSAGE
+        error_message = _msg(language, SAFE_ERROR_MESSAGE, safe_error_message("en"))
         if return_formatted:
             return error_message
         return {
@@ -364,11 +375,11 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
                     llm_summary = ""
                 else:
                     t0 = time.time()
-                    csv_content = _build_csv_user_content(question, csv_response)
+                    csv_content = _build_csv_user_content(question, csv_response, language=language)
                     llm_summary = await generate_llm_answer_async(
                         question, context="", csv_context="",
-                        user_content=csv_content, system_prompt=_CSV_SYSTEM_PROMPT,
-                        disable_thinking=True,
+                        user_content=csv_content, system_prompt=_get_csv_system_prompt(language),
+                        disable_thinking=True, language=language,
                     )
                     logger.info(f"[TIMING] async gemini_llm (csv): {time.time() - t0:.2f}s")
                     logger.info(f"CSV LLM gist length: {len(llm_summary or '')} chars")
@@ -406,7 +417,7 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
         logger.info(f"[TIMING] async hybrid_search: {time.time() - t0:.2f}s ({len(results)} results)")
 
         if not results:
-            answer = "மன்னிக்கவும், தகவல்கள் கிடைக்கவில்லை."
+            answer = _msg(language, "மன்னிக்கவும், தகவல்கள் கிடைக்கவில்லை.", "Sorry, no information found.")
             if return_formatted:
                 return format_answer_output(answer, [])
             return {"answer": answer, "sources": []}
@@ -418,7 +429,7 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
         logger.info(f"[TIMING] async merge_chunks: {time.time() - t0:.2f}s ({len(merged_docs)} docs)")
 
         if not merged_docs:
-            answer = "போதுமான தகவல்கள் இல்லை."
+            answer = _msg(language, "போதுமான தகவல்கள் இல்லை.", "Insufficient information available.")
             if return_formatted:
                 return format_answer_output(answer, [])
             return {"answer": answer, "sources": []}
@@ -452,13 +463,13 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
                 answer = await generate_llm_answer_async(
                     question, context, csv_context,
                     context_doc_count=context_doc_count,
-                    history=history,
+                    history=history, language=language,
                 )
                 logger.info(f"[TIMING] async gemini_llm: {time.time() - t0:.2f}s")
 
         if not answer or len(answer) < _LLM_MIN_ANSWER_LENGTH:
             logger.warning("LLM answer insufficient (async), trying fallback")
-            answer, fallback_reason = _llm_fallback_answer(question, merged_docs, history)
+            answer, fallback_reason = _llm_fallback_answer(question, merged_docs, history, language)
 
         sources = format_sources(merged_docs)
         logger.info(f"[TIMING] TOTAL ask_question_async: {time.time() - t_start:.2f}s | {len(sources)} sources")
@@ -481,7 +492,7 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
         return safe_error_response()
 
 
-def ask_question_stream(question: str, filter_tags: List[str] = None, history: List[Dict] = None):
+def ask_question_stream(question: str, filter_tags: List[str] = None, history: List[Dict] = None, language: str = "ta"):
     """
     Streaming version of ask_question.
     Yields dicts: {"type": "token", "content": str} for answer tokens,
@@ -493,7 +504,9 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
 
     is_injection, severity = detect_injection(question)
     if is_injection and severity == "high":
-        yield {"type": "token", "content": "மன்னிக்கவும், இந்தக் கேள்விக்கு பதிலளிக்க இயலவில்லை. பொன்னி இதழ் தொடர்பான கேள்விகளை கேளுங்கள்."}
+        yield {"type": "token", "content": _msg(language,
+            "மன்னிக்கவும், இந்தக் கேள்விக்கு பதிலளிக்க இயலவில்லை. பொன்னி இதழ் தொடர்பான கேள்விகளை கேளுங்கள்.",
+            "Sorry, this query cannot be processed. Please ask questions related to Ponni magazine.")}
         yield {"type": "sources", "sources": []}
         return
 
@@ -501,7 +514,7 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
     health_status = check_qdrant_health()
     if not health_status["healthy"]:
         logger.error(f"Database unhealthy: {health_status}")
-        yield {"type": "token", "content": SAFE_ERROR_MESSAGE}
+        yield {"type": "token", "content": _msg(language, SAFE_ERROR_MESSAGE, safe_error_message("en"))}
         yield {"type": "sources", "sources": []}
         return
 
@@ -526,18 +539,21 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
                 gemini_health = check_gemini_health()
                 if not gemini_health["healthy"]:
                     logger.error(f"Gemini unhealthy (stream csv path): {gemini_health}")
-                    fallback = "கட்டுரை தரவுத்தளத்திலிருந்து பெறப்பட்ட தகவல்கள்:"
+                    fallback = _msg(language,
+                                    "கட்டுரை தரவுத்தளத்திலிருந்து பெறப்பட்ட தகவல்கள்:",
+                                    "Information retrieved from article database:")
                     yield {"type": "token", "content": fallback}
                     csv_suffix = _csv_data_suffix(csv_response)
                     yield {"type": "token", "content": csv_suffix}
                     yield {"type": "sources", "sources": []}
                     return
-                csv_content = _build_csv_user_content(question, csv_response)
+                csv_content = _build_csv_user_content(question, csv_response, language=language)
+                csv_sys_prompt = _get_csv_system_prompt(language)
                 accumulated = []
                 for token in generate_llm_answer_stream(
                     question, context="", csv_context="",
-                    user_content=csv_content, system_prompt=_CSV_SYSTEM_PROMPT,
-                    disable_thinking=True,
+                    user_content=csv_content, system_prompt=csv_sys_prompt,
+                    disable_thinking=True, language=language,
                 ):
                     accumulated.append(token)
                     yield {"type": "token", "content": token}
@@ -549,13 +565,15 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
                     logger.warning("CSV streaming gist too short, trying sync fallback")
                     llm_summary = generate_llm_answer(
                         question, context="", csv_context="",
-                        user_content=csv_content, system_prompt=_CSV_SYSTEM_PROMPT,
-                        disable_thinking=True,
+                        user_content=csv_content, system_prompt=csv_sys_prompt,
+                        disable_thinking=True, language=language,
                     )
                     if llm_summary and len(llm_summary) >= 5:
                         yield {"type": "token", "content": llm_summary}
                     else:
-                        fallback = "கட்டுரை தரவுத்தளத்திலிருந்து பெறப்பட்ட தகவல்கள்:"
+                        fallback = _msg(language,
+                                        "கட்டுரை தரவுத்தளத்திலிருந்து பெறப்பட்ட தகவல்கள்:",
+                                        "Information retrieved from article database:")
                         yield {"type": "token", "content": fallback}
                         llm_summary = ""
 
@@ -580,13 +598,13 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
         results = searcher.search(question, limit=200, score_threshold=SCORE_THRESHOLD, tags=filter_tags)
 
         if not results:
-            yield {"type": "token", "content": "மன்னிக்கவும், தகவல்கள் கிடைக்கவில்லை."}
+            yield {"type": "token", "content": _msg(language, "மன்னிக்கவும், தகவல்கள் கிடைக்கவில்லை.", "Sorry, no information found.")}
             yield {"type": "sources", "sources": []}
             return
 
         merged_docs = merge_consecutive_chunks(client, results)
         if not merged_docs:
-            yield {"type": "token", "content": "போதுமான தகவல்கள் இல்லை."}
+            yield {"type": "token", "content": _msg(language, "போதுமான தகவல்கள் இல்லை.", "Insufficient information available.")}
             yield {"type": "sources", "sources": []}
             return
 
@@ -613,7 +631,9 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
             if answer:
                 yield {"type": "token", "content": answer}
             else:
-                yield {"type": "token", "content": "மன்னிக்கவும், LLM சேவை தற்போது கிடைக்கவில்லை."}
+                yield {"type": "token", "content": _msg(language,
+                    "மன்னிக்கவும், LLM சேவை தற்போது கிடைக்கவில்லை.",
+                    "Sorry, the LLM service is currently unavailable.")}
             yield {"type": "sources", "sources": format_sources(merged_docs)}
             return
 
@@ -623,7 +643,7 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
         for token in generate_llm_answer_stream(
             question, context, csv_context,
             context_doc_count=context_doc_count,
-            history=history,
+            history=history, language=language,
         ):
             token_count += 1
             accumulated_tokens.append(token)
@@ -633,7 +653,7 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
         fallback_reason = None
         if token_count < 10:
             logger.warning("Streaming produced too few tokens, trying fallback")
-            answer, fallback_reason = _llm_fallback_answer(question, merged_docs, history)
+            answer, fallback_reason = _llm_fallback_answer(question, merged_docs, history, language)
             accumulated_tokens = [answer]
             yield {"type": "token", "content": answer}
 
@@ -653,7 +673,7 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
 
     except Exception as e:
         logger.error(f"Streaming query error: {e}", exc_info=True)
-        yield {"type": "token", "content": SAFE_ERROR_MESSAGE}
+        yield {"type": "token", "content": _msg(language, SAFE_ERROR_MESSAGE, safe_error_message("en"))}
         yield {"type": "sources", "sources": []}
 
 
@@ -702,7 +722,11 @@ from csv_queries import (  # noqa: E402, F401
 from llm import (  # noqa: E402, F401
     PONNI_ABOUT_CONTEXT,
     TAMIL_ANSWER_SYSTEM_PROMPT,
+    ENGLISH_ANSWER_SYSTEM_PROMPT,
     _CSV_SYSTEM_PROMPT,
+    _CSV_SYSTEM_PROMPT_EN,
+    _get_system_prompt,
+    _get_csv_system_prompt,
     _get_gemini_client,
     _gemini_generation_config,
     _build_user_content,

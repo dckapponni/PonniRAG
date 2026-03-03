@@ -85,7 +85,7 @@ const Home = ({ language }) => {
         console.error('Streaming error, falling back:', error);
         activeStreamRef.current = null;
         // Fall back to non-streaming
-        askQuestion(question, true, history)
+        askQuestion(question, true, history, language)
           .then((result) => {
             if (requestIdRef.current !== thisRequestId) return;
             setMessages((prev) => {
@@ -116,7 +116,7 @@ const Home = ({ language }) => {
             }
           });
       },
-    }, history);
+    }, history, language);
 
     activeStreamRef.current = streamController;
   };

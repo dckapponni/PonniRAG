@@ -276,19 +276,24 @@ def sanitize_output(response: str) -> str:
 # ============================================================================
 
 SAFE_ERROR_MESSAGE = "மன்னிக்கவும், தற்போது சேவை இடையூறு ஏற்பட்டுள்ளது. மீண்டும் முயற்சிக்கவும்."
+SAFE_ERROR_MESSAGE_EN = "Sorry, a service interruption has occurred. Please try again."
 
 
-def safe_error_response() -> Dict:
+def safe_error_response(language: str = "ta") -> Dict:
     """Return a generic error dict with no internal details."""
+    msg = SAFE_ERROR_MESSAGE_EN if language == "en" else SAFE_ERROR_MESSAGE
     return {
-        "answer": SAFE_ERROR_MESSAGE,
+        "answer": msg,
         "sources": [],
         "error": "internal_error",
     }
 
 
 def safe_error_message(context: str = "") -> str:
-    """Return a generic Tamil error string. `context` is logged, never returned."""
+    """Return a generic error string. If context is 'en', returns English; otherwise Tamil.
+    For non-language context strings, logs them and returns Tamil."""
+    if context == "en":
+        return SAFE_ERROR_MESSAGE_EN
     if context:
         logger.error("Error context: %s", context)
     return SAFE_ERROR_MESSAGE

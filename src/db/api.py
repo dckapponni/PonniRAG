@@ -51,6 +51,7 @@ class QuestionRequest(BaseModel):
     use_llm: bool = Field(default=True, description="Use LLM for answer generation")
     tags: Optional[List[str]] = Field(default=None, description="Filter by tag IDs")
     history: Optional[List[HistoryMessage]] = Field(default=None, description="Previous Q&A turns for context")
+    language: str = Field(default="ta", pattern=r'^(ta|en)$', description="Response language: 'ta' for Tamil, 'en' for English")
 
 
 class SourceDocument(BaseModel):
@@ -334,6 +335,7 @@ async def ask_question_endpoint(request: QuestionRequest):
             use_llm=request.use_llm,
             filter_tags=request.tags,
             history=history,
+            language=request.language,
         )
 
         return QuestionResponse(
@@ -367,6 +369,7 @@ async def ask_question_stream_endpoint(request: QuestionRequest):
                 question=request.question,
                 filter_tags=request.tags,
                 history=history,
+                language=request.language,
             ):
                 if event["type"] == "token":
                     yield f"event: token\ndata: {json.dumps({'content': event['content']})}\n\n"

@@ -81,8 +81,8 @@ export const getApiInfo = async () => {
  * @param {boolean} useLLM - Whether to use LLM for answer generation
  * @returns {Promise<{answer: string, sources: Array, query_type: string, error: object}>}
  */
-export const askQuestion = async (question, useLLM = true, history = []) => {
-  const body = { question, use_llm: useLLM };
+export const askQuestion = async (question, useLLM = true, history = [], language = 'ta') => {
+  const body = { question, use_llm: useLLM, language };
   if (history.length > 0) body.history = history;
   const response = await api.post('/api/ask', body);
   return response.data;
@@ -96,7 +96,7 @@ export const askQuestion = async (question, useLLM = true, history = []) => {
  * @param {object} callbacks - { onToken, onSources, onDone, onError }
  * @returns {AbortController} - Call .abort() to cancel the stream
  */
-export const askQuestionStream = (question, { onToken, onSources, onDone, onError }, history = []) => {
+export const askQuestionStream = (question, { onToken, onSources, onDone, onError }, history = [], language = 'ta') => {
   const controller = new AbortController();
   let doneFired = false;
 
@@ -107,7 +107,7 @@ export const askQuestionStream = (question, { onToken, onSources, onDone, onErro
     }
   };
 
-  const body = { question, use_llm: true };
+  const body = { question, use_llm: true, language };
   if (history.length > 0) body.history = history;
 
   fetch(`${API_BASE_URL}/api/ask/stream`, {
