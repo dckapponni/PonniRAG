@@ -4,7 +4,7 @@ const About = ({ language }) => {
   return (
     <div className="about-container">
       <div className="about-header">
-        <h2 className="about-heading">{language === 'ta' ? 'பொன்னி களํசியம்' : 'Ponni Archive'}</h2>
+        <h2 className="about-heading">{language === 'ta' ? 'பொன்னி களஞ்சியம்' : 'Ponni Archive'}</h2>
         <p className="about-subtitle">
           {language === 'ta'
             ? '1947–1955 வரையிலான தமிழ் கலை இலக்கிய இதழ்'
