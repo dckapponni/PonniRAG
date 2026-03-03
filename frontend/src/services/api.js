@@ -43,7 +43,7 @@ api.interceptors.response.use(
       } else if (status === 500) {
         throw new Error(data.detail || 'Server error occurred');
       } else if (status === 422) {
-        throw new Error('Validation error: ' + JSON.stringify(data.detail));
+        throw new Error('Invalid request. Please check your input and try again.');
       }
     } else if (error.request) {
       // Request made but no response

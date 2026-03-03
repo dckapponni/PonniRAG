@@ -47,7 +47,7 @@ class HistoryMessage(BaseModel):
 
 class QuestionRequest(BaseModel):
     """Request model for asking questions."""
-    question: str = Field(..., min_length=1, max_length=2000, description="The question to ask")
+    question: str = Field(..., min_length=1, description="The question to ask")
     use_llm: bool = Field(default=True, description="Use LLM for answer generation")
     tags: Optional[List[str]] = Field(default=None, description="Filter by tag IDs")
     history: Optional[List[HistoryMessage]] = Field(default=None, description="Previous Q&A turns for context")
