@@ -1,10 +1,42 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { getTranslation } from '../services/translations';
+import { getTags } from '../services/api';
+
+// Shared tag taxonomy cache (loaded once, shared across all SourceCard instances)
+let _tagCache = null;
+let _tagPromise = null;
+
+const loadTags = () => {
+  if (_tagCache) return Promise.resolve(_tagCache);
+  if (_tagPromise) return _tagPromise;
+  _tagPromise = getTags()
+    .then((data) => {
+      if (data.success) {
+        _tagCache = data.tags;
+      }
+      return _tagCache || [];
+    })
+    .catch(() => []);
+  return _tagPromise;
+};
+
+const resolveTagName = (tagId, tags, language) => {
+  const info = tags.find((t) => t.id === tagId);
+  if (!info) return tagId;
+  return language === 'ta' ? info.tamil : info.english;
+};
 
 const SourceCard = ({ source, index, language }) => {
   const [expanded, setExpanded] = useState(false);
+  const [tagTaxonomy, setTagTaxonomy] = useState(_tagCache || []);
   const t = (key) => getTranslation(language, key);
+
+  useEffect(() => {
+    if (!_tagCache) {
+      loadTags().then((tags) => setTagTaxonomy(tags));
+    }
+  }, []);
 
   const docIssue = source.doc_issue || source.payload?.metadata?.doc_issue;
   const volume = source.volume || source.payload?.metadata?.volume;
@@ -29,7 +61,7 @@ const SourceCard = ({ source, index, language }) => {
         {tags.length > 0 && (
           <div className="source-tags">
             {tags.map((tag) => (
-              <span key={tag} className="tag-badge">{tag}</span>
+              <span key={tag} className="tag-badge">{resolveTagName(tag, tagTaxonomy, language)}</span>
             ))}
           </div>
         )}
