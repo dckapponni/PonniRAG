@@ -84,6 +84,13 @@ const TagBrowse = ({ language }) => {
     }
   };
 
+  // Resolve tag ID → display name based on language
+  const getTagName = (tagId) => {
+    const info = tags.find((t) => t.id === tagId);
+    if (!info) return tagId;
+    return language === 'ta' ? info.tamil : info.english;
+  };
+
   // Filter articles client-side
   const filteredArticles = articles.filter((article) => {
     if (categoryFilter !== 'ALL' && !(article.tags || []).includes(categoryFilter)) return false;
@@ -142,7 +149,7 @@ const TagBrowse = ({ language }) => {
           {(articleContent.tags || []).length > 0 && (
             <div className="tags-badge-row">
               {articleContent.tags.map((tag) => (
-                <span key={tag} className="tag-badge">{tag}</span>
+                <span key={tag} className="tag-badge">{getTagName(tag)}</span>
               ))}
             </div>
           )}
@@ -259,7 +266,7 @@ const TagBrowse = ({ language }) => {
                   {(article.tags || []).length > 0 && (
                     <div className="tags-article-block-tags">
                       {article.tags.map((tag) => (
-                        <span key={tag} className="tag-badge">{tag}</span>
+                        <span key={tag} className="tag-badge">{getTagName(tag)}</span>
                       ))}
                     </div>
                   )}
