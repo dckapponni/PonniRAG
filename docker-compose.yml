@@ -26,6 +26,8 @@ services:
     depends_on:
       qdrant:
         condition: service_healthy
+    volumes:
+      - hf_cache:/root/.cache/huggingface
     environment:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
@@ -48,3 +50,4 @@ services:
 
 volumes:
   qdrant_data:
+  hf_cache:
