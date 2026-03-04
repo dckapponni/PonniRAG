@@ -153,7 +153,8 @@ def _deterministic_token_hash(token: str) -> int:
 def sparse_embed(text: str):
     """Generate sparse BM25-style embedding for text."""
     text = unicodedata.normalize("NFC", text)
-    tokens = re.findall(r"\b\w+\b", text.lower())
+    # Include Tamil Unicode characters in tokenization (not just ASCII \w)
+    tokens = re.findall(r"[\w\u0B80-\u0BFF]+", text.lower())
     counts = defaultdict(int)
     for t in tokens:
         counts[t] += 1
@@ -161,6 +162,10 @@ def sparse_embed(text: str):
     for token, freq in counts.items():
         indices.append(_deterministic_token_hash(token))
         values.append(float(freq))
+    # Guard: Qdrant rejects empty sparse vectors; use a dummy zero-weight token
+    if not indices:
+        indices = [0]
+        values = [0.0]
     return models.SparseVector(indices=indices, values=values)
 
 

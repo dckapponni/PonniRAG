@@ -112,6 +112,15 @@ _NO_DATA_PATTERNS = [
 ]
 
 
+# Regex: at least one alphanumeric, Tamil, or CJK character
+_HAS_MEANINGFUL_CONTENT = _re.compile(r'[\w\u0B80-\u0BFF]')
+
+
+def _query_has_meaningful_content(question: str) -> bool:
+    """Check if the query contains at least one meaningful character (letter/digit/Tamil)."""
+    return bool(_HAS_MEANINGFUL_CONTENT.search(question))
+
+
 def _answer_indicates_no_data(answer: str) -> bool:
     """Check if the LLM answer indicates the requested data is not available."""
     if not answer:
@@ -182,6 +191,15 @@ def ask_question(question: str, return_formatted: bool = False, use_llm: bool = 
     """
     question = truncate_query(question)
     history = validate_history(history)
+
+    # Reject queries with no meaningful content (only special characters / punctuation)
+    if not _query_has_meaningful_content(question):
+        msg = _msg(language,
+                   "சரியான கேள்வியை உள்ளிடவும். எழுத்துக்கள் அல்லது எண்கள் தேவை.",
+                   "Please enter a valid question with letters or numbers.")
+        if return_formatted:
+            return msg
+        return {"answer": msg, "sources": []}
 
     is_injection, severity = detect_injection(question)
     if is_injection and severity == "high":
@@ -367,6 +385,15 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
     question = truncate_query(question)
     history = validate_history(history)
 
+    # Reject queries with no meaningful content (only special characters / punctuation)
+    if not _query_has_meaningful_content(question):
+        msg = _msg(language,
+                   "சரியான கேள்வியை உள்ளிடவும். எழுத்துக்கள் அல்லது எண்கள் தேவை.",
+                   "Please enter a valid question with letters or numbers.")
+        if return_formatted:
+            return msg
+        return {"answer": msg, "sources": []}
+
     is_injection, severity = detect_injection(question)
     if is_injection and severity == "high":
         refusal = _msg(language,
@@ -551,6 +578,14 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
     """
     question = truncate_query(question)
     history = validate_history(history)
+
+    # Reject queries with no meaningful content (only special characters / punctuation)
+    if not _query_has_meaningful_content(question):
+        yield {"type": "token", "content": _msg(language,
+            "சரியான கேள்வியை உள்ளிடவும். எழுத்துக்கள் அல்லது எண்கள் தேவை.",
+            "Please enter a valid question with letters or numbers.")}
+        yield {"type": "sources", "sources": []}
+        return
 
     is_injection, severity = detect_injection(question)
     if is_injection and severity == "high":
