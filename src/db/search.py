@@ -297,8 +297,15 @@ def format_sources(merged_docs: List[Dict]) -> List[Dict]:
     """
     relevant = _select_relevant_docs(merged_docs)
 
+    logger = logging.getLogger(__name__)
     sources = []
-    for doc in relevant:
+    for idx, doc in enumerate(relevant):
+        logger.info(
+            f"[EVIDENCE {idx+1}/{len(relevant)}] "
+            f"score={doc['score']:.4f} | "
+            f"volume={doc['volume']} issue={doc['doc_issue']} | "
+            f"heading={doc['heading'][:60]}"
+        )
         sources.append({
             "volume":        doc["volume"],
             "heading":       doc["heading"],
