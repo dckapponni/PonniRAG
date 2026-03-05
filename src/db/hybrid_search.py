@@ -91,7 +91,7 @@ import re as _re
 # When detected, sources should be suppressed because they are partial keyword
 # matches that don't actually answer the user's question.
 _NO_DATA_PATTERNS = [
-    # Tamil
+    # Tamil — explicit "not available / not in database" phrases
     _re.compile(r"தகவல்\s*(கள்\s*)?கிடைக்கவில்லை"),
     _re.compile(r"தகவல்\s*(கள்\s*)?இல்லை"),
     _re.compile(r"தரவுத்தளத்தில்\s*(தற்போது\s*)?இல்லை"),
@@ -100,7 +100,17 @@ _NO_DATA_PATTERNS = [
     _re.compile(r"(indexed|index)\s*செய்யப்படவில்லை"),
     _re.compile(r"குறிப்பிட்ட\s*(இதழ்|தொகுதி|கட்டுரை).*இல்லை"),
     _re.compile(r"(இந்த|குறிப்பிட்ட).*தரவு.*இல்லை"),
-    # English
+    # Tamil — broader "not found / unavailable" phrases
+    _re.compile(r"தற்போது\s*(இந்த|இதற்கான)?\s*தகவல்"),  # "currently this information..."
+    _re.compile(r"கிடைக்கவில்லை"),  # "not available" (standalone)
+    _re.compile(r"இடம்\s*பெற(வில்லை|ற்று\s*இல்லை)"),  # "not included / not featured"
+    _re.compile(r"காணப்படவில்லை"),  # "not found"
+    _re.compile(r"கண்டுபிடிக்க\s*(இயல|முடி)வில்லை"),  # "unable to find"
+    _re.compile(r"தொடர்பான\s*தகவல்.*இல்லை"),  # "no info related to..."
+    _re.compile(r"உள்ளடக்கத்தில்.*இல்லை"),  # "not in the content"
+    _re.compile(r"சேகரிக்கப்படவில்லை"),  # "not collected"
+    _re.compile(r"நேரடியாக\s*தொடர்பில்லை"),  # "not directly related"
+    # English — original patterns
     _re.compile(r"not\s+(yet\s+)?(been\s+)?indexed", _re.I),
     _re.compile(r"data\s+is\s+not\s+(currently\s+)?available", _re.I),
     _re.compile(r"no\s+(relevant\s+)?information\s+(is\s+)?(available|found)", _re.I),
@@ -108,7 +118,16 @@ _NO_DATA_PATTERNS = [
     _re.compile(r"has\s+not\s+(yet\s+)?been\s+(digitized|processed|extracted|added)", _re.I),
     _re.compile(r"(this|the)\s+(specific\s+)?(issue|volume|article|data)\s+(is\s+)?not\s+(available|found|indexed)", _re.I),
     _re.compile(r"no\s+data\s+(is\s+)?(available|found)", _re.I),
-    _re.compile(r"does\s+not\s+(currently\s+)?contain", _re.I),
+    _re.compile(r"do(es)?\s+not\s+(currently\s+)?contain", _re.I),
+    # English — broader patterns
+    _re.compile(r"not\s+(currently\s+)?available\s+in\s+(the\s+)?database", _re.I),
+    _re.compile(r"(could|cannot|can'?t)\s+(not\s+)?find\s+(any\s+)?(relevant|specific|direct)", _re.I),
+    _re.compile(r"no\s+(specific|direct|relevant)\s+(information|data|content|mention)", _re.I),
+    _re.compile(r"do(es)?\s+not\s+(directly\s+)?(address|answer|contain|cover|mention)", _re.I),
+    _re.compile(r"(context|documents?)\s+(provided\s+)?do(es)?\s+not\s+(directly\s+)?(relate|pertain|answer)", _re.I),
+    _re.compile(r"not\s+directly\s+related\s+to", _re.I),
+    _re.compile(r"unable\s+to\s+(find|locate|identify)", _re.I),
+    _re.compile(r"(don'?t|do\s+not)\s+have\s+(any\s+)?(information|data)\s+(about|on|regarding)", _re.I),
 ]
 
 

@@ -90,7 +90,12 @@ Important:
 - Do not ignore CSV content if provided
 - Do not fabricate any information not in the context
 - Avoid phrases like "according to the context" or "as per the source"
-- Structure the answer so it is pleasant and easy to read"""
+- Structure the answer so it is pleasant and easy to read
+
+Critical — Irrelevant context rule:
+- If the document context provided does NOT directly answer the question, do NOT force-fit the context into your answer
+- In that case, clearly state: "This information is not currently available in the database"
+- Do NOT extract information from unrelated documents to fabricate an incorrect answer"""
 
 TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இதழ் தொடர்பான கேள்விகளுக்கு பதிலளிக்கும் ஒரு தமிழ் நிபுணர்.
 
@@ -167,6 +172,11 @@ TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இத�
 - சூழலில் இல்லாத தகவல்களை எதையும் எழுதாதீர்கள்
 - "சூழலின் படி", "ஆதாரத்தின் படி" போன்ற சொற்களை பயன்படுத்த வேண்டாம்
 - வாசிப்பவரின் கண்களுக்கு சோர்வு வராத வகையில் பதிலை அமைக்க வேண்டும்
+
+மிக முக்கியம் — தொடர்பில்லாத சூழல் (Irrelevant context rule):
+- கொடுக்கப்பட்ட ஆவண சூழல் கேள்விக்கு நேரடியாக தொடர்பில்லை என்றால், சூழலை வலுக்கட்டாயமாக பயன்படுத்தாதீர்கள்
+- அந்த நிலையில், "இந்தத் தகவல் தற்போது தரவுத்தளத்தில் இல்லை" என்று தெளிவாகக் கூறுக
+- தொடர்பில்லாத ஆவணங்களிலிருந்து தகவல்களை எடுத்து தவறான பதிலை உருவாக்கக் கூடாது
 
 இப்போது, கீழே கொடுக்கப்பட்ட கேள்வி மற்றும் சூழலின் அடிப்படையில், மேலுள்ள அனைத்து விதிகளையும் கட்டாயமாக பின்பற்றி, தெளிவாகவும் வாசிக்க எளிதாகவும் விரிவான பதிலை எழுதுக."""
 
