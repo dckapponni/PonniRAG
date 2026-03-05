@@ -151,6 +151,117 @@ def _answer_indicates_no_data(answer: str) -> bool:
     return False
 
 
+# Stop words excluded from relevance checks — these are too generic to be
+# useful for deciding whether a document is truly relevant to a query.
+_TAMIL_STOP_WORDS = {
+    'இதழில்', 'இதழ்', 'பொன்னி', 'பொன்னியில்', 'என்ன', 'யாவை', 'யார்',
+    'எனும்', 'பற்றி', 'பற்றிய', 'என்று', 'உள்ள', 'உள்ளது', 'இருக்கு',
+    'முக்கிய', 'முக்கியமான', 'கருத்துக்கள்', 'கருத்து', 'தகவல்',
+    'கட்டுரை', 'கட்டுரைகள்', 'எழுதிய', 'எழுதியவர்', 'ஆசிரியர்',
+    'தொகுதி', 'இருக்கிறது', 'இருந்தது', 'செய்த', 'செய்யும்',
+    'எப்படி', 'எங்கே', 'எப்போது', 'ஏன்', 'எவ்வாறு', 'எத்தனை',
+    'கூறுக', 'விளக்குக', 'விவரி', 'பட்டியலிடுக', 'சுருக்கமாக',
+    'இருக்கிறார்', 'இருக்கின்றன', 'வெளிவந்தது', 'வெளியான',
+}
+_ENGLISH_STOP_WORDS = {
+    'what', 'who', 'when', 'where', 'why', 'how', 'which', 'that', 'this',
+    'the', 'and', 'for', 'are', 'was', 'were', 'been', 'being', 'have',
+    'has', 'had', 'does', 'did', 'will', 'would', 'could', 'should',
+    'about', 'from', 'with', 'into', 'ponni', 'magazine', 'issue',
+    'volume', 'article', 'written', 'author', 'list', 'tell', 'explain',
+    'describe', 'main', 'key', 'important', 'topics', 'content',
+}
+
+
+def _check_context_relevance(question: str, relevant_docs: list) -> bool:
+    """Check if retrieved documents are actually relevant to the query.
+
+    Extracts distinguishing entities (years, names, specific terms) from
+    the question and verifies at least some appear in the retrieved docs.
+    Returns False when documents are likely fuzzy/partial keyword matches
+    that don't actually address the user's question.
+
+    This is deliberately conservative — it only returns False when it is
+    confident the docs are irrelevant (key entities completely missing).
+    """
+    if not relevant_docs:
+        return False
+
+    # --- Extract distinguishing terms from the query ---
+    years = set(_re.findall(r'\b(19\d{2}|20\d{2})\b', question))
+    tamil_terms = set(_re.findall(r'[\u0B80-\u0BFF]{3,}', question))
+    tamil_terms -= _TAMIL_STOP_WORDS
+    english_terms = {w.lower() for w in _re.findall(r'[a-zA-Z]{3,}', question)}
+    english_terms -= _ENGLISH_STOP_WORDS
+
+    # If the query has no distinguishing terms (generic questions like
+    # "tell me about Ponni"), assume the context is relevant.
+    if not years and not tamil_terms and not english_terms:
+        return True
+
+    # --- Build combined text from retrieved documents ---
+    all_text_parts = []
+    for doc in relevant_docs[:10]:
+        all_text_parts.append(doc.get("content", ""))
+        all_text_parts.append(doc.get("heading", ""))
+        all_text_parts.append(str(doc.get("doc_issue", "")))
+        all_text_parts.append(str(doc.get("volume", "")))
+        all_text_parts.append(doc.get("author_name", ""))
+    all_text = " ".join(all_text_parts)
+
+    # --- Year check ---
+    # If the query asks about a specific year, at least one doc must
+    # reference that year in content or metadata.
+    if years:
+        if not any(y in all_text for y in years):
+            logger.info(f"[RELEVANCE] Year(s) {years} not found in any document")
+            return False
+
+    # --- Key-term check ---
+    # At least one distinguishing Tamil/English term from the query must
+    # appear somewhere in the retrieved documents.
+    # Tamil is agglutinative — suffixes change word endings
+    # (e.g. சுராதா→சுராதாவின், கல்வெட்டு→கல்வெட்டின்) so we use
+    # common-prefix matching: two Tamil words match if they share a
+    # prefix that is ≥60% of the shorter word (min 3 chars).
+    key_terms = tamil_terms | english_terms
+    if key_terms:
+        doc_tamil_words = set(_re.findall(r'[\u0B80-\u0BFF]{3,}', all_text))
+        all_text_lower = all_text.lower()
+
+        def _common_prefix_len(a, b):
+            n = min(len(a), len(b))
+            for i in range(n):
+                if a[i] != b[i]:
+                    return i
+            return n
+
+        def _term_found(term):
+            tl = term.lower()
+            # Direct substring in full text (works well for English)
+            if tl in all_text_lower:
+                return True
+            # Tamil stem match via common prefix
+            for dw in doc_tamil_words:
+                shorter = min(len(dw), len(term))
+                if shorter < 3:
+                    continue
+                cp = _common_prefix_len(dw, term)
+                if cp >= max(3, int(shorter * 0.6)):
+                    return True
+            return False
+
+        matched = sum(1 for t in key_terms if _term_found(t))
+        if matched == 0:
+            logger.info(
+                f"[RELEVANCE] No key terms matched. "
+                f"Query terms: {key_terms}"
+            )
+            return False
+
+    return True
+
+
 def truncate_query(question: str, max_length: int = MAX_QUERY_LENGTH) -> str:
     """Normalize Unicode to NFC and truncate to max_length at a word boundary.
 
@@ -373,6 +484,11 @@ def ask_question(question: str, return_formatted: bool = False, use_llm: bool = 
             logger.info("[NO_DATA] Suppressing sources — answer indicates data not available")
             sources = []
 
+        # Suppress sources when retrieved docs don't match query's key entities
+        if sources and not _check_context_relevance(question, relevant_docs):
+            logger.info("[RELEVANCE] Suppressing sources — documents not relevant to query")
+            sources = []
+
         logger.info(f"[TIMING] TOTAL ask_question: {time.time() - t_start:.2f}s | {len(sources)} sources")
 
         result = {"answer": answer, "sources": sources}
@@ -566,6 +682,11 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
         # Suppress sources when the answer indicates the data is not available
         if _answer_indicates_no_data(answer):
             logger.info("[NO_DATA] Suppressing sources — answer indicates data not available (async)")
+            sources = []
+
+        # Suppress sources when retrieved docs don't match query's key entities
+        if sources and not _check_context_relevance(question, relevant_docs):
+            logger.info("[RELEVANCE] Suppressing sources — documents not relevant to query (async)")
             sources = []
 
         logger.info(f"[TIMING] TOTAL ask_question_async: {time.time() - t_start:.2f}s | {len(sources)} sources")
@@ -773,6 +894,11 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
         # Suppress sources when the answer indicates the data is not available
         if _answer_indicates_no_data(full_answer):
             logger.info("[NO_DATA] Suppressing sources — answer indicates data not available (stream)")
+            sources = []
+
+        # Suppress sources when retrieved docs don't match query's key entities
+        if sources and not _check_context_relevance(question, relevant_docs):
+            logger.info("[RELEVANCE] Suppressing sources — documents not relevant to query (stream)")
             sources = []
 
         if not history and full_answer and len(full_answer) >= 50:
