@@ -4,7 +4,7 @@
 // ============================================================================
 export const VOLUME_IMAGES = {
   1: [
-    { issue_num: 1, filename: '\u0B87\u0BA4\u0BB4\u0BCD 1.jpg' },
+    { issue_num: 6, filename: '\u0B87\u0BA4\u0BB4\u0BCD 1.jpg' },
     { issue_num: 7, filename: '\u0B87\u0BA4\u0BB4\u0BCD 7.jpg' },
     { issue_num: 8, filename: '\u0B87\u0BA4\u0BB4\u0BCD 8.jpg' },
     { issue_num: 9, filename: '\u0B87\u0BA4\u0BB4\u0BCD 9.jpg' },
