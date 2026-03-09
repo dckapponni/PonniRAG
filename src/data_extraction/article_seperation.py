@@ -1,15 +1,15 @@
+# main.py
+
 import sys
 import json
 import logging
 import pandas as pd
-from io import StringIO
 from datetime import datetime
 from pathlib import Path
 import re
 
-
-current_dir = Path(__file__).resolve().parent
-project_root = current_dir.parent  
+current_dir  = Path(__file__).resolve().parent
+project_root = current_dir.parent
 sys.path.insert(0, str(project_root))
 
 from config.config import (
@@ -25,10 +25,11 @@ from content_extraction import (
     extract_intro_content_phase1
 )
 from doc_utils import (
-    extract_doc_info,
+    extract_authors_from_toc,
     get_shared_authors,
     extract_authors_alternative,
-    count_content_lines
+    count_content_lines,
+    is_valid_author_name
 )
 from article_patterns import (
     extract_pattern_a_forward,
@@ -37,77 +38,63 @@ from article_patterns import (
 )
 from shared_author import build_shared_authors_dict_s3
 from text_processing import normalize_text, get_intro_keywords
-from csv_fuzzy_matcher import extract_articles_from_csv
+from csv_fuzzy_matcher import (
+    extract_articles_from_csv,
+    extract_malar_ithal_from_filename,
+    extract_malar_ithal_from_text,
+    normalize_csv_value
+)
 from s3_utils import (
     list_files,
     read_text_from_s3,
     upload_json,
     file_exists
 )
+
 INPUT_PREFIX = EXTRACTED_OUTPUT
+
 
 def setup_logging(log_file='tamil_doc_processing.log'):
     """
-    Setup comprehensive logging for Tamil document processing.
-
-    Creates a logging configuration with both file and console handlers. File logs include
-    DEBUG level details with timestamps and function names, while console logs show INFO
-    level messages with simplified formatting.
-
-    Args:
-        log_file (str, optional): Base name for the log file. Defaults to 'tamil_doc_processing.log'.
-                                Actual filename will be timestamped.
-
-    Returns:
-        logging.Logger: Configured logger instance for the TamilDocProcessor.
+    Setup logging with file and console handlers.
     """
     log_dir = Path('logs')
     log_dir.mkdir(exist_ok=True)
-    
+
     logger = logging.getLogger('TamilDocProcessor')
     logger.setLevel(logging.DEBUG)
-    
+
     if logger.handlers:
         logger.handlers.clear()
-    
+
     log_path = log_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{log_file}"
+
     file_handler = logging.FileHandler(log_path, encoding='utf-8')
     file_handler.setLevel(logging.DEBUG)
-    file_formatter = logging.Formatter(
+    file_handler.setFormatter(logging.Formatter(
         '%(asctime)s | %(levelname)-8s | %(funcName)-25s | %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    file_handler.setFormatter(file_formatter)
-    
+    ))
+
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
-    console_formatter = logging.Formatter('%(levelname)s: %(message)s')
-    console_handler.setFormatter(console_formatter)
-    
+    console_handler.setFormatter(
+        logging.Formatter('%(levelname)s: %(message)s')
+    )
+
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
-    
-    logger.info(f"Logging initialized. Log file: {log_path}")
-    logger.info(f"S3 Bucket: {BUCKET_NAME}")
-    logger.info(f"Input Prefix: {INPUT_PREFIX}")
-    logger.info(f"Output Prefix: {OUTPUT_PREFIX}")
+
+    logger.info(f"Log file: {log_path}")
     return logger
+
 
 logger = setup_logging()
 
 
 def extract_year_from_s3_key(s3_key):
     """
-    Extract the year from an S3 key path.
-
-    Searches for a 4-digit year pattern (19xx or 20xx) within the S3 key string.
-    Typically used to identify the publication year from file paths.
-
-    Args:
-        s3_key (str): The S3 object key/path to parse.
-
-    Returns:
-        str: The extracted 4-digit year if found, otherwise "Unknown".
+    Extract year from S3 key as fallback.
     """
     try:
         year_match = re.search(r'(19|20)\d{2}', s3_key)
@@ -119,145 +106,54 @@ def extract_year_from_s3_key(s3_key):
 
 
 def is_file_already_processed(bucket, output_key):
-    """
-    Check if a file has already been processed by checking if output exists in S3.
-    
-    Args:
-        bucket (str): S3 bucket name
-        output_key (str): Expected output JSON key
-        
-    Returns:
-        bool: True if file already processed, False otherwise
-    """
     try:
-        if file_exists(bucket, output_key):
-            logger.debug(f"Output file already exists: s3://{bucket}/{output_key}")
-            return True
-        return False
+        return file_exists(bucket, output_key)
     except Exception as e:
-        logger.warning(f"Error checking if file exists: {e}")
+        logger.warning(f"Error checking file: {e}")
         return False
 
 
 def validate_processed_file(bucket, output_key):
-    """
-    Validate that the processed file contains valid data.
-    
-    Args:
-        bucket (str): S3 bucket name
-        output_key (str): Output JSON key to validate
-        
-    Returns:
-        bool: True if file is valid, False if corrupted/incomplete
-    """
     try:
         from s3_utils import read_json_from_s3
-        
         data = read_json_from_s3(bucket, output_key)
-        
-        # Check if it has the expected structure
         if not isinstance(data, dict):
-            logger.warning(f"Invalid structure in {output_key}: not a dictionary")
             return False
-        
-        # Check if it has articles
         if "articles" not in data:
-            logger.warning(f"Invalid structure in {output_key}: missing 'articles' key")
             return False
-        
-        # Check if articles is a list
         if not isinstance(data["articles"], list):
-            logger.warning(f"Invalid structure in {output_key}: 'articles' is not a list")
             return False
-        
-        # Check if there's at least some content (allow empty for genuinely empty files)
-        article_count = len(data["articles"])
-        logger.debug(f"Validated {output_key}: {article_count} articles")
-        
         return True
-        
-    except json.JSONDecodeError as e:
-        logger.warning(f"JSON decode error in {output_key}: {e}")
-        return False
-    except Exception as e:
-        logger.warning(f"Error validating {output_key}: {e}")
+    except Exception:
         return False
 
 
 def load_csv_from_local(csv_path):
-    """
-    Load CSV file from local file system.
-    
-    Args:
-        csv_path (str or Path): Path to local CSV file
-        
-    Returns:
-        pd.DataFrame: Loaded CSV data
-        
-    Raises:
-        FileNotFoundError: If CSV file doesn't exist
-        Exception: For other errors
-    """
     try:
         csv_path = Path(csv_path)
-        
         if not csv_path.exists():
-            raise FileNotFoundError(f"CSV file not found: {csv_path}")
-        
-        logger.info(f"Loading CSV from local file: {csv_path}")
-        
-        csv_df = pd.read_csv(csv_path, encoding='utf-8', on_bad_lines='skip')
-        
-        logger.info(f"✓ Loaded CSV successfully: {len(csv_df)} rows")
-        logger.debug(f"CSV columns: {list(csv_df.columns)}")
-        
+            raise FileNotFoundError(f"CSV not found: {csv_path}")
+        logger.info(f"Loading CSV: {csv_path}")
+        csv_df = pd.read_csv(
+            csv_path, encoding='utf-8', on_bad_lines='skip'
+        )
+        logger.info(
+            f"CSV loaded: {len(csv_df)} rows, "
+            f"columns: {list(csv_df.columns)}"
+        )
         return csv_df
-        
-    except FileNotFoundError as e:
-        logger.error(f"CSV file not found: {e}")
-        raise
-    except pd.errors.EmptyDataError as e:
-        logger.error(f"CSV file is empty: {e}")
-        raise
-    except pd.errors.ParserError as e:
-        logger.error(f"Error parsing CSV: {e}")
+    except FileNotFoundError:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error loading CSV: {e}", exc_info=True)
+        logger.error(f"Error loading CSV: {e}", exc_info=True)
         raise
 
 
 def save_authors_to_s3(bucket, output_key_prefix, doc_id, doc_issue, authors_list):
-    """
-    Save or update the authors.json file in S3.
-
-    Maintains a consolidated JSON file containing author information for all processed
-    documents. Updates existing entries or appends new ones based on document ID and issue.
-
-    Args:
-        bucket (str): S3 bucket name where the authors file is stored.
-        output_key_prefix (str): S3 key prefix (directory path) for the authors.json file.
-        doc_id (str): Document identifier (மலர் ID).
-        doc_issue (str): Document issue number (இதழ் number).
-        authors_list (list): List of authors, either as dictionaries with 'author_name' key,
-                            strings, or other types that can be converted to strings.
-
-    Returns:
-        None
-
-    Side Effects:
-        - Creates or updates authors.json in S3
-        - Logs information about added or updated author entries
-
-    Raises:
-        Exception: Re-raises any errors encountered during S3 operations after logging.
-    """
     try:
-        authors_key = f"{output_key_prefix}authors.json"
-        
-        logger.debug(f"Preparing to save authors to: s3://{bucket}/{authors_key}")
-        
+        authors_key  = f"{output_key_prefix}authors.json"
         author_names = []
+
         if authors_list:
             if isinstance(authors_list[0], dict) and "author_name" in authors_list[0]:
                 author_names = [a["author_name"] for a in authors_list]
@@ -265,469 +161,748 @@ def save_authors_to_s3(bucket, output_key_prefix, doc_id, doc_issue, authors_lis
                 author_names = authors_list
             else:
                 author_names = [str(a) for a in authors_list]
-        
+
         existing_data = []
         if file_exists(bucket, authors_key):
             try:
                 from s3_utils import read_json_from_s3
                 existing_data = read_json_from_s3(bucket, authors_key)
-                logger.debug(f"Loaded {len(existing_data)} existing entries")
-            except Exception as e:
-                logger.debug(f"No existing authors.json or error reading: {e}")
-        
+            except Exception:
+                pass
+
         doc_exists = False
         for entry in existing_data:
-            if entry.get("doc_id") == doc_id and entry.get("doc_issue") == doc_issue:
+            if (entry.get("doc_id") == doc_id and
+                    entry.get("doc_issue") == doc_issue):
                 entry["authors"] = author_names
                 doc_exists = True
-                logger.info(f"Updated authors for {doc_id} (Issue: {doc_issue}): {len(author_names)} authors")
                 break
-        
+
         if not doc_exists:
-            new_entry = {
-                "doc_id": doc_id,
+            existing_data.append({
+                "doc_id":    doc_id,
                 "doc_issue": doc_issue,
-                "authors": author_names
-            }
-            existing_data.append(new_entry)
-            logger.info(f"Added authors for {doc_id} (Issue: {doc_issue}): {len(author_names)} authors")
-        
+                "authors":   author_names
+            })
+
         upload_json(bucket, authors_key, existing_data)
-        logger.info(f"Successfully saved authors.json to S3")
-        
+        logger.info(
+            f"Authors saved: {len(author_names)} "
+            f"for {doc_id}/{doc_issue}"
+        )
+
     except Exception as e:
-        logger.error(f"Error saving authors to S3: {e}", exc_info=True)
+        logger.error(f"Error saving authors: {e}", exc_info=True)
         raise
 
 
-def parse_tamil_document_csv_first(lines, shared_authors_dict, csv_df, s3_key):
+def find_toc_boundaries(lines):
     """
-    Parse Tamil document using CSV-first approach with pattern extraction fallback.
-
-    Primary parsing function that attempts to extract articles from Tamil documents
-    using CSV metadata first. If CSV extraction fails, falls back to pattern-based
-    extraction using multiple pattern recognition algorithms.
-
+    Find TOC start and end line indices.
+    Used ONLY for pattern extraction — NOT for CSV.
+    
     Args:
-        lines (list): List of text lines from the document.
-        shared_authors_dict (dict): Dictionary mapping document IDs to shared author lists.
-        csv_df (pd.DataFrame): DataFrame containing CSV metadata for article matching.
-        s3_key (str): S3 object key for the source document (used for year extraction).
-
+        lines (list): document lines
+        
     Returns:
-        dict: Parsed document data containing:
-            - articles (list): List of article dictionaries with fields:
-                - doc_id, doc_issue, article_no, author_name, title, content,
-                year, source_document
-            - authors_list (list): List of author dictionaries
-            - doc_id (str): Document மலர் identifier
-            - doc_issue (str): Document இதழ் number
-    Processing Flow:
-        1. Attempts CSV-based extraction
-        2. On CSV failure, extracts document info (மலர்/இதழ்)
-        3. Extracts authors using multiple methods (markers, TOC, shared authors)
-        4. Applies pattern extraction (Pattern A, B, C)
-        5. Extracts intro sections as articles
-        6. Collects remaining unprocessed content
+        tuple: (toc_start, toc_end) or (-1, -1)
+    """
+    toc_start = -1
+    toc_end   = -1
+
+    try:
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if 'பொருளடக்கம்' in stripped:
+                toc_start = i
+                logger.debug(f"TOC start at line {i}")
+            if toc_start != -1 and (
+                'ஆகியோரின் எழுத்தோவியங்கள்' in stripped or
+                'ஆகியோரின்' in stripped
+            ):
+                toc_end = i
+                logger.debug(f"TOC end at line {i}")
+                break
+
+        if toc_start != -1 and toc_end != -1:
+            logger.info(f"TOC: lines {toc_start} to {toc_end}")
+        elif toc_start != -1:
+            logger.warning(f"TOC start at {toc_start} but no end marker")
+        else:
+            logger.warning("No TOC found")
+
+    except Exception as e:
+        logger.error(f"Error finding TOC: {e}")
+
+    return toc_start, toc_end
+
+
+def extract_authors_from_toc_section(lines, toc_start, toc_end):
+    """
+    Extract author names from TOC section.
+    Used ONLY for pattern extraction — NOT for CSV.
+    
+    Args:
+        lines (list): document lines
+        toc_start (int): TOC start index
+        toc_end (int): TOC end index
+        
+    Returns:
+        tuple: (authors_original, authors_normalized)
+    """
+    authors_original   = []
+    authors_normalized = []
+
+    try:
+        for i in range(toc_start + 1, toc_end):
+            if i >= len(lines):
+                break
+            name = lines[i].strip()
+            if (
+                name and
+                not name.isdigit() and
+                len(name) > 2 and
+                not re.match(r'^[\d.\s…]+$', name) and
+                not re.match(r'^[.\s…,]+$', name)
+            ):
+                authors_original.append(name)
+                authors_normalized.append(normalize_text(name))
+
+        logger.info(
+            f"TOC section gave {len(authors_original)} authors"
+        )
+
+    except Exception as e:
+        logger.error(f"Error extracting TOC authors: {e}")
+
+    return authors_original, authors_normalized
+
+
+def extract_authors_from_content(lines):
+    """
+    Extract author names from content using dash pattern and
+    position-based detection.
+    Used as last fallback for pattern extraction when no TOC exists.
+    
+    Args:
+        lines (list): document lines
+        
+    Returns:
+        tuple: (authors_original, authors_normalized)
+    """
+    authors_original   = []
+    authors_normalized = []
+
+    try:
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+
+            # Dash pattern: — அம்மான் or - நாரா நாச்சியப்பன்
+            if (stripped.startswith('—') or
+                    stripped.startswith('-') or
+                    stripped.startswith('–')):
+                clean = re.sub(r'^[—\-–]\s*', '', stripped).strip()
+                if (clean and 3 <= len(clean) <= 40 and
+                        clean not in authors_original):
+                    authors_original.append(clean)
+                    authors_normalized.append(normalize_text(clean))
+
+            # Position pattern: short line right after another short line
+            # (title → author pattern)
+            elif (i > 0 and
+                  len(lines[i - 1].strip()) <= 25 and
+                  lines[i - 1].strip() and
+                  3 <= len(stripped) <= 40 and
+                  not stripped.isdigit() and
+                  stripped not in authors_original):
+                if is_valid_author_name(stripped):
+                    authors_original.append(stripped)
+                    authors_normalized.append(normalize_text(stripped))
+
+        if authors_original:
+            logger.info(
+                f"Content-based author extraction: "
+                f"{len(authors_original)} authors"
+            )
+
+    except Exception as e:
+        logger.error(f"Error in content author extraction: {e}")
+
+    return authors_original, authors_normalized
+
+
+def run_pattern_extraction(
+    lines,
+    content_start_idx,
+    processed_lines,
+    authors_original,
+    authors_normalized,
+    doc_id,
+    doc_issue,
+    year,
+    source_document,
+    start_article_no=1
+):
+    """
+    Run all pattern extraction on unprocessed lines only.
+    
+    பொருளடக்கம் and ஆகியோரின் are handled BEFORE this function
+    in parse_tamil_document. By this point TOC lines are already
+    marked as processed so patterns naturally skip them.
+    
+    For pattern articles:
+    - doc_id, doc_issue → from filename
+    - author, title     → from document text
+    - year              → from filename
+    - content           → from document text
+    
+    Args:
+        lines (list): document lines
+        content_start_idx (int): where content starts (after TOC)
+        processed_lines (list): bool list
+        authors_original (list): known authors
+        authors_normalized (list): normalized authors
+        doc_id (str): மலர் from filename
+        doc_issue (str): இதழ் from filename
+        year (str): year from filename
+        source_document (str): filename
+        start_article_no (int): starting article number
+        
+    Returns:
+        list: extracted articles
+    """
+    articles   = []
+    article_no = start_article_no
+
+    # Count remaining unprocessed lines
+    remaining_count = sum(
+        1 for i in range(content_start_idx, len(lines))
+        if not processed_lines[i] and lines[i].strip()
+    )
+
+    logger.info(f"Unprocessed content lines: {remaining_count}")
+
+    if remaining_count == 0:
+        logger.info("No remaining lines — patterns skipped")
+        return articles
+
+    intro_keywords = get_intro_keywords()
+
+    # Pattern A: HEADING → AUTHOR → CONTENT
+    logger.info("Running Pattern A...")
+    pattern_a = extract_pattern_a_forward(
+        lines, content_start_idx, len(lines),
+        authors_normalized, authors_original,
+        processed_lines, intro_keywords
+    )
+    for article in pattern_a:
+        articles.append({
+            "doc_id":          doc_id,
+            "doc_issue":       doc_issue,
+            "article_no":      article_no,
+            "author_name":     article["author"],
+            "title":           article["heading"],
+            "content":         article["content"],
+            "year":            year,
+            "source_document": source_document
+        })
+        article_no += 1
+    logger.info(f"Pattern A: {len(pattern_a)} articles")
+
+    # Pattern B: AUTHOR → HEADING → CONTENT
+    logger.info("Running Pattern B...")
+    pattern_b = extract_pattern_b_forward(
+        lines, content_start_idx, len(lines),
+        authors_normalized, authors_original,
+        processed_lines, intro_keywords
+    )
+    for article in pattern_b:
+        articles.append({
+            "doc_id":          doc_id,
+            "doc_issue":       doc_issue,
+            "article_no":      article_no,
+            "author_name":     article["author"],
+            "title":           article["heading"],
+            "content":         article["content"],
+            "year":            year,
+            "source_document": source_document
+        })
+        article_no += 1
+    logger.info(f"Pattern B: {len(pattern_b)} articles")
+
+    # Pattern C: HEADING → CONTENT → AUTHOR (reverse/embedded)
+    logger.info("Running Pattern C...")
+    pattern_c = extract_pattern_c_reverse(
+        lines, content_start_idx, len(lines),
+        authors_normalized, authors_original,
+        processed_lines, intro_keywords
+    )
+    for article in pattern_c:
+        articles.append({
+            "doc_id":          doc_id,
+            "doc_issue":       doc_issue,
+            "article_no":      article_no,
+            "author_name":     article["author"],
+            "title":           article["heading"],
+            "content":         article["content"],
+            "year":            year,
+            "source_document": source_document
+        })
+        article_no += 1
+    logger.info(f"Pattern C: {len(pattern_c)} articles")
+
+    # Intro sections
+    logger.info("Running intro extraction...")
+    intro_count = 0
+    i = content_start_idx
+
+    while i < len(lines):
+        if processed_lines[i]:
+            i += 1
+            continue
+
+        line            = lines[i].strip()
+        matched_keyword = None
+
+        for keyword in intro_keywords:
+            if keyword in line and (i == 0 or not lines[i - 1].strip()):
+                matched_keyword = keyword
+                break
+
+        if matched_keyword:
+            try:
+                content, end_idx_content, has_author = \
+                    extract_intro_content_phase1(
+                        lines, i, processed_lines,
+                        authors_normalized, authors_original,
+                        intro_keywords
+                    )
+                if content.strip() and count_content_lines(content) >= 4:
+                    articles.append({
+                        "doc_id":          doc_id,
+                        "doc_issue":       doc_issue,
+                        "article_no":      article_no,
+                        "author_name":     has_author if has_author else "NA",
+                        "title":           matched_keyword,
+                        "content":         content,
+                        "year":            year,
+                        "source_document": source_document
+                    })
+                    article_no += 1
+                    intro_count += 1
+
+                    for j in range(i, end_idx_content):
+                        if j < len(lines):
+                            processed_lines[j] = True
+                    i = end_idx_content
+                else:
+                    i += 1
+            except Exception as e:
+                logger.warning(f"Intro error at line {i}: {e}")
+                i += 1
+        else:
+            i += 1
+
+    logger.info(f"Intro sections: {intro_count} articles")
+
+    # Remaining content
+    logger.info("Running remaining content extraction...")
+    remaining = extract_remaining_content(
+        lines, content_start_idx, processed_lines
+    )
+    for article in remaining:
+        articles.append({
+            "doc_id":          doc_id,
+            "doc_issue":       doc_issue,
+            "article_no":      article_no,
+            "author_name":     article["author"],
+            "title":           article["heading"],
+            "content":         article["content"],
+            "year":            year,
+            "source_document": source_document
+        })
+        article_no += 1
+    logger.info(f"Remaining: {len(remaining)} articles")
+
+    return articles
+
+
+def parse_tamil_document(lines, shared_authors_dict, csv_df, s3_key):
+    """
+    Main parsing function.
+    
+    IMPORTANT: பொருளடக்கம் and ஆகியோரின் are used ONLY
+    for pattern extraction (author extraction + line marking).
+    CSV extraction does NOT use TOC at all.
+    
+    Flow:
+    ┌─────────────────────────────────────────────────────────┐
+    │ STEP 1: Extract மலர்/இதழ்/year from FILENAME           │
+    │         Fallback to document text if filename fails     │
+    ├─────────────────────────────────────────────────────────┤
+    │ STEP 2: [PATTERN PREP ONLY]                             │
+    │         Find TOC (பொருளடக்கம் → ஆகியோரின்)            │
+    │         Extract authors from TOC for pattern matching   │
+    │         Mark TOC lines as processed                     │
+    ├─────────────────────────────────────────────────────────┤
+    │ STEP 3: CSV extraction (if மலர்/இதழ் found)            │
+    │         Search titles in FULL document                  │
+    │         No TOC dependency                               │
+    │         Mark extracted lines as processed               │
+    ├─────────────────────────────────────────────────────────┤
+    │ STEP 4: Pattern extraction on REMAINING lines only      │
+    │         TOC already marked → patterns skip it           │
+    └─────────────────────────────────────────────────────────┘
     """
     try:
+        source_document = s3_key.split('/')[-1]
+
         logger.info("=" * 80)
-        logger.info("STEP 1: ATTEMPTING CSV-BASED EXTRACTION")
+        logger.info(f"PARSING: {source_document}")
         logger.info("=" * 80)
-        
-        # Extract year and source document from S3 key
-        year = extract_year_from_s3_key(s3_key)
-        source_document = s3_key.split('/')[-1]  # Get filename from S3 key
-        
-        # Create a pseudo Path object for CSV extraction
+
         class S3Path:
             def __init__(self, key):
                 self.name = key.split('/')[-1]
-        
+
         file_path = S3Path(s3_key)
-        
-        # TRY CSV EXTRACTION FIRST
-        csv_result = extract_articles_from_csv(lines, csv_df, file_path)
-        
-        if csv_result and len(csv_result['articles']) > 0:
-            logger.info("=" * 80)
-            logger.info(f" CSV EXTRACTION SUCCESS: {len(csv_result['articles'])} articles")
-            logger.info("=" * 80)
-            
-            # Add year and source_document to each article
-            for article in csv_result['articles']:
-                article['source_document'] = source_document
-                if 'year' not in article or article['year'] == "Unknown":
-                    article['year'] = year
-            
-            return csv_result
-        
-        # CSV FAILED - FALLBACK TO PATTERN EXTRACTION
-        logger.warning("=" * 80)
-        logger.warning(" CSV EXTRACTION FAILED - FALLING BACK TO PATTERN EXTRACTION")
-        logger.warning("=" * 80)
-        
-        # Extract doc info for pattern extraction
-        doc_id, doc_issue = extract_doc_info(lines)
-        logger.info(f"Processing document: {doc_id}, Issue: {doc_issue}")
 
-        if doc_id == "NA" and doc_issue == "NA":
-            logger.error("Cannot extract மலர்/இதழ் - Both methods failed")
-            return {
-                "articles": [],
-                "authors_list": [],
-                "doc_id": "NA",
-                "doc_issue": "NA"
-            }
+        # ----------------------------------------------------------------
+        # STEP 1: Extract மலர்/இதழ்/year from FILENAME
+        # ----------------------------------------------------------------
+        logger.info("STEP 1: மலர்/இதழ் from filename")
 
-        # NORMAL PATTERN-BASED PROCESSING
-        authors_original = []
+        malar, ithal, year_from_file = extract_malar_ithal_from_filename(
+            source_document
+        )
+
+        # Fallback to document text if filename fails
+        if not malar or not ithal:
+            logger.warning(
+                "Filename parse failed — trying document text"
+            )
+            malar, ithal, year_from_file = extract_malar_ithal_from_text(
+                lines
+            )
+
+        # Year priority: filename/text → S3 key path
+        if year_from_file:
+            year = year_from_file
+        else:
+            year = extract_year_from_s3_key(s3_key)
+            logger.info(f"Year from S3 key fallback: {year}")
+
+        doc_id    = normalize_csv_value(malar) if malar else "NA"
+        doc_issue = normalize_csv_value(ithal) if ithal else "NA"
+
+        logger.info(
+            f"doc_id={doc_id}, doc_issue={doc_issue}, year={year}"
+        )
+
+        # ----------------------------------------------------------------
+        # STEP 2: TOC processing FOR PATTERNS ONLY
+        # (பொருளடக்கம் and ஆகியோரின் NOT used by CSV)
+        # ----------------------------------------------------------------
+        logger.info(
+            "STEP 2: TOC processing (for pattern extraction only)"
+        )
+
+        processed_lines = [False] * len(lines)
+
+        # Find TOC boundaries — patterns only
+        toc_start, toc_end = find_toc_boundaries(lines)
+
+        authors_original   = []
         authors_normalized = []
-        start_idx = end_idx = -1
 
-        for i, line in enumerate(lines):
-            if "பொருளடக்கம்" in line:
-                start_idx = i
-            if "ஆகியோரின் எழுத்தோவியங்கள்" in line or "ஆகியோரின்" in line:
-                end_idx = i
-                break
+        if toc_start != -1 and toc_end != -1:
+            # Extract authors from TOC for pattern matching
+            authors_original, authors_normalized = \
+                extract_authors_from_toc_section(
+                    lines, toc_start, toc_end
+                )
+            # Mark TOC lines as processed so patterns skip them
+            for i in range(0, toc_end + 1):
+                if i < len(lines):
+                    processed_lines[i] = True
+            content_start_idx = toc_end + 1
+            logger.info(
+                f"TOC lines 0-{toc_end} marked processed. "
+                f"Pattern content starts at {content_start_idx}"
+            )
 
-        if start_idx != -1 and end_idx != -1:
-            logger.info("Using METHOD 1: Extracting authors between markers")
-            for i in range(start_idx + 1, end_idx):
-                name = lines[i].strip()
-                if name and not name.isdigit() and len(name) > 2:
-                    if not re.match(r'^[\d.\s…]+$', name):
-                        authors_original.append(name)
-                        authors_normalized.append(normalize_text(name))
-            logger.info(f"METHOD 1: Extracted {len(authors_original)} authors")
-        
-        if not authors_original and start_idx != -1:
-            logger.info("Using METHOD 2: Parsing TOC structure")
-            from doc_utils import extract_authors_from_toc
-            _, _, toc_authors_orig, toc_authors_norm, _ = extract_authors_from_toc(lines)
-            if toc_authors_orig:
-                authors_original = toc_authors_orig
-                authors_normalized = toc_authors_norm
-                logger.info(f"METHOD 2: Extracted {len(authors_original)} authors from TOC")
-        
+        elif toc_start != -1:
+            # TOC found but no ஆகியோரின் marker
+            end_fallback = min(toc_start + 26, len(lines))
+            for i in range(0, end_fallback):
+                if i < len(lines):
+                    processed_lines[i] = True
+            content_start_idx = end_fallback
+            logger.warning(
+                f"No ஆகியோரின் — marking 0-{end_fallback}"
+            )
+
+        else:
+            # No TOC at all
+            content_start_idx = 0
+            logger.warning("No TOC — patterns start from line 0")
+
+        # Author fallback methods for patterns
         if not authors_original:
-            logger.info("Using METHOD 3: Retrieving shared authors")
+            logger.info("Trying TOC parse method for authors")
+            _, _, toc_orig, toc_norm, _ = extract_authors_from_toc(lines)
+            if toc_orig:
+                authors_original   = toc_orig
+                authors_normalized = toc_norm
+                logger.info(f"TOC parse: {len(authors_original)} authors")
+
+        if not authors_original and doc_id != "NA" and doc_issue != "NA":
+            logger.info("Trying shared authors")
             authors_original, authors_normalized = get_shared_authors(
                 doc_id, doc_issue, shared_authors_dict
             )
             if authors_original:
-                logger.info(f"METHOD 3: Retrieved {len(authors_original)} shared authors")
-            else:
-                authors_original, authors_normalized = extract_authors_alternative(lines)
-                if authors_original:
-                    logger.info(f"METHOD 4: Extracted {len(authors_original)} authors")
+                logger.info(
+                    f"Shared authors: {len(authors_original)}"
+                )
 
-        logger.info(f"Final author count: {len(authors_original)} authors")
+        if not authors_original:
+            logger.info("Trying alternative author extraction")
+            authors_original, authors_normalized = \
+                extract_authors_alternative(lines)
+            if authors_original:
+                logger.info(
+                    f"Alternative: {len(authors_original)} authors"
+                )
 
-        parse_start_idx = end_idx + 1 if end_idx != -1 else (start_idx + 26 if start_idx != -1 else 0)
-        processed_lines = [False] * len(lines)
+        if not authors_original:
+            logger.info(
+                "Trying content-based author extraction "
+                "(dash/position patterns)"
+            )
+            authors_original, authors_normalized = \
+                extract_authors_from_content(lines)
+            if authors_original:
+                logger.info(
+                    f"Content-based: {len(authors_original)} authors"
+                )
 
-        if start_idx != -1 and end_idx != -1:
-            for i in range(start_idx, end_idx + 1):
-                processed_lines[i] = True
-        elif start_idx != -1:
-            for i in range(start_idx, min(start_idx + 26, len(lines))):
-                processed_lines[i] = True
+        logger.info(
+            f"Total authors for pattern matching: "
+            f"{len(authors_original)}"
+        )
 
-        intro_keywords = get_intro_keywords()
-        articles = []
+        # ----------------------------------------------------------------
+        # STEP 3: CSV extraction
+        # NO TOC dependency — searches full document
+        # ----------------------------------------------------------------
+        articles   = []
         article_no = 1
 
-        # PATTERN A
-        logger.info("=" * 80)
-        logger.info("PHASE 1: Running Pattern A")
-        logger.info("=" * 80)
-        
-        pattern_a_articles = extract_pattern_a_forward(
-            lines, parse_start_idx, len(lines),
-            authors_normalized, authors_original,
-            processed_lines, intro_keywords
-        )
-        
-        for article in pattern_a_articles:
-            articles.append({
-                "doc_id": doc_id,
-                "doc_issue": doc_issue,
-                "article_no": article_no,
-                "author_name": article["author"],
-                "title": article["heading"],
-                "content": article["content"],
-                "year": year,
-                "source_document": source_document
-            })
-            article_no += 1
+        if doc_id != "NA" and doc_issue != "NA":
+            logger.info(
+                "STEP 3: CSV extraction "
+                "(independent of TOC — searches full document)"
+            )
 
-        # PATTERN B
-        logger.info("=" * 80)
-        logger.info("PHASE 2: Running Pattern B")
-        logger.info("=" * 80)
-        
-        pattern_b_articles = extract_pattern_b_forward(
-            lines, parse_start_idx, len(lines),
-            authors_normalized, authors_original,
-            processed_lines, intro_keywords
-        )
-        
-        for article in pattern_b_articles:
-            articles.append({
-                "doc_id": doc_id,
-                "doc_issue": doc_issue,
-                "article_no": article_no,
-                "author_name": article["author"],
-                "title": article["heading"],
-                "content": article["content"],
-                "year": year,
-                "source_document": source_document
-            })
-            article_no += 1
+            csv_result = extract_articles_from_csv(
+                lines, csv_df, file_path
+            )
 
-        # PATTERN C
-        logger.info("=" * 80)
-        logger.info("PHASE 3: Running Pattern C")
-        logger.info("=" * 80)
-        
-        pattern_c_articles = extract_pattern_c_reverse(
-            lines, parse_start_idx, len(lines),
-            authors_normalized, authors_original,
-            processed_lines, intro_keywords
-        )
-        
-        for article in pattern_c_articles:
-            articles.append({
-                "doc_id": doc_id,
-                "doc_issue": doc_issue,
-                "article_no": article_no,
-                "author_name": article["author"],
-                "title": article["heading"],
-                "content": article["content"],
-                "year": year,
-                "source_document": source_document
-            })
-            article_no += 1
+            if csv_result and len(csv_result['articles']) > 0:
 
-        # INTRO EXTRACTION
-        logger.info("=" * 80)
-        logger.info("PHASE 4: Extracting intro sections (as articles)")
-        logger.info("=" * 80)
-        
-        i = parse_start_idx
-        
-        while i < len(lines):
-            if processed_lines[i]:
-                i += 1
-                continue
+                for article in csv_result['articles']:
+                    article['source_document'] = source_document
+                    articles.append(article)
+                    article_no += 1
 
-            line = lines[i].strip()
-            matched_keyword = None
+                # Mark CSV-extracted lines as processed
+                # so patterns don't re-extract them
+                for start_line, end_line in csv_result.get(
+                    'extracted_line_ranges', []
+                ):
+                    for k in range(
+                        start_line, min(end_line, len(lines))
+                    ):
+                        processed_lines[k] = True
 
-            for keyword in intro_keywords:
-                if keyword in line and (i == 0 or not lines[i - 1].strip()):
-                    matched_keyword = keyword
-                    break
+                logger.info(
+                    f"CSV: {len(csv_result['articles'])} articles. "
+                    f"Remaining lines go to patterns."
+                )
 
-            if matched_keyword:
-                try:
-                    content, end_idx_content, has_author = extract_intro_content_phase1(
-                        lines, i, processed_lines,
-                        authors_normalized, authors_original, intro_keywords
-                    )
-
-                    if content.strip() and count_content_lines(content) >= 4:
-                        articles.append({
-                            "doc_id": doc_id,
-                            "doc_issue": doc_issue,
-                            "article_no": article_no,
-                            "author_name": has_author if has_author else "NA",
-                            "title": matched_keyword,
-                            "content": content,
-                            "year": year,
-                            "source_document": source_document
-                        })
-                        article_no += 1
-
-                        for j in range(i, end_idx_content):
-                            if j < len(lines):
-                                processed_lines[j] = True
-                        i = end_idx_content
-                    else:
-                        i += 1
-                    
-                except Exception as e:
-                    logger.warning(f"Error extracting intro at line {i}: {e}")
-                    i += 1
+                # Merge CSV authors into pattern authors list
+                if csv_result.get('authors_list'):
+                    csv_authors = [
+                        a['author_name']
+                        for a in csv_result['authors_list']
+                        if a['author_name'] not in authors_original
+                    ]
+                    if csv_authors:
+                        authors_original   += csv_authors
+                        authors_normalized += [
+                            normalize_text(a) for a in csv_authors
+                        ]
+                        logger.info(
+                            f"Added {len(csv_authors)} CSV authors "
+                            f"for pattern matching"
+                        )
             else:
-                i += 1
+                logger.warning(
+                    "CSV returned no articles — "
+                    "all content goes to patterns"
+                )
+        else:
+            logger.info(
+                "STEP 3: CSV skipped "
+                "(no மலர்/இதழ் found). All content → patterns."
+            )
 
-        # REMAINING CONTENT
-        logger.info("=" * 80)
-        logger.info("PHASE 5: Extracting remaining content")
-        logger.info("=" * 80)
-        
-        try:
-            remaining = extract_remaining_content(lines, parse_start_idx, processed_lines)
-            
-            for article in remaining:
-                articles.append({
-                    "doc_id": doc_id,
-                    "doc_issue": doc_issue,
-                    "article_no": article_no,
-                    "author_name": article["author"],
-                    "title": article["heading"],
-                    "content": article["content"],
-                    "year": year,
-                    "source_document": source_document
-                })
-                article_no += 1
-                
-        except Exception as e:
-            logger.error(f"Error extracting remaining content: {e}")
+        # ----------------------------------------------------------------
+        # STEP 4: Pattern extraction on REMAINING unprocessed lines
+        # TOC lines already marked → patterns skip them automatically
+        # CSV-extracted lines already marked → no double extraction
+        # ----------------------------------------------------------------
+        logger.info(
+            "STEP 4: Pattern extraction on remaining lines "
+            "(TOC and CSV lines already marked as processed)"
+        )
 
+        pattern_articles = run_pattern_extraction(
+            lines=lines,
+            content_start_idx=content_start_idx,
+            processed_lines=processed_lines,
+            authors_original=authors_original,
+            authors_normalized=authors_normalized,
+            doc_id=doc_id,
+            doc_issue=doc_issue,
+            year=year,
+            source_document=source_document,
+            start_article_no=article_no
+        )
+
+        articles.extend(pattern_articles)
+
+        # Final authors list
         authors_list = [
-            {"doc_id": doc_id, "doc_issue": doc_issue, "author_name": a}
+            {
+                "doc_id":      doc_id,
+                "doc_issue":   doc_issue,
+                "author_name": a
+            }
             for a in authors_original
         ]
 
-        logger.info(f"Pattern extraction complete: {len(articles)} total articles")
-        
+        logger.info("=" * 80)
+        logger.info(f"TOTAL: {len(articles)} articles")
+        logger.info(
+            f"  CSV:      {len(articles) - len(pattern_articles)}"
+        )
+        logger.info(f"  Patterns: {len(pattern_articles)}")
+        logger.info("=" * 80)
+
         return {
-            "articles": articles,
+            "articles":     articles,
             "authors_list": authors_list,
-            "doc_id": doc_id,
-            "doc_issue": doc_issue
+            "doc_id":       doc_id,
+            "doc_issue":    doc_issue
         }
-        
+
     except Exception as e:
-        logger.error(f"Critical error in parse_tamil_document_csv_first: {e}", exc_info=True)
+        logger.error(f"Critical error: {e}", exc_info=True)
         raise
 
 
 def process_s3_files(force_reprocess=False):
     """
-    Process all TXT files from S3 using CSV-first extraction approach.
-
-    Main orchestration function that coordinates the entire document processing pipeline.
-    Reads TXT files from S3, processes them using CSV-first extraction, and saves
-    results back to S3 as JSON files.
-
-    Args:
-        force_reprocess (bool, optional): If True, reprocess all files even if already processed.
-                                        If False, skip files with existing valid outputs.
-                                        Defaults to False.
-
-    Returns:
-        None
-
-    Processing Steps:
-        1. Loads CSV metadata from local file system
-        2. Lists all TXT files in S3 input location
-        3. Builds shared authors dictionary for fallback
-        4. For each file:
-            - Checks if already processed (unless force_reprocess=True)
-            - Validates existing outputs
-            - Reads and parses document
-            - Saves articles JSON and authors JSON to S3
-        5. Logs comprehensive processing summary
-
+    Main orchestration — process all TXT files from S3.
     """
     try:
         logger.info("=" * 80)
-        logger.info("Tamil Document Processing - S3 CSV FIRST MODE")
-        logger.info(f"S3 Bucket: {BUCKET_NAME}")
-        logger.info(f"Input Prefix: {INPUT_PREFIX}")
-        logger.info(f"Output Prefix: {OUTPUT_PREFIX}")
-        logger.info(f"CSV Path (Local): {CSV_PATH}")
-        logger.info(f"Force Reprocess: {force_reprocess}")
+        logger.info("Tamil Document Processing")
+        logger.info(f"Bucket: {BUCKET_NAME}")
+        logger.info(f"Input:  {INPUT_PREFIX}")
+        logger.info(f"Output: {OUTPUT_PREFIX}")
+        logger.info(f"CSV:    {CSV_PATH}")
+        logger.info(f"Force:  {force_reprocess}")
         logger.info("=" * 80)
-        
-        # Load CSV from LOCAL file system
-        logger.info("Loading CSV file from local file system...")
+
+        # Load CSV
         try:
             csv_df = load_csv_from_local(CSV_PATH)
         except FileNotFoundError:
-            logger.error(f"✗ CSV file not found at: {CSV_PATH}")
-            logger.error("Please check the CSV_PATH in config.py")
+            logger.error(f"CSV not found: {CSV_PATH}")
             return
         except Exception as e:
-            logger.error(f"✗ Error loading CSV from local file: {e}")
-            logger.error("CSV is required for this mode. Exiting.")
-            return
-        
-        # List TXT files from S3
-        logger.info("Listing TXT files from S3...")
-        txt_files = list_files(BUCKET_NAME, INPUT_PREFIX, suffix='.txt')
-        
-        if not txt_files:
-            logger.warning("No TXT files found in S3")
+            logger.error(f"CSV load failed: {e}")
             return
 
+        # List TXT files
+        txt_files = list_files(BUCKET_NAME, INPUT_PREFIX, suffix='.txt')
+        if not txt_files:
+            logger.warning("No TXT files found")
+            return
         logger.info(f"Found {len(txt_files)} TXT files")
 
-        # Build shared authors (for fallback)
-        logger.info("Building shared authors dictionary (for fallback)...")
-        shared_authors_dict = build_shared_authors_dict_s3(BUCKET_NAME, INPUT_PREFIX)
-        logger.info(f"Shared authors dictionary built with {len(shared_authors_dict)} document groups")
-        
-        processed = failed = csv_success = pattern_fallback = skipped = 0
+        # Build shared authors
+        logger.info("Building shared authors dictionary...")
+        shared_authors_dict = build_shared_authors_dict_s3(
+            BUCKET_NAME, INPUT_PREFIX
+        )
+        logger.info(
+            f"Shared authors: {len(shared_authors_dict)} groups"
+        )
+
+        processed = failed = skipped = 0
 
         for idx, txt_key in enumerate(txt_files, 1):
-            # Determine output key
-            relative_key = txt_key[len(INPUT_PREFIX):]  # Remove input prefix
-            output_key = f"{OUTPUT_PREFIX}{relative_key.rsplit('.', 1)[0]}.json"
+
+            relative_key = txt_key[len(INPUT_PREFIX):]
+            output_key   = (
+                f"{OUTPUT_PREFIX}"
+                f"{relative_key.rsplit('.', 1)[0]}.json"
+            )
 
             logger.info("")
             logger.info("=" * 80)
-            logger.info(f"[{idx}/{len(txt_files)}] Processing: {txt_key}")
-            logger.info(f"Output key: {output_key}")
+            logger.info(f"[{idx}/{len(txt_files)}] {txt_key}")
             logger.info("=" * 80)
 
             try:
-                # CHECK IF ALREADY PROCESSED
+                # Check if already processed
                 if not force_reprocess:
                     if is_file_already_processed(BUCKET_NAME, output_key):
-                        # Validate the existing file
                         if validate_processed_file(BUCKET_NAME, output_key):
-                            logger.info(f"⏭️  SKIPPED: File already processed and validated")
-                            logger.info(f"   Existing output: s3://{BUCKET_NAME}/{output_key}")
-                            logger.info(f"   Use --force flag to reprocess")
+                            logger.info("SKIPPED: already processed")
                             skipped += 1
                             continue
                         else:
-                            logger.warning(f"⚠️  Existing file is invalid/corrupted, reprocessing...")
-                
-                # Read TXT file from S3
+                            logger.warning("Invalid file — reprocessing")
+
+                # Read and parse
                 text_content = read_text_from_s3(BUCKET_NAME, txt_key)
-                lines = text_content.splitlines()
-                logger.debug(f"Read {len(lines)} lines from S3")
+                lines        = text_content.splitlines()
+                logger.debug(f"Read {len(lines)} lines")
 
-                logger.info("Starting document parsing (CSV FIRST)...")
-                result = parse_tamil_document_csv_first(lines, shared_authors_dict, csv_df, txt_key)
+                result = parse_tamil_document(
+                    lines, shared_authors_dict, csv_df, txt_key
+                )
 
-                # Track which method was used
-                if result and len(result['articles']) > 0:
-                    first_article = result['articles'][0]
-                    if 'year' in first_article and first_article.get('year') != "Unknown":
-                        csv_success += 1
-                        logger.info("✓ METHOD: CSV EXTRACTION")
-                    else:
-                        pattern_fallback += 1
-                        logger.info("✓ METHOD: PATTERN EXTRACTION (CSV fallback)")
+                # Save articles JSON
+                upload_json(
+                    BUCKET_NAME,
+                    output_key,
+                    {"articles": result["articles"]}
+                )
+                logger.info(
+                    f"Saved {len(result['articles'])} articles"
+                )
 
-                # Save main JSON to S3
-                output_data = {
-                    "articles": result["articles"]
-                }
-                
-                upload_json(BUCKET_NAME, output_key, output_data)
-                logger.info(f"Main JSON saved to S3 with {len(result['articles'])} articles")
-
-                # Save authors JSON to S3
-                output_key_prefix = output_key.rsplit('/', 1)[0] + '/' if '/' in output_key else ''
+                # Save authors JSON
+                output_key_prefix = (
+                    output_key.rsplit('/', 1)[0] + '/'
+                    if '/' in output_key else ''
+                )
                 save_authors_to_s3(
                     BUCKET_NAME,
                     output_key_prefix,
@@ -736,50 +911,51 @@ def process_s3_files(force_reprocess=False):
                     result["authors_list"]
                 )
 
-                logger.info(f"✅ SUCCESS: {len(result['articles'])} total articles")
+                logger.info(
+                    f"SUCCESS: {len(result['articles'])} articles"
+                )
                 processed += 1
 
             except Exception as e:
-                logger.error(f"❌ FAILED processing {txt_key}: {e}", exc_info=True)
+                logger.error(f"FAILED: {txt_key}: {e}", exc_info=True)
                 failed += 1
 
         logger.info("")
         logger.info("=" * 80)
-        logger.info("PROCESSING SUMMARY:")
-        logger.info(f"   Total files: {len(txt_files)}")
-        logger.info(f"   Successfully processed: {processed}")
-        logger.info(f"   Skipped (already processed): {skipped}")
-        logger.info(f"   CSV Extraction used: {csv_success}")
-        logger.info(f"   Pattern Extraction used: {pattern_fallback}")
-        logger.info(f"   Failed: {failed}")
+        logger.info("SUMMARY")
+        logger.info(f"  Total:     {len(txt_files)}")
+        logger.info(f"  Processed: {processed}")
+        logger.info(f"  Skipped:   {skipped}")
+        logger.info(f"  Failed:    {failed}")
         if len(txt_files) > 0:
-            logger.info(f"   Success rate: {(processed/len(txt_files)*100):.1f}%")
-        if processed > 0:
-            logger.info(f"   CSV success rate: {(csv_success/processed*100):.1f}%")
+            logger.info(
+                f"  Success: "
+                f"{((processed + skipped)/len(txt_files)*100):.1f}%"
+            )
         logger.info("=" * 80)
-        
+
     except Exception as e:
-        logger.critical(f"Fatal error in process_s3_files: {e}", exc_info=True)
+        logger.critical(f"Fatal error: {e}", exc_info=True)
         raise
 
 
 if __name__ == "__main__":
     try:
-        # Check for command line argument to force reprocessing
         force_reprocess = "--force" in sys.argv or "-f" in sys.argv
-        
+
         if force_reprocess:
-            logger.info("⚠️  FORCE REPROCESS MODE ENABLED - Will reprocess all files")
+            logger.info("FORCE REPROCESS MODE")
         else:
-            logger.info("📋 INCREMENTAL MODE - Will skip already processed files")
-            logger.info("   Use --force or -f flag to reprocess all files")
-        
-        logger.info("Starting Tamil Document Processing (S3 CSV FIRST MODE)...")
+            logger.info(
+                "INCREMENTAL MODE — use --force to reprocess all"
+            )
+
         process_s3_files(force_reprocess=force_reprocess)
-        logger.info("Processing completed successfully!")
+        logger.info("Done!")
+
     except KeyboardInterrupt:
-        logger.warning("Processing interrupted by user")
+        logger.warning("Interrupted")
         sys.exit(1)
     except Exception as e:
-        logger.critical(f"Process failed: {e}")
+        logger.critical(f"Failed: {e}")
         sys.exit(1)

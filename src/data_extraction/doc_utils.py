@@ -359,12 +359,12 @@ def extract_authors_from_toc(lines):
         toc_start, toc_end = find_toc_boundaries(lines)
         
         if toc_start == -1:
-            logger.warning("பொருளடக்கம் not found in document")
+            logger.warning("not found in document")
             return (doc_id, doc_issue, [], [], [])
         
         logger.debug(f"Parsing TOC lines {toc_start} to {toc_end}")
         
-        for k in range(toc_start, toc_end):
+        for k in range(toc_start, toc_end): 
             if k >= len(lines):
                 break
                 
