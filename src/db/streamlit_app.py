@@ -1064,7 +1064,6 @@ def load_image(image_name: str):
         logger.debug(f"Loaded image from S3: {image_name}")
     else:
         logger.warning(f"Could not generate presigned URL for: {image_name}")
-                continue
     logger.warning(f"Image not found: {image_name}")
 
 
