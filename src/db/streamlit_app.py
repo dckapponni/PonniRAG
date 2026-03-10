@@ -1,14 +1,63 @@
 import logging
 import sys
-import io
-import base64
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import streamlit as st
-from PIL import Image
-from pdf_links import PDF_LINKS
+import boto3
+from botocore.exceptions import ClientError
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
+
+from config.config import get_magazine_config
+
+# Load magazine registry (single source of truth)
+_magazine = get_magazine_config("ponni")
+_s3_conf = _magazine["s3"]
+
+# Build PDF_LINKS dict from registry for backward compatibility
+PDF_LINKS = {}
+for _vol in _magazine["volumes"]:
+    for _iss in _vol["issues"]:
+        PDF_LINKS[f"vol_{_vol['id']}_issue_{_iss['num']}"] = _iss["pdf_url"]
+
+# S3 client for presigned URLs
+_s3_client = boto3.client("s3", region_name=_s3_conf["region"])
+_COVER_URL_EXPIRY = 3600
+
+
+def _presign_s3_url(key: str) -> Optional[str]:
+    """Generate a presigned S3 URL for a given key."""
+    try:
+        return _s3_client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": _s3_conf["bucket"], "Key": key},
+            ExpiresIn=_COVER_URL_EXPIRY,
+        )
+    except ClientError:
+        return None
+
+
+def _issue_cover_s3_key(volume_id: int, issue_name: str, year: str) -> str:
+    """Derive S3 key for an issue cover image."""
+    folder = _s3_conf["cover_folder_pattern"].format(vol_id=volume_id)
+    filename = _s3_conf["cover_file_pattern"].format(
+        vol_id=volume_id, issue_num=issue_name, year=year,
+    )
+    return f"{_s3_conf['covers_prefix']}{folder}{filename}"
+
+
+def _presign_volume_cover(filename: str) -> Optional[str]:
+    """Generate presigned URL for a volume cover image."""
+    if not filename:
+        return None
+    key = f"{_s3_conf['covers_prefix']}Volumes/{filename}"
+    return _presign_s3_url(key)
+
+
+def _presign_issue_cover(volume_id: int, issue_name: str, year: str) -> Optional[str]:
+    """Generate presigned URL for an issue cover image."""
+    key = _issue_cover_s3_key(volume_id, issue_name, year)
+    return _presign_s3_url(key)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -18,7 +67,6 @@ logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
 QDRANT_PATH = str(BASE_DIR / "qdrant_data_tags")
-IMG_DIR = BASE_DIR.parent.parent/"frontend"/"public"/"images"
 
 try:
     from qdrant_client import models as qdrant_models
@@ -820,17 +868,18 @@ def render_library_page():
     st.markdown(t('lib_desc'))
     st.markdown("<br>", unsafe_allow_html=True)
     
-    volumes = [
-        {"id": 1, "desc": "1947", "image": "Volume1.jpg"},
-        {"id": 2, "desc": "1948", "image": "Volume2.jpg"},
-        {"id": 3, "desc": "1949", "image": "Volume3.jpg"},
-        {"id": 4, "desc": "1950", "image": "Volume4.jpg"},
-        {"id": 5, "desc": "1951", "image": "Volume5.jpg"},
-        {"id": 6, "desc": "1952", "image": "Volume6.jpg"},
-        {"id": 7, "desc": "1953", "image": "Volume7.jpg"},
-        {"id": 8, "desc": "1954", "image": "Volume8.jpg"},
-    ]
-    
+    volumes = []
+    for vol in _magazine["volumes"]:
+        issue_years = sorted(set(
+            iss.get("year", vol["year"]) for iss in vol["issues"]
+        ))
+        year_display = f"{issue_years[0]}-{issue_years[-1]}" if len(issue_years) > 1 else (issue_years[0] if issue_years else vol["year"])
+        volumes.append({
+            "id": vol["id"],
+            "desc": year_display,
+            "cover_url": _presign_volume_cover(vol.get("cover_image")),
+        })
+
     for i in range(0, len(volumes), 3):
         cols = st.columns(3, gap="medium")
         for j in range(3):
@@ -843,42 +892,32 @@ def render_library_page():
 
 def render_volume_card(vol: Dict):
     """
-    Render a single volume card with image and metadata.
+    Render a single volume card with S3 presigned cover image.
 
     Creates a clickable card displaying a volume's cover image, number, and year.
-    Handles image loading, thumbnail generation, and base64 encoding for display.
-
-
+    Falls back to a placeholder if the presigned URL is not available.
     """
-    img_path = IMG_DIR / vol["image"]
-    if img_path.exists():
-        try:
-            img = Image.open(img_path)
-            if img.mode != "RGB":
-                img = img.convert("RGB")
-            img.thumbnail((250, 375), Image.Resampling.LANCZOS)
-            buffered = io.BytesIO()
-            img.save(buffered, format="JPEG")
-            img_str = base64.b64encode(buffered.getvalue()).decode()
-            card_html = f"""
-            <a href="?page=issues&volume={vol['id']}" target="_self" style="text-decoration:none; display:block; width:100%;">
-                <div style="background:#ffffff; border:1px solid #e2e8f0; border-radius:0.75rem; padding:1rem; text-align:center;
-                            box-shadow:0 2px 8px rgba(0,0,0,0.08); transition:all 0.3s ease; cursor:pointer; width:350px; margin:0 auto;">
-                    <img src="data:image/jpeg;base64,{img_str}" style="max-width:100%; height:auto; border-radius:0.5rem; margin-bottom:0.8rem;">
-                    <div style="font-weight:600; font-size:1.1rem; color:#1e3a8a; line-height:1.4;">
-                        பொன்னி<br>{t('lib_vol')} {vol['id']}
-                        <div style="margin-top:0.4rem;"></div>
-                        <span style="font-weight:500; color:#64748b;">{vol['desc']}</span>
-                    </div>
-                </div>
-            </a>
-            """
-            st.markdown(card_html, unsafe_allow_html=True)
-            logger.debug(f"Rendered volume card: {vol['id']}")
-        except Exception as e:
-            logger.error(f"Error loading volume image {vol['image']}: {e}")
+    cover_url = vol.get("cover_url")
+    if cover_url:
+        img_tag = f'<img src="{cover_url}" style="max-width:100%; height:auto; border-radius:0.5rem; margin-bottom:0.8rem;" onerror="this.style.display=\'none\'">'
     else:
-        logger.warning(f"Volume image not found: {vol['image']}")
+        img_tag = '<div style="width:250px;height:375px;background:#f1f5f9;border-radius:0.5rem;margin:0 auto 0.8rem;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:1.2rem;">No cover</div>'
+
+    card_html = f"""
+    <a href="?page=issues&volume={vol['id']}" target="_self" style="text-decoration:none; display:block; width:100%;">
+        <div style="background:#ffffff; border:1px solid #e2e8f0; border-radius:0.75rem; padding:1rem; text-align:center;
+                    box-shadow:0 2px 8px rgba(0,0,0,0.08); transition:all 0.3s ease; cursor:pointer; width:350px; margin:0 auto;">
+            {img_tag}
+            <div style="font-weight:600; font-size:1.1rem; color:#1e3a8a; line-height:1.4;">
+                பொன்னி<br>{t('lib_vol')} {vol['id']}
+                <div style="margin-top:0.4rem;"></div>
+                <span style="font-weight:500; color:#64748b;">{vol['desc']}</span>
+            </div>
+        </div>
+    </a>
+    """
+    st.markdown(card_html, unsafe_allow_html=True)
+    logger.debug(f"Rendered volume card: {vol['id']}")
 
 
 def set_page(**params):
@@ -906,38 +945,34 @@ def render_issues_page(volume_id: str):
         st.rerun()
     st.markdown(f"## {t('lib_vol')} {volume_id}")
     st.markdown("<br>", unsafe_allow_html=True)
-    
-    base_dir = Path(IMG_DIR) if isinstance(IMG_DIR, str) else IMG_DIR
-    volume_folder = base_dir / f"volume{volume_id}-covers"
-    issues_data = load_volume_issues(volume_id, volume_folder)
+
+    issues_data = load_volume_issues(volume_id)
     if not issues_data:
         logger.warning(f"No issues found for volume {volume_id}")
         return
     render_issue_grid(issues_data, volume_id)
 
 
-def load_volume_issues(volume_id: str, volume_folder: Path) -> List[Dict]:
+def load_volume_issues(volume_id: str) -> List[Dict]:
     """
-    Load issue data for a specific volume.
+    Load issue data for a specific volume from the magazine registry.
 
-    Scans the volume's image folder and builds a list of issues that have both
-    cover images and corresponding PDF links available.
-
+    Returns list of issues with presigned S3 cover URLs and PDF availability.
     """
-    if not volume_folder.exists():
+    vol_id = int(volume_id)
+    vol_data = next((v for v in _magazine["volumes"] if v["id"] == vol_id), None)
+    if not vol_data:
         return []
-    image_files = []
-    for ext in ['*.jpg', '*.png', '*.jpeg', '*.JPG', '*.PNG', '*.JPEG']:
-        image_files.extend(volume_folder.glob(ext))
-    image_files.sort()
-    
+
     issues_data = []
-    issue_counter = 1
-    for img_path in image_files:
-        key = f"vol_{volume_id}_issue_{issue_counter}"
-        if key in PDF_LINKS:
-            issues_data.append({"issue_num": issue_counter, "has_pdf": True, "image_path": img_path})
-        issue_counter += 1
+    for iss in vol_data["issues"]:
+        issue_name = str(iss["num"])
+        issue_year = iss.get("year", vol_data["year"])
+        issues_data.append({
+            "issue_num": issue_name,
+            "has_pdf": bool(iss.get("pdf_url")),
+            "cover_url": _presign_issue_cover(vol_id, issue_name, issue_year),
+        })
     logger.info(f"Loaded {len(issues_data)} issues for volume {volume_id}")
     return issues_data
 
@@ -960,29 +995,24 @@ def render_issue_grid(issues_data: List[Dict], volume_id: str):
 
 def render_issue_card(issue: Dict, volume_id: str):
     """
-    Render a single issue card.
+    Render a single issue card with S3 presigned cover image.
 
     Creates a clickable card displaying an issue's cover image and number,
     linking to the PDF viewer page.
-
     """
-    try:
-        img = Image.open(issue["image_path"])
-        if img.mode != "RGB":
-            img = img.convert("RGB")
-        img.thumbnail((300, 400), Image.Resampling.LANCZOS)
-        buffered = io.BytesIO()
-        img.save(buffered, format="JPEG", quality=85)
-        img_str = base64.b64encode(buffered.getvalue()).decode()
-        card_html = f"""
-        <a href="?page=pdf_viewer&volume={volume_id}&issue={issue['issue_num']}" target="_self" class="issue-card">
-            <img src="data:image/jpeg;base64,{img_str}" alt="{t('issue')} {issue['issue_num']}">
-            <div class="issue-card-title">{t('issue')} {issue['issue_num']}</div>
-        </a>
-        """
-        st.markdown(card_html, unsafe_allow_html=True)
-    except Exception as e:
-        logger.error(f"Failed to load issue image {issue['image_path']}: {e}")
+    cover_url = issue.get("cover_url")
+    if cover_url:
+        img_tag = f'<img src="{cover_url}" alt="{t("issue")} {issue["issue_num"]}" onerror="this.style.display=\'none\'">'
+    else:
+        img_tag = f'<div style="width:300px;height:400px;background:#f1f5f9;border-radius:0.5rem;display:flex;align-items:center;justify-content:center;color:#94a3b8;">{t("issue")} {issue["issue_num"]}</div>'
+
+    card_html = f"""
+    <a href="?page=pdf_viewer&volume={volume_id}&issue={issue['issue_num']}" target="_self" class="issue-card">
+        {img_tag}
+        <div class="issue-card-title">{t('issue')} {issue['issue_num']}</div>
+    </a>
+    """
+    st.markdown(card_html, unsafe_allow_html=True)
 
 
 def render_pdf_viewer_page(volume_id: str, issue_num: str):
@@ -1019,24 +1049,18 @@ def render_pdf_viewer_page(volume_id: str, issue_num: str):
 
 def load_image(image_name: str):
     """
-    Load and display an image with multiple extension attempts.
-
-    Attempts to load and display an image by trying multiple file extensions
-    (.png, .jpg, .jpeg in both lower and uppercase).
-
+    Load and display a volume cover image via S3 presigned URL.
+    Falls back to placeholder if not available.
     """
-    for ext in ['.png', '.jpg', '.jpeg', '.PNG', '.JPG', '.JPEG']:
-        img_path = IMG_DIR / f"{image_name}{ext}"
-        if img_path.exists():
-            try:
-                img = Image.open(img_path)
-                if img.mode != "RGB":
-                    img = img.convert("RGB")
-                st.image(img, use_container_width=False)
-                logger.debug(f"Loaded image: {image_name}{ext}")
-                return
-            except Exception as e:
-                logger.error(f"Error loading image {image_name}{ext}: {e}")
+    url = _presign_volume_cover(f"{image_name}.jpg")
+    if url:
+        st.markdown(
+            f'<img src="{url}" style="max-width:100%;border-radius:0.5rem;" onerror="this.style.display=\'none\'">',
+            unsafe_allow_html=True,
+        )
+        logger.debug(f"Loaded image from S3: {image_name}")
+    else:
+        logger.warning(f"Could not generate presigned URL for: {image_name}")
                 continue
     logger.warning(f"Image not found: {image_name}")
 
@@ -1143,14 +1167,8 @@ def fetch_tag_articles(tag_id):
 
 @st.cache_data
 def get_volume_issue_counts():
-    """Count issues per volume from PDF_LINKS keys."""
-    counts = {}
-    for key in PDF_LINKS:
-        parts = key.split("_")  # vol_N_issue_M
-        if len(parts) >= 4:
-            vol_num = int(parts[1])
-            counts[vol_num] = counts.get(vol_num, 0) + 1
-    return counts
+    """Count issues per volume from magazine registry."""
+    return {vol["id"]: len(vol["issues"]) for vol in _magazine["volumes"]}
 
 
 @st.cache_data(ttl=300)
@@ -1362,29 +1380,18 @@ def fetch_article_content(doc_id, doc_issue, article_no):
 
 @st.cache_data
 def _get_issue_thumbnail_base64(volume_id, issue_num):
-    """Generate a small base64 thumbnail for an issue cover."""
-    base_dir = Path(IMG_DIR) if isinstance(IMG_DIR, str) else IMG_DIR
-    volume_folder = base_dir / f"volume{volume_id}-covers"
-    if not volume_folder.exists():
+    """Return presigned S3 URL for an issue cover thumbnail."""
+    vol_id = int(volume_id)
+    vol_data = next((v for v in _magazine["volumes"] if v["id"] == vol_id), None)
+    if not vol_data:
         return None
-    image_files = []
-    for ext in ['*.jpg', '*.png', '*.jpeg', '*.JPG', '*.PNG', '*.JPEG']:
-        image_files.extend(volume_folder.glob(ext))
-    image_files.sort()
-    idx = issue_num - 1
-    if idx < 0 or idx >= len(image_files):
+    iss_data = next((i for i in vol_data["issues"] if str(i["num"]) == str(issue_num)), None)
+    if not iss_data:
         return None
-    try:
-        img = Image.open(image_files[idx])
-        if img.mode != "RGB":
-            img = img.convert("RGB")
-        img.thumbnail((40, 55), Image.Resampling.LANCZOS)
-        buffered = io.BytesIO()
-        img.save(buffered, format="JPEG", quality=75)
-        return base64.b64encode(buffered.getvalue()).decode()
-    except Exception as e:
-        logger.error(f"Error creating thumbnail vol {volume_id} issue {issue_num}: {e}")
-        return None
+    issue_year = iss_data.get("year", vol_data["year"])
+    return _presign_issue_cover(vol_id, str(issue_num), issue_year)
+
+
 
 
 def _tag_display_name(tag_id, lang):
@@ -1501,12 +1508,7 @@ def render_tags_sidebar(selected_volume, selected_issue):
     )
 
     # Volume accordions
-    volumes = [
-        {"id": 1, "year": "1947"}, {"id": 2, "year": "1948"},
-        {"id": 3, "year": "1949"}, {"id": 4, "year": "1950"},
-        {"id": 5, "year": "1951"}, {"id": 6, "year": "1952"},
-        {"id": 7, "year": "1953"}, {"id": 8, "year": "1954"},
-    ]
+    volumes = [{"id": vol["id"], "year": vol["year"]} for vol in _magazine["volumes"]]
     issue_counts = get_volume_issue_counts()
 
     for vol in volumes:
@@ -1521,9 +1523,7 @@ def render_tags_sidebar(selected_volume, selected_issue):
 def _render_sidebar_issues(volume_id, selected_issue):
     """Render issue file items inside a volume accordion."""
     lang = st.session_state.language
-    base_dir = Path(IMG_DIR) if isinstance(IMG_DIR, str) else IMG_DIR
-    volume_folder = base_dir / f"volume{volume_id}-covers"
-    issues_data = load_volume_issues(volume_id, volume_folder)
+    issues_data = load_volume_issues(volume_id)
 
     if not issues_data:
         st.markdown(
@@ -1537,10 +1537,10 @@ def _render_sidebar_issues(volume_id, selected_issue):
         inum = issue["issue_num"]
         is_active = (selected_issue == str(inum))
         active_cls = " active" if is_active else ""
-        thumb_b64 = _get_issue_thumbnail_base64(int(volume_id), inum)
+        thumb_url = _get_issue_thumbnail_base64(int(volume_id), inum)
         thumb_html = (
-            f'<img src="data:image/jpeg;base64,{thumb_b64}">'
-            if thumb_b64
+            f'<img src="{thumb_url}" style="width:48px;height:48px;object-fit:cover;border-radius:0.5rem;" onerror="this.style.display=\'none\'">'
+            if thumb_url
             else '<div style="width:48px;height:48px;background:#f1f5f9;border-radius:0.5rem;border:1px solid #e2e8f0;"></div>'
         )
         issue_label = f"{t('issue')} {inum}"

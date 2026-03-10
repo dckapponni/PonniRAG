@@ -1,0 +1,178 @@
+{
+  "ponni": {
+    "id": "ponni",
+    "name": {"ta": "பொன்னி", "en": "Ponni"},
+    "description": {
+      "ta": "1947-1955 கலை இலக்கிய இதழ்",
+      "en": "Literary magazine, 1947-1955"
+    },
+    "s3": {
+      "bucket": "ponni-dev",
+      "region": "ap-south-1",
+      "raw_content": "Raw_Proof_Read_Content/",
+      "extracted_text": "extracted_text/",
+      "output_json": "output_json/",
+      "covers_prefix": "Front_cover_of_volumes/",
+      "cover_folder_pattern": "volume {vol_id} cover images/",
+      "cover_file_pattern": "VOL{vol_id} - {issue_num} - {year}.jpg",
+      "magazines": "Magazines/",
+      "snapshots": "qdrant_snapshots/",
+      "summary_csv": "summary.csv"
+    },
+    "qdrant_collection": "qdrant_indexer",
+    "embedding": {
+      "model": "intfloat/multilingual-e5-large",
+      "dim": 1024
+    },
+    "volumes": [
+      {
+        "id": 1, "year": "1947", "cover_image": "Volume1.jpg",
+        "issues": [
+          {"num": 6, "pdf_url": "https://drive.google.com/file/d/15_pcwcwltj8OCPavNp4LNCp1MN1jFLGq/view?usp=drive_link"},
+          {"num": 7, "pdf_url": "https://drive.google.com/file/d/1QmJ6KV_oI8Z2gcpXhv_T4_q8kR67VYIU/view?usp=drive_link"},
+          {"num": 8, "pdf_url": "https://drive.google.com/file/d/1CusAeyXs31YQkRVhVsIb6_4CNcrIYaoG/view?usp=drive_link"},
+          {"num": 9, "pdf_url": "https://drive.google.com/file/d/1_j2uleRMjxvWGWzeDcbLzevPswT_HcEi/view?usp=drive_link"},
+          {"num": 10, "pdf_url": "https://drive.google.com/file/d/1SigjEvoy12AyRpgkzgJ6sXbPHlfiw5w5/view?usp=drive_link"},
+          {"num": 11, "pdf_url": "https://drive.google.com/file/d/1QZEcO900blzW1dGEOMA-I17iw46J5m0B/view?usp=drive_link"},
+          {"num": 12, "pdf_url": "https://drive.google.com/file/d/1JPxexx7LdAOQSwbXfYOlUJ8W1uM5nw45/view?usp=drive_link"},
+          {"num": "PONGAL", "year": "1948", "pdf_url": null}
+        ]
+      },
+      {
+        "id": 2, "year": "1948", "cover_image": "Volume2.jpg",
+        "issues": [
+          {"num": 1, "pdf_url": "https://drive.google.com/file/d/1z38az6xTDWe95FSRyEO63-qKXACoQp1A/view?usp=drive_link"},
+          {"num": 2, "pdf_url": "https://drive.google.com/file/d/18MyHva-XJ1mBm_oeEv8Ra4Xw_FwxfOTq/view?usp=drive_link"},
+          {"num": 3, "pdf_url": "https://drive.google.com/file/d/1hI2u0AtI_J-yHu6HyobANSeb_q-GWnRU/view?usp=drive_link"},
+          {"num": 4, "pdf_url": "https://drive.google.com/file/d/12BaNT0KhkNv4BIWx_PufXy3bKglucTYn/view?usp=drive_link"},
+          {"num": 5, "pdf_url": "https://drive.google.com/file/d/138jLRANTCcaUvYo2lURk9527u-wDumQl/view?usp=drive_link"},
+          {"num": 6, "pdf_url": "https://drive.google.com/file/d/1fakJXwpPheRV-x4DOlKEYhnz2eZ8FYML/view?usp=drive_link"},
+          {"num": 7, "pdf_url": "https://drive.google.com/file/d/14WpSLrcqWqRXB9sQIvmRlWS2ffPKyerC/view?usp=drive_link"},
+          {"num": 8, "pdf_url": "https://drive.google.com/file/d/19oYzhpJ3UStw0tuXNZGTe0jz15CR91g7/view?usp=drive_link"},
+          {"num": 9, "pdf_url": "https://drive.google.com/file/d/1npT20F1SFtSohbADJ5KjMftobmk_8IE1/view?usp=drive_link"},
+          {"num": 10, "pdf_url": "https://drive.google.com/file/d/1pyYijl87y4l2psVSDObNhRtldygVZTmj/view?usp=drive_link"},
+          {"num": 11, "pdf_url": "https://drive.google.com/file/d/11bp1LhKuIo2bZ0jRA9tCuC-0MxJSBkpl/view?usp=drive_link"},
+          {"num": 12, "pdf_url": "https://drive.google.com/file/d/1JIQ5hAfIwUZC4gtJ7pQwhGqbc22oB6Wd/view?usp=drive_link"},
+          {"num": 13, "pdf_url": "https://drive.google.com/file/d/1fxE00dRfSpCatbfCTKYhayXGy0wrJPxA/view?usp=drive_link"},
+          {"num": 14, "pdf_url": "https://drive.google.com/file/d/1Qff94UM9e5hf1BuOiKysss8mlEdh3b5R/view?usp=drive_link"},
+          {"num": 15, "pdf_url": "https://drive.google.com/file/d/1dS2yKwsBnGks3T1Th6I-bWeDfMCCl9QY/view?usp=drive_link"},
+          {"num": 16, "pdf_url": "https://drive.google.com/file/d/1TaZiHaUIIipsMhoD8r0feYlrWVX-yX2I/view?usp=drive_link"},
+          {"num": 17, "pdf_url": "https://drive.google.com/file/d/1gqVxJq6y6quCoF7bmCz1dosdr413CU_6/view?usp=drive_link"},
+          {"num": 18, "pdf_url": "https://drive.google.com/file/d/1cGxDRnviqN-Mnjh3oFiHtHU1Mzs3YMPa/view?usp=drive_link"}
+        ]
+      },
+      {
+        "id": 3, "year": "1949", "cover_image": "Volume3.jpg",
+        "issues": [
+          {"num": 1, "pdf_url": "https://drive.google.com/file/d/1bw0RfNl2wdNBxwO7R7kRdqr6PPqDqBcD/view?usp=drive_link"},
+          {"num": 2, "pdf_url": "https://drive.google.com/file/d/1C52AW_nIYTpKClUekTDdoTZ4-12y5ekR/view?usp=drive_link"},
+          {"num": 3, "pdf_url": "https://drive.google.com/file/d/1cfedNXaNjHJp5BRL4Xsh-2g1XlwtWSbX/view?usp=drive_link"},
+          {"num": 4, "pdf_url": "https://drive.google.com/file/d/1DthckWeiaw4mQRiek64xce_OZS-NI1XQ/view?usp=drive_link"},
+          {"num": 5, "pdf_url": "https://drive.google.com/file/d/1gmyxVyYaPJeYa7zfmCsB9e8edOCjdfXl/view?usp=drive_link"},
+          {"num": 6, "pdf_url": "https://drive.google.com/file/d/1IHdvdQYxSvjdf8X3iQEm_2f0zVQNiIbd/view?usp=drive_link"},
+          {"num": 7, "pdf_url": "https://drive.google.com/file/d/1igYV0_jt42tl8-Fz_KFMtDGEtd-tRmQF/view?usp=drive_link"},
+          {"num": 8, "pdf_url": "https://drive.google.com/file/d/1ycey9n4-ymwM4q1SY3nKssDLQxsQNQAq/view?usp=drive_link"},
+          {"num": 9, "pdf_url": "https://drive.google.com/file/d/1Huk1ju6L6phhEWyAVMSk_VDM9RXO98eB/view?usp=drive_link"},
+          {"num": 10, "pdf_url": "https://drive.google.com/file/d/1zHTGqBVPx67YFayq9yZTHUdzSoA0ckya/view?usp=drive_link"},
+          {"num": 11, "pdf_url": "https://drive.google.com/file/d/1q18M2VHpWVFtZ2cTOkS5PiqiwtEatnjD/view?usp=drive_link"},
+          {"num": 12, "pdf_url": "https://drive.google.com/file/d/1X_F-B058RfduC0OHtmekinaMx-rWrMLH/view?usp=drive_link"},
+          {"num": 13, "pdf_url": "https://drive.google.com/file/d/1HlJ9Teqhsq7b8JYoxVHrld4kV_oeERY4/view?usp=drive_link"},
+          {"num": 14, "pdf_url": "https://drive.google.com/file/d/1cX8Kn_T5bHH4zsVZNB9azRZ2WPScv8mP/view?usp=drive_link"},
+          {"num": 15, "pdf_url": "https://drive.google.com/file/d/1TjNf5OZ92TrCYb8u_GxU2VN4XF7_L4I1/view?usp=drive_link"},
+          {"num": 16, "pdf_url": "https://drive.google.com/file/d/1wXHq8A_DdFqSFoNMBKp1G_jWcNJwvuH5/view?usp=drive_link"},
+          {"num": 17, "pdf_url": "https://drive.google.com/file/d/1FE0mSIeG6jkuiVbBzeL7Od133PKH0v_E/view?usp=drive_link"},
+          {"num": 18, "pdf_url": "https://drive.google.com/file/d/1dUurYWv-L1CpoYDGOoyvtwhCPiyEi3Xx/view?usp=drive_link"},
+          {"num": 19, "pdf_url": "https://drive.google.com/file/d/1bD9SKZ4oKeAXIh4q2cdHvC4yCqPgkoFz/view?usp=drive_link"},
+          {"num": 20, "pdf_url": "https://drive.google.com/file/d/1NWBUsxs8-9X8VcKazuXNz8OPAq7ficxK/view?usp=drive_link"},
+          {"num": 21, "pdf_url": "https://drive.google.com/file/d/1snIy-Rl3U6SMdFVn9nFdIWzHJWxHI1zf/view?usp=drive_link"},
+          {"num": 22, "pdf_url": "https://drive.google.com/file/d/1Ex42Tq4O8YbC6jApMrPXSppEkb-BYIp0/view?usp=drive_link"},
+          {"num": 23, "pdf_url": "https://drive.google.com/file/d/1lKGpK4eGgnFqXqU4uhPwEDsaoSRWg3GX/view?usp=drive_link"}
+        ]
+      },
+      {
+        "id": 4, "year": "1950", "cover_image": "Volume4.jpg",
+        "issues": [
+          {"num": 1, "pdf_url": "https://drive.google.com/file/d/1oinlAzKQBdnzaN7VJsUdiX7eBkiBcU_q/view?usp=drive_link"},
+          {"num": 4, "pdf_url": "https://drive.google.com/file/d/1Kyv0RWQQuNqkUnu7fvTEz9VNAPhojhW8/view?usp=drive_link"},
+          {"num": 5, "pdf_url": "https://drive.google.com/file/d/1yIFgx7gRkY_7hXxxvQ4CQoE9l0p2oKG1/view?usp=drive_link"},
+          {"num": 6, "pdf_url": "https://drive.google.com/file/d/1dtMfMpiKY6aK69j0FeiaTAFcHEkqDazd/view?usp=drive_link"},
+          {"num": 7, "pdf_url": "https://drive.google.com/file/d/1KWVF1hV9FXlWj_7uFXCvIVtmdXIf8IhD/view?usp=drive_link"},
+          {"num": 8, "pdf_url": "https://drive.google.com/file/d/1dy9bemThpceYmuk0ou9FnNcefG-yZuzT/view?usp=drive_link"},
+          {"num": 9, "pdf_url": "https://drive.google.com/file/d/1-Df9c2zy7ExmWNeMKS2cfw8NXvA37lvm/view?usp=drive_link"},
+          {"num": 10, "pdf_url": "https://drive.google.com/file/d/171EKzUoUZVq6Kmwzr2AG4MWRH57m1Kpo/view?usp=drive_link"},
+          {"num": 11, "pdf_url": "https://drive.google.com/file/d/1TLFQ6sCDEkqpVYKYOeDq283JmialFhuM/view?usp=drive_link"}
+        ]
+      },
+      {
+        "id": 5, "year": "1951", "cover_image": "Volume5.jpg",
+        "issues": [
+          {"num": 1, "pdf_url": "https://drive.google.com/file/d/1ypRlyNFhr45pDQ7lARbaxWM3A4jJKiGb/view?usp=drive_link"},
+          {"num": 2, "pdf_url": "https://drive.google.com/file/d/12xH7Z1wyaETQfg6ufdxP0b8Uc863tzSN/view?usp=drive_link"},
+          {"num": 3, "pdf_url": "https://drive.google.com/file/d/1EkpyI-XnKGkWN6n0S-2yp-ELafigTkRv/view?usp=drive_link"},
+          {"num": 4, "pdf_url": "https://drive.google.com/file/d/1cYjXfqJUjcpa2fQeedk2Wxd_X2elrMrr/view?usp=drive_link"},
+          {"num": 5, "pdf_url": "https://drive.google.com/file/d/14pFIpJbIGEAb_suVBikOAKR-KmzSOwl1/view?usp=drive_link"},
+          {"num": 6, "pdf_url": "https://drive.google.com/file/d/1ExQB12KbNF2KWUoVd-GuM7Jg7BwQcpQC/view?usp=drive_link"},
+          {"num": 7, "pdf_url": "https://drive.google.com/file/d/1NEyXZTIasu4ZEnK5z35mkfd2dkH1sWwO/view?usp=drive_link"},
+          {"num": 8, "pdf_url": "https://drive.google.com/file/d/1QVEKnwOV3ccXdbTHeKdpmutnSNUDwScg/view?usp=drive_link"},
+          {"num": 9, "pdf_url": "https://drive.google.com/file/d/1aaJTys-tpKk1y23-9Xy5kVHqKJVx2lOU/view?usp=drive_link"},
+          {"num": 10, "pdf_url": "https://drive.google.com/file/d/13wOEO_sHXeg71rX74p69w-_q3lP73ZbM/view?usp=drive_link"},
+          {"num": 11, "pdf_url": "https://drive.google.com/file/d/1E55IVZSQl5DbEUEaKoU8bfwdvIAxMJ4W/view?usp=drive_link"},
+          {"num": 12, "pdf_url": "https://drive.google.com/file/d/1ZqYx6ZtoqP_PJgX5MwI8fpxishGHV0LS/view?usp=drive_link"},
+          {"num": 13, "pdf_url": "https://drive.google.com/file/d/1gIJcEqzUzyhc68VZpM2IdfH-m21q1odB/view?usp=drive_link"},
+          {"num": 14, "pdf_url": "https://drive.google.com/file/d/1cJsVE6LTMSYrWgCikkjvkiLGENonF1S5/view?usp=drive_link"},
+          {"num": 15, "pdf_url": "https://drive.google.com/file/d/1x9-IPCV3VCmmHEO3vOtExnVDLidOC5-Y/view?usp=drive_link"},
+          {"num": 16, "pdf_url": "https://drive.google.com/file/d/1jmmm_x8ZR64y4nuVaLPiCPcyVqsK1BL0/view?usp=drive_link"},
+          {"num": 17, "pdf_url": "https://drive.google.com/file/d/11p_wqB9iEbajDqUzd1sX-8HP4xWbHjwR/view?usp=drive_link"},
+          {"num": 18, "pdf_url": "https://drive.google.com/file/d/1ZgITDHduzn_gnARE66H7Eb0Md4AN4D3x/view?usp=drive_link"},
+          {"num": 19, "pdf_url": "https://drive.google.com/file/d/1lSn7IX0LothH7hfurFrOnbtC_FZgaOfd/view?usp=drive_link"},
+          {"num": 20, "pdf_url": "https://drive.google.com/file/d/19vW2NFu9rTDBaiHLy_84aq7O9ns-DIJ5/view?usp=drive_link"},
+          {"num": 21, "pdf_url": "https://drive.google.com/file/d/1RbrDRGgUe4FvPY11Vu8GDHILrmPq_pvQ/view?usp=drive_link"}
+        ]
+      },
+      {
+        "id": 6, "year": "1952", "cover_image": "Volume6.jpg",
+        "issues": [
+          {"num": 1, "pdf_url": "https://drive.google.com/file/d/1feI81Ml_IkbSUalZM2e_emuZI1WsZPJD/view?usp=drive_link"},
+          {"num": 2, "pdf_url": "https://drive.google.com/file/d/1OLPI3LZXkihQXv4UIR1MGLqxf53fIZG7/view?usp=drive_link"},
+          {"num": 3, "pdf_url": "https://drive.google.com/file/d/1jGpYWaoQiqkUBZAExAWfpuBk6Yy_bQ8b/view?usp=drive_link"},
+          {"num": 4, "pdf_url": "https://drive.google.com/file/d/1fnOAxDssKmZBqj4zjnsmGHK8SGRM8zlq/view?usp=drive_link"},
+          {"num": 5, "pdf_url": "https://drive.google.com/file/d/1JAFIF9iWVL8dJ-mQ4PlEmqLeVDrdh0xK/view?usp=drive_link"},
+          {"num": 6, "pdf_url": "https://drive.google.com/file/d/1JvBVjz4CqDjMo3TDIlOcQnfLdJodkaBf/view?usp=drive_link"},
+          {"num": 7, "pdf_url": "https://drive.google.com/file/d/1Rx3XdvmT58DJdNK-7cdOC0e6YmfAQ0Yj/view?usp=drive_link"},
+          {"num": 8, "pdf_url": "https://drive.google.com/file/d/1CRFu92MF9dnFd2ZkPhhj0vMv11WTdFhc/view?usp=drive_link"},
+          {"num": 9, "pdf_url": "https://drive.google.com/file/d/1yRyvm363G_Md1Dx0MndLOcmeGWRrymFe/view?usp=drive_link"},
+          {"num": 10, "pdf_url": "https://drive.google.com/file/d/13RiJ1BSO1qeFQJmUdtviPK0cNh1u4TQ9/view?usp=drive_link"},
+          {"num": 11, "pdf_url": "https://drive.google.com/file/d/1Vu2CV4fFBg3o3Mcj6Ikx95qiUdJF-FR_/view?usp=drive_link"},
+          {"num": 12, "pdf_url": "https://drive.google.com/file/d/1R5ISLfscyVWPdHSNN2-7MdvZK1XenLuH/view?usp=drive_link"},
+          {"num": 14, "pdf_url": "https://drive.google.com/file/d/12NuAqn6EZ_8eB-5B2cLI73K0Lg2KIjSh/view?usp=drive_link"},
+          {"num": 17, "pdf_url": "https://drive.google.com/file/d/16Fu7Qm_IsDzXgMikYxvRGcuTfos6Qdf5/view?usp=drive_link"},
+          {"num": 19, "pdf_url": "https://drive.google.com/file/d/19utkz8Ea1W3Jzzw2KOxZf_8zs0uklyrP/view?usp=drive_link"},
+          {"num": 20, "pdf_url": "https://drive.google.com/file/d/1NADYyCCPBPO1tZTIchpIwUVizUTdD1JB/view?usp=drive_link"},
+          {"num": 21, "pdf_url": "https://drive.google.com/file/d/1Ayh7Fm0ZxJKMhxH126IP9bx-E5k4aOJh/view?usp=drive_link"},
+          {"num": "PONGAL", "year": "1953", "pdf_url": null}
+        ]
+      },
+      {
+        "id": 7, "year": "1953", "cover_image": "Volume7.jpg",
+        "issues": [
+          {"num": 1, "pdf_url": "https://drive.google.com/file/d/1jcOAE3bj_oUrFydLZM-wsDJxg9rqmn3H/view?usp=drive_link"}
+        ]
+      },
+      {
+        "id": 8, "year": "1955", "cover_image": "Volume8.jpg",
+        "issues": [
+          {"num": 1, "pdf_url": "https://drive.google.com/file/d/18TndZkat0MBilBdnp1GR_3z6zwFjBbnn/view?usp=drive_link"},
+          {"num": 2, "pdf_url": "https://drive.google.com/file/d/118ZRbQ2w5cR0v5nTfmOx9AeSJTrc7my_/view?usp=drive_link"},
+          {"num": 3, "pdf_url": "https://drive.google.com/file/d/10_0kXiZXXkiFCM-l6Ztu6A04GgJEv33k/view?usp=drive_link"},
+          {"num": 4, "pdf_url": "https://drive.google.com/file/d/1ympAbQ3t2uUTtipD0pc-q3B_2iLv5kWd/view?usp=drive_link"},
+          {"num": 6, "pdf_url": "https://drive.google.com/file/d/1GWx0-Hqjo41UYSYCugNnKB0TdmR4_Kqr/view?usp=drive_link"},
+          {"num": 7, "pdf_url": "https://drive.google.com/file/d/1zpfBU-HYvo-hTEdji0jfvlydVO6agHA6/view?usp=drive_link"},
+          {"num": 8, "pdf_url": "https://drive.google.com/file/d/16SwATZmphv3FcSx68eg_jD7MUblcJgFU/view?usp=drive_link"},
+          {"num": 10, "pdf_url": "https://drive.google.com/file/d/1FIN4zCB0bXd_Ad5QK1SaTlEKKRaTejPD/view?usp=drive_link"},
+          {"num": 11, "pdf_url": "https://drive.google.com/file/d/1F4ew3_uM1Ent6DJwJk4kn4aIfCy_kmRt/view?usp=drive_link"},
+          {"num": 12, "pdf_url": "https://drive.google.com/file/d/1S-PkHiWzabHkySHf7Cw-vNVVUIfUbofa/view?usp=drive_link"}
+        ]
+      }
+    ]
+  }
+}

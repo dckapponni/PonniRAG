@@ -1,22 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { getTags, getIssueArticles, getArticleContent, getPDFLink } from '../services/api';
+import { getTags, getIssueArticles, getArticleContent, getPDFLink, getVolumes, getVolumeIssues } from '../services/api';
 import { getTranslation } from '../services/translations';
-import { VOLUME_IMAGES } from '../data/volumeImages';
-
-// ============================================================================
-// Static Data
-// ============================================================================
-
-const VOLUMES = [
-  { id: 1, year: '1947' },
-  { id: 2, year: '1948' },
-  { id: 3, year: '1949' },
-  { id: 4, year: '1950' },
-  { id: 5, year: '1951' },
-  { id: 6, year: '1952' },
-  { id: 7, year: '1953' },
-  { id: 8, year: '1954' },
-];
 
 // ============================================================================
 // Component
@@ -27,6 +11,8 @@ const TagBrowse = ({ language }) => {
 
   // State
   const [tags, setTags] = useState([]);
+  const [volumes, setVolumes] = useState([]);
+  const [volumeIssues, setVolumeIssues] = useState({});
   const [expandedVolume, setExpandedVolume] = useState(null);
   const [selectedIssue, setSelectedIssue] = useState(null);
   const [selectedArticle, setSelectedArticle] = useState(null);
@@ -38,14 +24,26 @@ const TagBrowse = ({ language }) => {
   const [contentLoading, setContentLoading] = useState(false);
   const [pdfUrl, setPdfUrl] = useState(null);
 
-  // Load tags on mount for category dropdown
+  // Load tags and volumes on mount
   useEffect(() => {
     getTags()
       .then((data) => {
         if (data.success) setTags(data.tags);
       })
       .catch((err) => console.error('Failed to load tags:', err));
+    getVolumes()
+      .then((data) => setVolumes(data))
+      .catch((err) => console.error('Failed to load volumes:', err));
   }, []);
+
+  // Load issues when a volume is expanded
+  useEffect(() => {
+    if (expandedVolume && !volumeIssues[expandedVolume]) {
+      getVolumeIssues(expandedVolume)
+        .then((data) => setVolumeIssues((prev) => ({ ...prev, [expandedVolume]: data })))
+        .catch((err) => console.error('Failed to load issues:', err));
+    }
+  }, [expandedVolume, volumeIssues]);
 
   // Handle issue selection
   const handleSelectIssue = async (volumeId, issueIdx) => {
@@ -104,12 +102,11 @@ const TagBrowse = ({ language }) => {
     return true;
   });
 
-  // Get cover image path for an issue by its actual issue_num
-  const getIssueCoverPath = (volumeId, issueNum) => {
-    const issues = VOLUME_IMAGES[volumeId] || [];
-    const issue = issues.find((i) => i.issue_num === issueNum);
-    if (!issue) return null;
-    return `/images/volume${volumeId}-covers/${issue.filename}`;
+  // Get cover image URL for an issue from API data
+  const getIssueCoverUrl = (volumeId, issueNum) => {
+    const issues = volumeIssues[volumeId] || [];
+    const issue = issues.find((i) => i.issue_number === issueNum);
+    return issue?.cover_image_url || null;
   };
 
   // Placeholder SVG for missing thumbnails
@@ -204,7 +201,7 @@ const TagBrowse = ({ language }) => {
         );
       }
 
-      const coverPath = getIssueCoverPath(selectedIssue.volumeId, selectedIssue.issueIdx);
+      const coverPath = getIssueCoverUrl(selectedIssue.volumeId, selectedIssue.issueIdx);
 
       return (
         <div className="tags-content-animate" key={`issue-${selectedIssue.volumeId}-${selectedIssue.issueIdx}`}>
@@ -342,8 +339,8 @@ const TagBrowse = ({ language }) => {
 
         {/* Volume accordions */}
         <div className="tags-volumes-list">
-          {VOLUMES.map((volume) => {
-            const issues = VOLUME_IMAGES[volume.id] || [];
+          {volumes.map((volume) => {
+            const issues = volumeIssues[volume.id] || [];
             const isExpanded = expandedVolume === volume.id;
 
             return (
@@ -358,7 +355,7 @@ const TagBrowse = ({ language }) => {
                     </span>
                     <span className="tags-volume-year">{volume.year}</span>
                     <span className="tags-volume-count">
-                      &middot; {issues.length} {t('tags_files')}
+                      &middot; {volume.issue_count} {t('tags_files')}
                     </span>
                   </span>
                   <span className={`tags-volume-chevron ${isExpanded ? 'expanded' : ''}`}>
@@ -372,26 +369,25 @@ const TagBrowse = ({ language }) => {
                       const isActive =
                         selectedIssue &&
                         selectedIssue.volumeId === volume.id &&
-                        selectedIssue.issueIdx === issue.issue_num;
-                      const imgPath = `/images/volume${volume.id}-covers/${issue.filename}`;
+                        selectedIssue.issueIdx === issue.issue_number;
 
                       return (
                         <div
-                          key={issue.issue_num}
+                          key={issue.issue_number}
                           className={`tags-issue-item ${isActive ? 'active' : ''}`}
-                          onClick={() => handleSelectIssue(volume.id, issue.issue_num)}
+                          onClick={() => handleSelectIssue(volume.id, issue.issue_number)}
                         >
                           <img
                             className="tags-issue-thumb"
-                            src={imgPath}
-                            alt={`${t('issue_label')} ${issue.issue_num}`}
+                            src={issue.cover_image_url || thumbPlaceholder(String(issue.issue_number))}
+                            alt={`${t('issue_label')} ${issue.issue_number}`}
                             onError={(e) => {
-                              e.target.src = thumbPlaceholder(String(issue.issue_num));
+                              e.target.src = thumbPlaceholder(String(issue.issue_number));
                             }}
                             loading="lazy"
                           />
                           <span className="tags-issue-label">
-                            {t('issue_label')} {issue.issue_num}
+                            {t('issue_label')} {issue.issue_number}
                           </span>
                         </div>
                       );

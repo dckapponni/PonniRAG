@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 from contextlib import asynccontextmanager
 
+import boto3
+from botocore.exceptions import ClientError
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -30,7 +32,61 @@ from cache import _response_cache
 
 from article_tagger import TAXONOMY
 
-from pdf_links import PDF_LINKS
+from config.config import get_magazine_config
+
+# Load magazine registry (single source of truth for volumes/issues/PDFs)
+_magazine = get_magazine_config("ponni")
+_s3_conf = _magazine["s3"]
+
+# Build PDF_LINKS dict from registry for backward compatibility
+PDF_LINKS = {}
+for vol in _magazine["volumes"]:
+    for issue in vol["issues"]:
+        PDF_LINKS[f"vol_{vol['id']}_issue_{issue['num']}"] = issue["pdf_url"]
+
+# S3 client for presigned URLs
+_s3_client = boto3.client("s3", region_name=_s3_conf["region"])
+
+# Presigned URL expiry (seconds)
+_COVER_URL_EXPIRY = 3600      # 1 hour for cover images
+_PDF_URL_EXPIRY = 1800         # 30 minutes for magazine PDFs
+
+
+def _issue_cover_s3_key(volume_id: int, issue_name: str, year: str) -> str:
+    """Derive the S3 key for an issue cover image using convention patterns."""
+    folder = _s3_conf["cover_folder_pattern"].format(vol_id=volume_id)
+    filename = _s3_conf["cover_file_pattern"].format(
+        vol_id=volume_id, issue_num=issue_name, year=year,
+    )
+    return f"{_s3_conf['covers_prefix']}{folder}{filename}"
+
+
+def _presign_cover(volume_id: int, issue_name: str, year: str) -> Optional[str]:
+    """Generate a presigned S3 URL for an issue cover image."""
+    key = _issue_cover_s3_key(volume_id, issue_name, year)
+    try:
+        return _s3_client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": _s3_conf["bucket"], "Key": key},
+            ExpiresIn=_COVER_URL_EXPIRY,
+        )
+    except ClientError:
+        return None
+
+
+def _presign_volume_cover(filename: str) -> Optional[str]:
+    """Generate a presigned S3 URL for a volume cover image."""
+    if not filename:
+        return None
+    key = f"{_s3_conf['covers_prefix']}Volumes/{filename}"
+    try:
+        return _s3_client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": _s3_conf["bucket"], "Key": key},
+            ExpiresIn=_COVER_URL_EXPIRY,
+        )
+    except ClientError:
+        return None
 
 logging.basicConfig(
     level=logging.INFO,
@@ -147,13 +203,16 @@ class VolumeInfo(BaseModel):
     id: int
     year: str
     issue_count: int
+    cover_image_url: Optional[str] = None
 
 
 class VolumeIssue(BaseModel):
     """Response model for volume issue."""
-    issue_number: int
+    issue_number: str
+    year: str
     has_pdf: bool
     pdf_url: Optional[str] = None
+    cover_image_url: Optional[str] = None
 
 
 class PDFLinkResponse(BaseModel):
@@ -699,31 +758,26 @@ async def list_volumes():
     """
     List all volumes in the Ponni digital library.
 
-    Returns volume information including year and issue count.
+    Returns volume information including year, issue count, and presigned
+    cover image URL from S3.
     """
-    # Volume metadata
-    volumes_data = [
-        {"id": 1, "year": "1947", "issues": 7},
-        {"id": 2, "year": "1948", "issues": 19},
-        {"id": 3, "year": "1949", "issues": 21},
-        {"id": 4, "year": "1950", "issues": 9},
-        {"id": 5, "year": "1951", "issues": 21},
-        {"id": 6, "year": "1952", "issues": 18},
-        {"id": 7, "year": "1953", "issues": 1},
-        {"id": 8, "year": "1954", "issues": 10},
-    ]
-
-    # Count actual PDF links per volume
     result = []
-    for vol in volumes_data:
-        vol_id = vol["id"]
-        issue_count = sum(1 for k in PDF_LINKS.keys() if k.startswith(f"vol_{vol_id}_"))
-        result.append(VolumeInfo(
-            id=vol_id,
-            year=vol["year"],
-            issue_count=issue_count
+    for vol in _magazine["volumes"]:
+        # Derive year range from per-issue years
+        issue_years = sorted(set(
+            iss.get("year", vol["year"]) for iss in vol["issues"]
         ))
+        if len(issue_years) > 1:
+            year_display = f"{issue_years[0]}-{issue_years[-1]}"
+        else:
+            year_display = issue_years[0] if issue_years else vol["year"]
 
+        result.append(VolumeInfo(
+            id=vol["id"],
+            year=year_display,
+            issue_count=len(vol["issues"]),
+            cover_image_url=_presign_volume_cover(vol.get("cover_image")),
+        ))
     return result
 
 
@@ -734,23 +788,24 @@ async def get_volume_issues(volume_id: int):
 
     - **volume_id**: Volume number (1-8)
 
-    Returns list of issues with PDF availability status.
+    Returns list of issues with PDF availability and presigned cover image
+    URL from S3.
     """
-    if volume_id < 1 or volume_id > 8:
+    vol_data = next((v for v in _magazine["volumes"] if v["id"] == volume_id), None)
+    if not vol_data:
         raise HTTPException(status_code=404, detail="Volume not found")
 
-    # Find all issues for this volume from PDF_LINKS
     issues = []
-    prefix = f"vol_{volume_id}_issue_"
-
-    for key in sorted(PDF_LINKS.keys()):
-        if key.startswith(prefix):
-            issue_num = int(key.replace(prefix, ""))
-            issues.append(VolumeIssue(
-                issue_number=issue_num,
-                has_pdf=True,
-                pdf_url=PDF_LINKS[key]
-            ))
+    for issue in vol_data["issues"]:
+        issue_year = issue.get("year", vol_data["year"])
+        issue_name = str(issue["num"])
+        issues.append(VolumeIssue(
+            issue_number=issue_name,
+            year=issue_year,
+            has_pdf=bool(issue.get("pdf_url")),
+            pdf_url=issue.get("pdf_url"),
+            cover_image_url=_presign_cover(volume_id, issue_name, issue_year),
+        ))
 
     if not issues:
         raise HTTPException(status_code=404, detail="No issues found for this volume")

@@ -554,77 +554,33 @@ class TestRenderLibraryPage:
 
 class TestRenderVolumeCard:
     """Test suite for volume card rendering."""
-    
+
     @patch('streamlit_app.st')
-    @patch('streamlit_app.Image')
-    @patch('streamlit_app.IMG_DIR', Path('/test/img'))
-    def test_render_volume_card_success(self, mock_pil, mock_st):
-        """Test successful volume card rendering."""
-        mock_img = Mock()
-        mock_img.mode = "RGB"
-        mock_pil.open.return_value = mock_img
+    def test_render_volume_card_with_cover(self, mock_st):
+        """Test successful volume card rendering with S3 cover URL."""
         mock_st.session_state.language = "en"
-        
-        volume = {"id": 1, "desc": "1947", "image": "Volume1.jpg"}
-        
-        with patch.object(Path, 'exists', return_value=True):
-            from streamlit_app import render_volume_card
-            render_volume_card(volume)
-            
-            mock_st.markdown.assert_called_once()
-            card_html = mock_st.markdown.call_args[0][0]
-            assert "Volume 1" in card_html or "தொகுதி 1" in card_html
-    
+
+        volume = {"id": 1, "desc": "1947", "cover_url": "https://s3.example.com/Volume1.jpg"}
+
+        from streamlit_app import render_volume_card
+        render_volume_card(volume)
+
+        mock_st.markdown.assert_called_once()
+        card_html = mock_st.markdown.call_args[0][0]
+        assert "s3.example.com" in card_html
+
     @patch('streamlit_app.st')
-    @patch('streamlit_app.IMG_DIR', Path('/test/img'))
-    def test_render_volume_card_missing_image(self, mock_st):
-        """Test volume card with missing image."""
+    def test_render_volume_card_no_cover(self, mock_st):
+        """Test volume card with no cover URL shows placeholder."""
         mock_st.session_state.language = "en"
-        
-        volume = {"id": 1, "desc": "1947", "image": "Missing.jpg"}
-        
-        with patch.object(Path, 'exists', return_value=False):
-            from streamlit_app import render_volume_card
-            render_volume_card(volume)
-    
-    @patch('streamlit_app.st')
-    @patch('streamlit_app.Image')
-    @patch('streamlit_app.IMG_DIR', Path('/test/img'))
-    @patch('streamlit_app.logger')
-    def test_render_volume_card_image_conversion_error(self, mock_logger, mock_pil, mock_st):
-        """Test volume card with image that needs RGB conversion."""
-        mock_img = Mock()
-        mock_img.mode = "RGBA"
-        converted_img = Mock()
-        converted_img.mode = "RGB"
-        mock_img.convert.return_value = converted_img
-        mock_pil.open.return_value = mock_img
-        mock_st.session_state.language = "ta"
-        
-        volume = {"id": 2, "desc": "1948", "image": "Volume2.png"}
-        
-        with patch.object(Path, 'exists', return_value=True):
-            from streamlit_app import render_volume_card
-            render_volume_card(volume)
-            
-            mock_img.convert.assert_called_with("RGB")
-    
-    @patch('streamlit_app.st')
-    @patch('streamlit_app.Image')
-    @patch('streamlit_app.IMG_DIR', Path('/test/img'))
-    @patch('streamlit_app.logger')
-    def test_render_volume_card_exception_handling(self, mock_logger, mock_pil, mock_st):
-        """Test volume card handles image loading exceptions."""
-        mock_pil.open.side_effect = Exception("Image load error")
-        mock_st.session_state.language = "en"
-        
-        volume = {"id": 1, "desc": "1947", "image": "BadImage.jpg"}
-        
-        with patch.object(Path, 'exists', return_value=True):
-            from streamlit_app import render_volume_card
-            render_volume_card(volume)
-            
-            mock_logger.error.assert_called()
+
+        volume = {"id": 1, "desc": "1947", "cover_url": None}
+
+        from streamlit_app import render_volume_card
+        render_volume_card(volume)
+
+        card_html = mock_st.markdown.call_args[0][0]
+        assert "No cover" in card_html
 
 
 class TestSetPage:
@@ -678,48 +634,45 @@ class TestRenderIssuesPage:
     @patch('streamlit_app.st')
     @patch('streamlit_app.load_volume_issues')
     @patch('streamlit_app.render_issue_grid')
-    @patch('streamlit_app.IMG_DIR', Path('/test/img'))
     def test_render_issues_page_with_issues(self, mock_render_grid, mock_load_issues, mock_st):
         """Test rendering issues page with available issues."""
         mock_st.session_state.language = "en"
         mock_st.button.return_value = False
         mock_load_issues.return_value = [
-            {"issue_num": 1, "has_pdf": True, "image_path": Path("/test/img/i1.jpg")},
-            {"issue_num": 2, "has_pdf": True, "image_path": Path("/test/img/i2.jpg")}
+            {"issue_num": "1", "has_pdf": True, "cover_url": "https://s3.example.com/i1.jpg"},
+            {"issue_num": "2", "has_pdf": True, "cover_url": "https://s3.example.com/i2.jpg"}
         ]
-        
+
         from streamlit_app import render_issues_page
-        
+
         render_issues_page("1")
-        
+
         mock_load_issues.assert_called_once()
         mock_render_grid.assert_called_once()
-    
+
     @patch('streamlit_app.st')
     @patch('streamlit_app.load_volume_issues')
-    @patch('streamlit_app.IMG_DIR', Path('/test/img'))
     def test_render_issues_page_no_issues(self, mock_load_issues, mock_st):
         """Test rendering issues page with no issues found."""
         mock_st.session_state.language = "en"
         mock_st.button.return_value = False
         mock_load_issues.return_value = []
-        
+
         from streamlit_app import render_issues_page
-        
+
         render_issues_page("1")
-        
+
         mock_load_issues.assert_called_once()
-    
+
     @patch('streamlit_app.st')
     @patch('streamlit_app.load_volume_issues')
     @patch('streamlit_app.set_page')
-    @patch('streamlit_app.IMG_DIR', Path('/test/img'))
     def test_render_issues_page_back_button(self, mock_set_page, mock_load_issues, mock_st):
         """Test back button functionality on issues page."""
         mock_st.session_state.language = "en"
         mock_st.button.return_value = True  # Back button clicked
         mock_load_issues.return_value = []
-        
+
         # Mock st.rerun() to raise exception
         mock_st.rerun.side_effect = Exception("Rerun triggered")
         
@@ -1020,93 +973,31 @@ class TestLoadImage:
     """Test suite for image loading utility."""
     
     @patch('streamlit_app.st')
-    @patch('streamlit_app.Image')
-    @patch('streamlit_app.IMG_DIR', Path('/test/img'))
-    def test_load_image_png(self, mock_pil, mock_st):
-        """Test loading PNG image."""
-        mock_img = Mock()
-        mock_img.mode = "RGB"
-        mock_pil.open.return_value = mock_img
-        
-        # Mock exists to return True for .png files
-        def exists_side_effect(path_self):
-            return str(path_self).endswith('.png')
-        
-        with patch.object(Path, 'exists', exists_side_effect):
-            from streamlit_app import load_image
-            
-            load_image("test_image")
-            
-            mock_pil.open.assert_called()
-            mock_st.image.assert_called_once()
-    
+    @patch('streamlit_app._presign_volume_cover')
+    def test_load_image_success(self, mock_presign, mock_st):
+        """Test loading image via S3 presigned URL."""
+        mock_presign.return_value = "https://s3.example.com/Volume1.jpg"
+
+        from streamlit_app import load_image
+
+        load_image("Volume1")
+
+        mock_st.markdown.assert_called_once()
+        html = mock_st.markdown.call_args[0][0]
+        assert "s3.example.com" in html
+
     @patch('streamlit_app.st')
-    @patch('streamlit_app.Image')
-    @patch('streamlit_app.IMG_DIR', Path('/test/img'))
-    def test_load_image_jpg(self, mock_pil, mock_st):
-        """Test loading JPG image."""
-        mock_img = Mock()
-        mock_img.mode = "RGB"
-        mock_pil.open.return_value = mock_img
-        
-        # Mock exists to return True for .jpg files
-        def exists_side_effect(path_self):
-            return str(path_self).endswith('.jpg')
-        
-        with patch.object(Path, 'exists', exists_side_effect):
-            from streamlit_app import load_image
-            
-            load_image("test_image")
-            
-            mock_st.image.assert_called_once()
-    
-    @patch('streamlit_app.st')
-    @patch('streamlit_app.Image')
-    @patch('streamlit_app.IMG_DIR', Path('/test/img'))
-    def test_load_image_rgba_conversion(self, mock_pil, mock_st):
-        """Test loading image that requires RGB conversion."""
-        mock_img = Mock()
-        mock_img.mode = "RGBA"
-        converted_img = Mock()
-        converted_img.mode = "RGB"
-        mock_img.convert.return_value = converted_img
-        mock_pil.open.return_value = mock_img
-        
-        with patch.object(Path, 'exists', return_value=True):
-            from streamlit_app import load_image
-            
-            load_image("test_image")
-            
-            mock_img.convert.assert_called_with("RGB")
-            mock_st.image.assert_called_once()
-    
-    @patch('streamlit_app.st')
-    @patch('streamlit_app.IMG_DIR', Path('/test/img'))
+    @patch('streamlit_app._presign_volume_cover')
     @patch('streamlit_app.logger')
-    def test_load_image_not_found(self, mock_logger, mock_st):
-        """Test loading image that doesn't exist."""
-        with patch.object(Path, 'exists', return_value=False):
-            from streamlit_app import load_image
-            
-            load_image("nonexistent")
-            
-            mock_logger.warning.assert_called()
-    
-    @patch('streamlit_app.st')
-    @patch('streamlit_app.Image')
-    @patch('streamlit_app.IMG_DIR', Path('/test/img'))
-    @patch('streamlit_app.logger')
-    def test_load_image_exception_handling(self, mock_logger, mock_pil, mock_st):
-        """Test handling exceptions during image loading."""
-        mock_pil.open.side_effect = Exception("Load error")
-        
-        with patch.object(Path, 'exists', return_value=True):
-            from streamlit_app import load_image
-            
-            load_image("error_image")
-            
-            # Should try next extension after error
-            assert mock_pil.open.call_count >= 1
+    def test_load_image_not_found(self, mock_logger, mock_presign, mock_st):
+        """Test loading image when presigned URL is not available."""
+        mock_presign.return_value = None
+
+        from streamlit_app import load_image
+
+        load_image("nonexistent")
+
+        mock_logger.warning.assert_called()
 
 
 class TestRenderAboutPage:

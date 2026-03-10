@@ -9,6 +9,7 @@ qdrant_data/
 *.json
 !frontend/package.json
 !frontend/package-lock.json
+!src/config/magazine_registry.json
 *.log
 .env
 *.sqlite
