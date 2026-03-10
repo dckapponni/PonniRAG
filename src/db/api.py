@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Any
 from contextlib import asynccontextmanager
 
 import boto3
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, NoCredentialsError, BotoCoreError
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -65,12 +65,15 @@ def _presign_cover(volume_id: int, issue_name: str, year: str) -> Optional[str]:
     """Generate a presigned S3 URL for an issue cover image."""
     key = _issue_cover_s3_key(volume_id, issue_name, year)
     try:
-        return _s3_client.generate_presigned_url(
+        url = _s3_client.generate_presigned_url(
             "get_object",
             Params={"Bucket": _s3_conf["bucket"], "Key": key},
             ExpiresIn=_COVER_URL_EXPIRY,
         )
-    except ClientError:
+        logger.debug(f"Presigned issue cover: {key}")
+        return url
+    except (ClientError, NoCredentialsError, BotoCoreError) as e:
+        logger.warning(f"Failed to presign issue cover {key}: {e}")
         return None
 
 
@@ -80,12 +83,15 @@ def _presign_volume_cover(filename: str) -> Optional[str]:
         return None
     key = f"{_s3_conf['covers_prefix']}Volumes/{filename}"
     try:
-        return _s3_client.generate_presigned_url(
+        url = _s3_client.generate_presigned_url(
             "get_object",
             Params={"Bucket": _s3_conf["bucket"], "Key": key},
             ExpiresIn=_COVER_URL_EXPIRY,
         )
-    except ClientError:
+        logger.debug(f"Presigned volume cover: {key}")
+        return url
+    except (ClientError, NoCredentialsError, BotoCoreError) as e:
+        logger.warning(f"Failed to presign volume cover {key}: {e}")
         return None
 
 logging.basicConfig(
@@ -359,6 +365,35 @@ async def health_check():
         llm=llm_health,
         api="healthy",
     )
+
+
+@app.get("/api/debug/s3", tags=["Health"])
+async def debug_s3():
+    """Debug S3 presigned URL generation — check credentials and sample URLs."""
+    result = {"credentials": False, "sample_volume_url": None, "sample_issue_url": None, "error": None}
+    try:
+        # Test credentials by generating a presigned URL
+        vol = _magazine["volumes"][0]
+        vol_url = _presign_volume_cover(vol.get("cover_image"))
+        result["sample_volume_url"] = vol_url
+        result["credentials"] = vol_url is not None
+
+        iss = vol["issues"][0]
+        iss_url = _presign_cover(vol["id"], str(iss["num"]), iss.get("year", vol["year"]))
+        result["sample_issue_url"] = iss_url
+
+        # Check if the object actually exists
+        key = f"{_s3_conf['covers_prefix']}Volumes/{vol.get('cover_image')}"
+        try:
+            head = _s3_client.head_object(Bucket=_s3_conf["bucket"], Key=key)
+            result["object_exists"] = True
+            result["object_size"] = head["ContentLength"]
+        except (ClientError, NoCredentialsError) as e:
+            result["object_exists"] = False
+            result["head_error"] = str(e)
+    except Exception as e:
+        result["error"] = str(e)
+    return result
 
 
 @app.get("/", tags=["Health"])

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import streamlit as st
 import boto3
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, NoCredentialsError, BotoCoreError
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
@@ -28,12 +28,15 @@ _COVER_URL_EXPIRY = 3600
 def _presign_s3_url(key: str) -> Optional[str]:
     """Generate a presigned S3 URL for a given key."""
     try:
-        return _s3_client.generate_presigned_url(
+        url = _s3_client.generate_presigned_url(
             "get_object",
             Params={"Bucket": _s3_conf["bucket"], "Key": key},
             ExpiresIn=_COVER_URL_EXPIRY,
         )
-    except ClientError:
+        logger.debug(f"Presigned S3 URL for: {key}")
+        return url
+    except (ClientError, NoCredentialsError, BotoCoreError) as e:
+        logger.warning(f"Failed to presign {key}: {e}")
         return None
 
 
