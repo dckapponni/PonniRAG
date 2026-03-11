@@ -1,4 +1,5 @@
 import base64
+import io
 import logging
 import os
 import sys
@@ -7,6 +8,7 @@ from typing import Dict, List, Optional, Tuple
 
 import httpx
 import streamlit as st
+from PIL import Image
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
@@ -30,8 +32,23 @@ _API_BASE = os.environ.get("API_BASE_URL", "http://localhost:8000")
 _image_cache: Dict[str, bytes] = {}
 
 
-def _fetch_image_bytes(api_path: str) -> Optional[bytes]:
-    """Fetch image from API proxy and return raw bytes."""
+def _resize_image(raw: bytes, max_width: int = 400) -> bytes:
+    """Resize image to max_width, preserving aspect ratio. Returns JPEG bytes."""
+    try:
+        img = Image.open(io.BytesIO(raw))
+        if img.width > max_width:
+            ratio = max_width / img.width
+            new_size = (max_width, int(img.height * ratio))
+            img = img.resize(new_size, Image.LANCZOS)
+        buf = io.BytesIO()
+        img.convert("RGB").save(buf, format="JPEG", quality=80)
+        return buf.getvalue()
+    except Exception:
+        return raw
+
+
+def _fetch_image_bytes(api_path: str, max_width: int = 400) -> Optional[bytes]:
+    """Fetch image from API proxy, resize, and return bytes."""
     if api_path in _image_cache:
         return _image_cache[api_path]
     url = f"{_API_BASE}{api_path}"
@@ -39,9 +56,10 @@ def _fetch_image_bytes(api_path: str) -> Optional[bytes]:
         with httpx.Client(timeout=10) as client:
             resp = client.get(url)
         if resp.status_code == 200:
-            _image_cache[api_path] = resp.content
-            logging.info("Image fetched OK: %s (%d bytes)", api_path, len(resp.content))
-            return resp.content
+            resized = _resize_image(resp.content, max_width)
+            _image_cache[api_path] = resized
+            logging.info("Image fetched OK: %s (%d -> %d bytes)", api_path, len(resp.content), len(resized))
+            return resized
         else:
             logging.warning("Image fetch %s returned status %s", url, resp.status_code)
     except Exception as e:
