@@ -1,8 +1,11 @@
+import base64
 import logging
 import os
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+import httpx
 import streamlit as st
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
@@ -19,18 +22,35 @@ for _vol in _magazine["volumes"]:
     for _iss in _vol["issues"]:
         PDF_LINKS[f"vol_{_vol['id']}_issue_{_iss['num']}"] = _iss["pdf_url"]
 
-# API base URL for image proxy (FastAPI serves images from S3)
+# Internal API base URL (server-side fetch, always localhost)
 _API_BASE = os.environ.get("API_BASE_URL", "http://localhost:8000")
 
 
-def _volume_cover_url(volume_id: int) -> str:
-    """Return API proxy URL for a volume cover image."""
-    return f"{_API_BASE}/api/images/volumes/{volume_id}/cover"
+@st.cache_data(ttl=3600)
+def _fetch_image_b64(api_path: str) -> Optional[str]:
+    """Fetch image from API proxy and return as base64 data URI."""
+    try:
+        with httpx.Client(timeout=5) as client:
+            resp = client.get(f"{_API_BASE}{api_path}")
+        if resp.status_code == 200:
+            ct = resp.headers.get("Content-Type", "image/jpeg")
+            b64 = base64.b64encode(resp.content).decode()
+            return f"data:{ct};base64,{b64}"
+    except Exception:
+        pass
+    return None
 
 
-def _issue_cover_url(volume_id: int, issue_name: str) -> str:
-    """Return API proxy URL for an issue cover image."""
-    return f"{_API_BASE}/api/images/volumes/{volume_id}/issues/{issue_name}/cover"
+def _volume_cover_url(volume_id: int) -> Optional[str]:
+    """Return base64 data URI for a volume cover image."""
+    return _fetch_image_b64(f"/api/images/volumes/{volume_id}/cover")
+
+
+def _issue_cover_url(volume_id: int, issue_name: str) -> Optional[str]:
+    """Return base64 data URI for an issue cover image."""
+    return _fetch_image_b64(
+        f"/api/images/volumes/{volume_id}/issues/{issue_name}/cover"
+    )
 
 logging.basicConfig(
     level=logging.INFO,
