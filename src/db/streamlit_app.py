@@ -1058,14 +1058,20 @@ def render_pdf_viewer_page(volume_id: str, issue_num: str):
 
 def load_image(image_name: str):
     """
-    Load and display a volume cover image via API proxy.
+    Load and display an image via API proxy.
+    Handles both volume covers ("Volume1") and about images ("about1").
     """
-    # Extract volume number from image_name (e.g. "Volume1" -> 1)
-    vol_num = image_name.replace("Volume", "")
-    url = _volume_cover_url(int(vol_num)) if vol_num.isdigit() else None
+    url = None
+    if image_name.startswith("Volume"):
+        vol_num = image_name.replace("Volume", "")
+        if vol_num.isdigit():
+            url = _volume_cover_url(int(vol_num))
+    elif image_name.startswith("about"):
+        url = _fetch_image_b64(f"/api/images/about/{image_name}.png")
+
     if url:
         st.markdown(
-            f'<img src="{url}" style="max-width:100%;border-radius:0.5rem;" onerror="this.style.display=\'none\'">',
+            f'<img src="{url}" style="max-width:100%;border-radius:0.5rem;">',
             unsafe_allow_html=True,
         )
         logger.debug(f"Loaded image from API proxy: {image_name}")
