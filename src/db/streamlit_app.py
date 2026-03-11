@@ -919,7 +919,6 @@ def render_volume_card(vol: Dict):
         </div></a>""",
         unsafe_allow_html=True,
     )
-    st.markdown(card_html, unsafe_allow_html=True)
     logger.debug(f"Rendered volume card: {vol['id']}")
 
 
@@ -1020,7 +1019,6 @@ def render_issue_card(issue: Dict, volume_id: str):
         f'<div style="text-align:center;font-weight:600;font-size:1rem;color:#1e3a8a;padding:0.5rem 0;">{t("issue")} {issue["issue_num"]}</div></a>',
         unsafe_allow_html=True,
     )
-    st.markdown(card_html, unsafe_allow_html=True)
 
 
 def render_pdf_viewer_page(volume_id: str, issue_num: str):
