@@ -973,10 +973,10 @@ class TestLoadImage:
     """Test suite for image loading utility."""
     
     @patch('streamlit_app.st')
-    @patch('streamlit_app._presign_volume_cover')
-    def test_load_image_success(self, mock_presign, mock_st):
-        """Test loading image via S3 presigned URL."""
-        mock_presign.return_value = "https://s3.example.com/Volume1.jpg"
+    @patch('streamlit_app._volume_cover_url')
+    def test_load_image_success(self, mock_cover_url, mock_st):
+        """Test loading image via API proxy URL."""
+        mock_cover_url.return_value = "http://localhost:8000/api/images/volumes/1/cover"
 
         from streamlit_app import load_image
 
@@ -984,15 +984,12 @@ class TestLoadImage:
 
         mock_st.markdown.assert_called_once()
         html = mock_st.markdown.call_args[0][0]
-        assert "s3.example.com" in html
+        assert "/api/images/volumes/1/cover" in html
 
     @patch('streamlit_app.st')
-    @patch('streamlit_app._presign_volume_cover')
     @patch('streamlit_app.logger')
-    def test_load_image_not_found(self, mock_logger, mock_presign, mock_st):
-        """Test loading image when presigned URL is not available."""
-        mock_presign.return_value = None
-
+    def test_load_image_not_found(self, mock_logger, mock_st):
+        """Test loading image with invalid name."""
         from streamlit_app import load_image
 
         load_image("nonexistent")

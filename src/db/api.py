@@ -14,9 +14,9 @@ from contextlib import asynccontextmanager
 
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError, BotoCoreError
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel, Field
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
@@ -44,16 +44,33 @@ for vol in _magazine["volumes"]:
     for issue in vol["issues"]:
         PDF_LINKS[f"vol_{vol['id']}_issue_{issue['num']}"] = issue["pdf_url"]
 
-# S3 client for presigned URLs
-_s3_client = boto3.client("s3", region_name=_s3_conf["region"])
+# S3 client for image proxy
+_s3_client = boto3.client(
+    "s3",
+    region_name=_s3_conf["region"],
+)
 
-# Presigned URL expiry (seconds)
-_COVER_URL_EXPIRY = 3600      # 1 hour for cover images
-_PDF_URL_EXPIRY = 1800         # 30 minutes for magazine PDFs
+# Image cache duration (browser Cache-Control header)
+_IMAGE_CACHE_SECONDS = 3600  # 1 hour
 
 
-def _issue_cover_s3_key(volume_id: int, issue_name: str, year: str) -> str:
-    """Derive the S3 key for an issue cover image using convention patterns."""
+def _volume_cover_s3_key(volume_id: int) -> Optional[str]:
+    """Derive S3 key for a volume cover image."""
+    vol_data = next((v for v in _magazine["volumes"] if v["id"] == volume_id), None)
+    if not vol_data or not vol_data.get("cover_image"):
+        return None
+    return f"{_s3_conf['covers_prefix']}Volumes/{vol_data['cover_image']}"
+
+
+def _issue_cover_s3_key(volume_id: int, issue_name: str) -> Optional[str]:
+    """Derive S3 key for an issue cover image using convention patterns."""
+    vol_data = next((v for v in _magazine["volumes"] if v["id"] == volume_id), None)
+    if not vol_data:
+        return None
+    iss_data = next((i for i in vol_data["issues"] if str(i["num"]) == str(issue_name)), None)
+    if not iss_data:
+        return None
+    year = iss_data.get("year", vol_data["year"])
     folder = _s3_conf["cover_folder_pattern"].format(vol_id=volume_id)
     filename = _s3_conf["cover_file_pattern"].format(
         vol_id=volume_id, issue_num=issue_name, year=year,
@@ -61,37 +78,15 @@ def _issue_cover_s3_key(volume_id: int, issue_name: str, year: str) -> str:
     return f"{_s3_conf['covers_prefix']}{folder}{filename}"
 
 
-def _presign_cover(volume_id: int, issue_name: str, year: str) -> Optional[str]:
-    """Generate a presigned S3 URL for an issue cover image."""
-    key = _issue_cover_s3_key(volume_id, issue_name, year)
+def _fetch_s3_image(key: str) -> Optional[dict]:
+    """Fetch an image from S3. Returns {'body': bytes, 'content_type': str} or None."""
     try:
-        url = _s3_client.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": _s3_conf["bucket"], "Key": key},
-            ExpiresIn=_COVER_URL_EXPIRY,
-        )
-        logger.debug(f"Presigned issue cover: {key}")
-        return url
+        resp = _s3_client.get_object(Bucket=_s3_conf["bucket"], Key=key)
+        body = resp["Body"].read()
+        content_type = resp.get("ContentType", "image/jpeg")
+        return {"body": body, "content_type": content_type}
     except (ClientError, NoCredentialsError, BotoCoreError) as e:
-        logger.warning(f"Failed to presign issue cover {key}: {e}")
-        return None
-
-
-def _presign_volume_cover(filename: str) -> Optional[str]:
-    """Generate a presigned S3 URL for a volume cover image."""
-    if not filename:
-        return None
-    key = f"{_s3_conf['covers_prefix']}Volumes/{filename}"
-    try:
-        url = _s3_client.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": _s3_conf["bucket"], "Key": key},
-            ExpiresIn=_COVER_URL_EXPIRY,
-        )
-        logger.debug(f"Presigned volume cover: {key}")
-        return url
-    except (ClientError, NoCredentialsError, BotoCoreError) as e:
-        logger.warning(f"Failed to presign volume cover {key}: {e}")
+        logger.warning(f"Failed to fetch S3 image {key}: {e}")
         return None
 
 logging.basicConfig(
@@ -368,29 +363,25 @@ async def health_check():
 
 
 @app.get("/api/debug/s3", tags=["Health"])
-async def debug_s3():
-    """Debug S3 presigned URL generation — check credentials and sample URLs."""
-    result = {"credentials": False, "sample_volume_url": None, "sample_issue_url": None, "error": None}
+async def debug_s3(request: Request):
+    """Debug S3 connectivity — check credentials and test image proxy."""
+    base = str(request.base_url).rstrip("/")
+    result = {"credentials": False, "error": None}
     try:
-        # Test credentials by generating a presigned URL
         vol = _magazine["volumes"][0]
-        vol_url = _presign_volume_cover(vol.get("cover_image"))
-        result["sample_volume_url"] = vol_url
-        result["credentials"] = vol_url is not None
-
-        iss = vol["issues"][0]
-        iss_url = _presign_cover(vol["id"], str(iss["num"]), iss.get("year", vol["year"]))
-        result["sample_issue_url"] = iss_url
-
-        # Check if the object actually exists
-        key = f"{_s3_conf['covers_prefix']}Volumes/{vol.get('cover_image')}"
+        key = _volume_cover_s3_key(vol["id"])
         try:
             head = _s3_client.head_object(Bucket=_s3_conf["bucket"], Key=key)
+            result["credentials"] = True
             result["object_exists"] = True
             result["object_size"] = head["ContentLength"]
         except (ClientError, NoCredentialsError) as e:
             result["object_exists"] = False
             result["head_error"] = str(e)
+
+        result["sample_volume_url"] = f"{base}/api/images/volumes/{vol['id']}/cover"
+        iss = vol["issues"][0]
+        result["sample_issue_url"] = f"{base}/api/images/volumes/{vol['id']}/issues/{iss['num']}/cover"
     except Exception as e:
         result["error"] = str(e)
     return result
@@ -406,6 +397,38 @@ async def root():
         "docs": "/docs",
         "health": "/health"
     }
+
+@app.get("/api/images/volumes/{volume_id}/cover", tags=["Images"])
+async def get_volume_cover(volume_id: int):
+    """Proxy volume cover image from S3. Never expires."""
+    key = _volume_cover_s3_key(volume_id)
+    if not key:
+        raise HTTPException(status_code=404, detail="Volume not found")
+    img = await asyncio.to_thread(_fetch_s3_image, key)
+    if not img:
+        raise HTTPException(status_code=404, detail="Cover image not found")
+    return Response(
+        content=img["body"],
+        media_type=img["content_type"],
+        headers={"Cache-Control": f"public, max-age={_IMAGE_CACHE_SECONDS}"},
+    )
+
+
+@app.get("/api/images/volumes/{volume_id}/issues/{issue_name}/cover", tags=["Images"])
+async def get_issue_cover(volume_id: int, issue_name: str):
+    """Proxy issue cover image from S3. Never expires."""
+    key = _issue_cover_s3_key(volume_id, issue_name)
+    if not key:
+        raise HTTPException(status_code=404, detail="Issue not found")
+    img = await asyncio.to_thread(_fetch_s3_image, key)
+    if not img:
+        raise HTTPException(status_code=404, detail="Cover image not found")
+    return Response(
+        content=img["body"],
+        media_type=img["content_type"],
+        headers={"Cache-Control": f"public, max-age={_IMAGE_CACHE_SECONDS}"},
+    )
+
 
 @app.post("/api/ask", response_model=QuestionResponse, tags=["Search"])
 async def ask_question_endpoint(request: QuestionRequest):
@@ -789,13 +812,14 @@ async def get_issue_statistics():
 
 
 @app.get("/api/library/volumes", response_model=List[VolumeInfo], tags=["Library"])
-async def list_volumes():
+async def list_volumes(request: Request):
     """
     List all volumes in the Ponni digital library.
 
-    Returns volume information including year, issue count, and presigned
-    cover image URL from S3.
+    Returns volume information including year, issue count, and proxy
+    cover image URL.
     """
+    base = str(request.base_url).rstrip("/")
     result = []
     for vol in _magazine["volumes"]:
         # Derive year range from per-issue years
@@ -811,21 +835,21 @@ async def list_volumes():
             id=vol["id"],
             year=year_display,
             issue_count=len(vol["issues"]),
-            cover_image_url=_presign_volume_cover(vol.get("cover_image")),
+            cover_image_url=f"{base}/api/images/volumes/{vol['id']}/cover",
         ))
     return result
 
 
 @app.get("/api/library/volumes/{volume_id}/issues", response_model=List[VolumeIssue], tags=["Library"])
-async def get_volume_issues(volume_id: int):
+async def get_volume_issues(volume_id: int, request: Request):
     """
     Get all issues for a specific volume.
 
     - **volume_id**: Volume number (1-8)
 
-    Returns list of issues with PDF availability and presigned cover image
-    URL from S3.
+    Returns list of issues with PDF availability and proxy cover image URL.
     """
+    base = str(request.base_url).rstrip("/")
     vol_data = next((v for v in _magazine["volumes"] if v["id"] == volume_id), None)
     if not vol_data:
         raise HTTPException(status_code=404, detail="Volume not found")
@@ -839,7 +863,7 @@ async def get_volume_issues(volume_id: int):
             year=issue_year,
             has_pdf=bool(issue.get("pdf_url")),
             pdf_url=issue.get("pdf_url"),
-            cover_image_url=_presign_cover(volume_id, issue_name, issue_year),
+            cover_image_url=f"{base}/api/images/volumes/{volume_id}/issues/{issue_name}/cover",
         ))
 
     if not issues:

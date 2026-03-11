@@ -1,10 +1,9 @@
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import streamlit as st
-import boto3
-from botocore.exceptions import ClientError, NoCredentialsError, BotoCoreError
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
@@ -20,47 +19,18 @@ for _vol in _magazine["volumes"]:
     for _iss in _vol["issues"]:
         PDF_LINKS[f"vol_{_vol['id']}_issue_{_iss['num']}"] = _iss["pdf_url"]
 
-# S3 client for presigned URLs
-_s3_client = boto3.client("s3", region_name=_s3_conf["region"])
-_COVER_URL_EXPIRY = 3600
+# API base URL for image proxy (FastAPI serves images from S3)
+_API_BASE = os.environ.get("API_BASE_URL", "http://localhost:8000")
 
 
-def _presign_s3_url(key: str) -> Optional[str]:
-    """Generate a presigned S3 URL for a given key."""
-    try:
-        url = _s3_client.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": _s3_conf["bucket"], "Key": key},
-            ExpiresIn=_COVER_URL_EXPIRY,
-        )
-        logger.debug(f"Presigned S3 URL for: {key}")
-        return url
-    except (ClientError, NoCredentialsError, BotoCoreError) as e:
-        logger.warning(f"Failed to presign {key}: {e}")
-        return None
+def _volume_cover_url(volume_id: int) -> str:
+    """Return API proxy URL for a volume cover image."""
+    return f"{_API_BASE}/api/images/volumes/{volume_id}/cover"
 
 
-def _issue_cover_s3_key(volume_id: int, issue_name: str, year: str) -> str:
-    """Derive S3 key for an issue cover image."""
-    folder = _s3_conf["cover_folder_pattern"].format(vol_id=volume_id)
-    filename = _s3_conf["cover_file_pattern"].format(
-        vol_id=volume_id, issue_num=issue_name, year=year,
-    )
-    return f"{_s3_conf['covers_prefix']}{folder}{filename}"
-
-
-def _presign_volume_cover(filename: str) -> Optional[str]:
-    """Generate presigned URL for a volume cover image."""
-    if not filename:
-        return None
-    key = f"{_s3_conf['covers_prefix']}Volumes/{filename}"
-    return _presign_s3_url(key)
-
-
-def _presign_issue_cover(volume_id: int, issue_name: str, year: str) -> Optional[str]:
-    """Generate presigned URL for an issue cover image."""
-    key = _issue_cover_s3_key(volume_id, issue_name, year)
-    return _presign_s3_url(key)
+def _issue_cover_url(volume_id: int, issue_name: str) -> str:
+    """Return API proxy URL for an issue cover image."""
+    return f"{_API_BASE}/api/images/volumes/{volume_id}/issues/{issue_name}/cover"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -880,7 +850,7 @@ def render_library_page():
         volumes.append({
             "id": vol["id"],
             "desc": year_display,
-            "cover_url": _presign_volume_cover(vol.get("cover_image")),
+            "cover_url": _volume_cover_url(vol["id"]),
         })
 
     for i in range(0, len(volumes), 3):
@@ -895,10 +865,10 @@ def render_library_page():
 
 def render_volume_card(vol: Dict):
     """
-    Render a single volume card with S3 presigned cover image.
+    Render a single volume card with cover image from API proxy.
 
     Creates a clickable card displaying a volume's cover image, number, and year.
-    Falls back to a placeholder if the presigned URL is not available.
+    Falls back to a placeholder if the image is not available.
     """
     cover_url = vol.get("cover_url")
     if cover_url:
@@ -960,7 +930,7 @@ def load_volume_issues(volume_id: str) -> List[Dict]:
     """
     Load issue data for a specific volume from the magazine registry.
 
-    Returns list of issues with presigned S3 cover URLs and PDF availability.
+    Returns list of issues with API proxy cover URLs and PDF availability.
     """
     vol_id = int(volume_id)
     vol_data = next((v for v in _magazine["volumes"] if v["id"] == vol_id), None)
@@ -974,7 +944,7 @@ def load_volume_issues(volume_id: str) -> List[Dict]:
         issues_data.append({
             "issue_num": issue_name,
             "has_pdf": bool(iss.get("pdf_url")),
-            "cover_url": _presign_issue_cover(vol_id, issue_name, issue_year),
+            "cover_url": _issue_cover_url(vol_id, issue_name),
         })
     logger.info(f"Loaded {len(issues_data)} issues for volume {volume_id}")
     return issues_data
@@ -998,7 +968,7 @@ def render_issue_grid(issues_data: List[Dict], volume_id: str):
 
 def render_issue_card(issue: Dict, volume_id: str):
     """
-    Render a single issue card with S3 presigned cover image.
+    Render a single issue card with cover image from API proxy.
 
     Creates a clickable card displaying an issue's cover image and number,
     linking to the PDF viewer page.
@@ -1052,19 +1022,19 @@ def render_pdf_viewer_page(volume_id: str, issue_num: str):
 
 def load_image(image_name: str):
     """
-    Load and display a volume cover image via S3 presigned URL.
-    Falls back to placeholder if not available.
+    Load and display a volume cover image via API proxy.
     """
-    url = _presign_volume_cover(f"{image_name}.jpg")
+    # Extract volume number from image_name (e.g. "Volume1" -> 1)
+    vol_num = image_name.replace("Volume", "")
+    url = _volume_cover_url(int(vol_num)) if vol_num.isdigit() else None
     if url:
         st.markdown(
             f'<img src="{url}" style="max-width:100%;border-radius:0.5rem;" onerror="this.style.display=\'none\'">',
             unsafe_allow_html=True,
         )
-        logger.debug(f"Loaded image from S3: {image_name}")
+        logger.debug(f"Loaded image from API proxy: {image_name}")
     else:
-        logger.warning(f"Could not generate presigned URL for: {image_name}")
-    logger.warning(f"Image not found: {image_name}")
+        logger.warning(f"Could not resolve image: {image_name}")
 
 
 @st.cache_data(ttl=300)
@@ -1382,16 +1352,8 @@ def fetch_article_content(doc_id, doc_issue, article_no):
 
 @st.cache_data
 def _get_issue_thumbnail_base64(volume_id, issue_num):
-    """Return presigned S3 URL for an issue cover thumbnail."""
-    vol_id = int(volume_id)
-    vol_data = next((v for v in _magazine["volumes"] if v["id"] == vol_id), None)
-    if not vol_data:
-        return None
-    iss_data = next((i for i in vol_data["issues"] if str(i["num"]) == str(issue_num)), None)
-    if not iss_data:
-        return None
-    issue_year = iss_data.get("year", vol_data["year"])
-    return _presign_issue_cover(vol_id, str(issue_num), issue_year)
+    """Return API proxy URL for an issue cover thumbnail."""
+    return _issue_cover_url(int(volume_id), str(issue_num))
 
 
 
