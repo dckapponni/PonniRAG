@@ -111,10 +111,7 @@ def extract_malar_ithal_from_filename(filename):
             year       = vol_text_match.group(3)
 
             ITHAL_MAP = {
-                'PONGAL':    'பொங்கல் மலர்',
-                'DEEPAVALI': 'தீபாவளி மலர்',
-                'SPECIAL':   'சிறப்பு மலர்',
-                'ANNUAL':    'ஆண்டு மலர்',
+                'PONGAL':    'பொங்கல் மலர்'
             }
             ithal = ITHAL_MAP.get(ithal_text, ithal_text)
             logger.info(f"VOL-TEXT pattern: மலர்={malar}, இதழ்={ithal}, year={year}")
