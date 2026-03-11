@@ -892,14 +892,14 @@ def render_volume_card(vol: Dict):
     """
     cover_url = vol.get("cover_url")
     if cover_url:
-        img_tag = f'<img src="{cover_url}" style="max-width:100%; height:auto; border-radius:0.5rem; margin-bottom:0.8rem;" onerror="this.style.display=\'none\'">'
+        img_tag = f'<img src="{cover_url}" style="width:100%; height:300px; object-fit:cover; border-radius:0.5rem; margin-bottom:0.8rem; display:block;">'
     else:
-        img_tag = '<div style="width:250px;height:375px;background:#f1f5f9;border-radius:0.5rem;margin:0 auto 0.8rem;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:1.2rem;">No cover</div>'
+        img_tag = '<div style="width:100%;height:300px;background:#f1f5f9;border-radius:0.5rem;margin:0 auto 0.8rem;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:1.2rem;">No cover</div>'
 
     card_html = f"""
     <a href="?page=issues&volume={vol['id']}" target="_self" style="text-decoration:none; display:block; width:100%;">
         <div style="background:#ffffff; border:1px solid #e2e8f0; border-radius:0.75rem; padding:1rem; text-align:center;
-                    box-shadow:0 2px 8px rgba(0,0,0,0.08); transition:all 0.3s ease; cursor:pointer; width:350px; margin:0 auto;">
+                    box-shadow:0 2px 8px rgba(0,0,0,0.08); transition:all 0.3s ease; cursor:pointer; max-width:350px; margin:0 auto; overflow:hidden;">
             {img_tag}
             <div style="font-weight:600; font-size:1.1rem; color:#1e3a8a; line-height:1.4;">
                 பொன்னி<br>{t('lib_vol')} {vol['id']}
@@ -995,14 +995,19 @@ def render_issue_card(issue: Dict, volume_id: str):
     """
     cover_url = issue.get("cover_url")
     if cover_url:
-        img_tag = f'<img src="{cover_url}" alt="{t("issue")} {issue["issue_num"]}" onerror="this.style.display=\'none\'">'
+        img_tag = f'<img src="{cover_url}" alt="{t("issue")} {issue["issue_num"]}" style="width:100%; height:250px; object-fit:cover; display:block; border-radius:0.5rem 0.5rem 0 0;">'
     else:
-        img_tag = f'<div style="width:300px;height:400px;background:#f1f5f9;border-radius:0.5rem;display:flex;align-items:center;justify-content:center;color:#94a3b8;">{t("issue")} {issue["issue_num"]}</div>'
+        img_tag = f'<div style="width:100%;height:250px;background:#f1f5f9;border-radius:0.5rem 0.5rem 0 0;display:flex;align-items:center;justify-content:center;color:#94a3b8;">{t("issue")} {issue["issue_num"]}</div>'
 
     card_html = f"""
-    <a href="?page=pdf_viewer&volume={volume_id}&issue={issue['issue_num']}" target="_self" class="issue-card">
-        {img_tag}
-        <div class="issue-card-title">{t('issue')} {issue['issue_num']}</div>
+    <a href="?page=pdf_viewer&volume={volume_id}&issue={issue['issue_num']}" target="_self" style="text-decoration:none; display:block;">
+        <div style="background:#ffffff; border:1px solid #e2e8f0; border-radius:0.75rem; overflow:hidden;
+                    box-shadow:0 2px 8px rgba(0,0,0,0.08); transition:all 0.3s ease; cursor:pointer;">
+            {img_tag}
+            <div style="padding:0.75rem; font-weight:600; font-size:1rem; color:#1e3a8a; text-align:center;">
+                {t('issue')} {issue['issue_num']}
+            </div>
+        </div>
     </a>
     """
     st.markdown(card_html, unsafe_allow_html=True)
