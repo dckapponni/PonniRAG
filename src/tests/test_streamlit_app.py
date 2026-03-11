@@ -973,18 +973,17 @@ class TestLoadImage:
     """Test suite for image loading utility."""
     
     @patch('streamlit_app.st')
-    @patch('streamlit_app._volume_cover_url')
-    def test_load_image_success(self, mock_cover_url, mock_st):
-        """Test loading image via API proxy URL."""
-        mock_cover_url.return_value = "http://localhost:8000/api/images/volumes/1/cover"
+    @patch('streamlit_app._volume_cover_bytes')
+    def test_load_image_success(self, mock_cover_bytes, mock_st):
+        """Test loading image via API proxy using st.image."""
+        mock_cover_bytes.return_value = b'\xff\xd8\xff\xe0fake-jpeg'
 
         from streamlit_app import load_image
 
         load_image("Volume1")
 
-        mock_st.markdown.assert_called_once()
-        html = mock_st.markdown.call_args[0][0]
-        assert "/api/images/volumes/1/cover" in html
+        mock_st.image.assert_called_once()
+        assert mock_st.image.call_args[0][0] == b'\xff\xd8\xff\xe0fake-jpeg'
 
     @patch('streamlit_app.st')
     @patch('streamlit_app.logger')

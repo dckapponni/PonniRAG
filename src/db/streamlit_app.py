@@ -26,12 +26,12 @@ for _vol in _magazine["volumes"]:
 _API_BASE = os.environ.get("API_BASE_URL", "http://localhost:8000")
 
 
-# In-memory cache for successful image fetches (avoids caching failures)
-_image_cache: Dict[str, str] = {}
+# In-memory cache for successful image fetches (raw bytes)
+_image_cache: Dict[str, bytes] = {}
 
 
-def _fetch_image_b64(api_path: str) -> Optional[str]:
-    """Fetch image from API proxy and return as base64 data URI."""
+def _fetch_image_bytes(api_path: str) -> Optional[bytes]:
+    """Fetch image from API proxy and return raw bytes."""
     if api_path in _image_cache:
         return _image_cache[api_path]
     url = f"{_API_BASE}{api_path}"
@@ -39,12 +39,9 @@ def _fetch_image_b64(api_path: str) -> Optional[str]:
         with httpx.Client(timeout=10) as client:
             resp = client.get(url)
         if resp.status_code == 200:
-            ct = resp.headers.get("Content-Type", "image/jpeg")
-            b64 = base64.b64encode(resp.content).decode()
-            data_uri = f"data:{ct};base64,{b64}"
-            _image_cache[api_path] = data_uri
+            _image_cache[api_path] = resp.content
             logging.info("Image fetched OK: %s (%d bytes)", api_path, len(resp.content))
-            return data_uri
+            return resp.content
         else:
             logging.warning("Image fetch %s returned status %s", url, resp.status_code)
     except Exception as e:
@@ -52,14 +49,14 @@ def _fetch_image_b64(api_path: str) -> Optional[str]:
     return None
 
 
-def _volume_cover_url(volume_id: int) -> Optional[str]:
-    """Return base64 data URI for a volume cover image."""
-    return _fetch_image_b64(f"/api/images/volumes/{volume_id}/cover")
+def _volume_cover_bytes(volume_id: int) -> Optional[bytes]:
+    """Fetch volume cover image bytes from API proxy."""
+    return _fetch_image_bytes(f"/api/images/volumes/{volume_id}/cover")
 
 
-def _issue_cover_url(volume_id: int, issue_name: str) -> Optional[str]:
-    """Return base64 data URI for an issue cover image."""
-    return _fetch_image_b64(
+def _issue_cover_bytes(volume_id: int, issue_name: str) -> Optional[bytes]:
+    """Fetch issue cover image bytes from API proxy."""
+    return _fetch_image_bytes(
         f"/api/images/volumes/{volume_id}/issues/{issue_name}/cover"
     )
 
@@ -881,7 +878,7 @@ def render_library_page():
         volumes.append({
             "id": vol["id"],
             "desc": year_display,
-            "cover_url": _volume_cover_url(vol["id"]),
+            "cover_bytes": _volume_cover_bytes(vol["id"]),
         })
 
     for i in range(0, len(volumes), 3):
@@ -896,30 +893,32 @@ def render_library_page():
 
 def render_volume_card(vol: Dict):
     """
-    Render a single volume card with cover image from API proxy.
+    Render a single volume card with cover image using st.image.
 
     Creates a clickable card displaying a volume's cover image, number, and year.
     Falls back to a placeholder if the image is not available.
     """
-    cover_url = vol.get("cover_url")
-    if cover_url:
-        img_tag = f'<img src="{cover_url}" style="width:100%; height:300px; object-fit:cover; border-radius:0.5rem; margin-bottom:0.8rem; display:block;">'
-    else:
-        img_tag = '<div style="width:100%;height:300px;background:#f1f5f9;border-radius:0.5rem;margin:0 auto 0.8rem;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:1.2rem;">No cover</div>'
+    cover_bytes = vol.get("cover_bytes")
 
-    card_html = f"""
-    <a href="?page=issues&volume={vol['id']}" target="_self" style="text-decoration:none; display:block; width:100%;">
-        <div style="background:#ffffff; border:1px solid #e2e8f0; border-radius:0.75rem; padding:1rem; text-align:center;
-                    box-shadow:0 2px 8px rgba(0,0,0,0.08); transition:all 0.3s ease; cursor:pointer; max-width:350px; margin:0 auto; overflow:hidden;">
-            {img_tag}
-            <div style="font-weight:600; font-size:1.1rem; color:#1e3a8a; line-height:1.4;">
-                பொன்னி<br>{t('lib_vol')} {vol['id']}
-                <div style="margin-top:0.4rem;"></div>
-                <span style="font-weight:500; color:#64748b;">{vol['desc']}</span>
-            </div>
-        </div>
-    </a>
-    """
+    st.markdown(
+        f'<a href="?page=issues&volume={vol["id"]}" target="_self" style="text-decoration:none; display:block;">',
+        unsafe_allow_html=True,
+    )
+    if cover_bytes:
+        st.image(cover_bytes, use_container_width=True)
+    else:
+        st.markdown(
+            '<div style="height:200px;background:#f1f5f9;border-radius:0.5rem;display:flex;align-items:center;justify-content:center;color:#94a3b8;">No cover</div>',
+            unsafe_allow_html=True,
+        )
+    st.markdown(
+        f"""<div style="text-align:center;font-weight:600;font-size:1.1rem;color:#1e3a8a;line-height:1.4;">
+            பொன்னி<br>{t('lib_vol')} {vol['id']}
+            <div style="margin-top:0.4rem;"></div>
+            <span style="font-weight:500;color:#64748b;">{vol['desc']}</span>
+        </div></a>""",
+        unsafe_allow_html=True,
+    )
     st.markdown(card_html, unsafe_allow_html=True)
     logger.debug(f"Rendered volume card: {vol['id']}")
 
@@ -975,7 +974,7 @@ def load_volume_issues(volume_id: str) -> List[Dict]:
         issues_data.append({
             "issue_num": issue_name,
             "has_pdf": bool(iss.get("pdf_url")),
-            "cover_url": _issue_cover_url(vol_id, issue_name),
+            "cover_bytes": _issue_cover_bytes(vol_id, issue_name),
         })
     logger.info(f"Loaded {len(issues_data)} issues for volume {volume_id}")
     return issues_data
@@ -999,28 +998,28 @@ def render_issue_grid(issues_data: List[Dict], volume_id: str):
 
 def render_issue_card(issue: Dict, volume_id: str):
     """
-    Render a single issue card with cover image from API proxy.
+    Render a single issue card with cover image using st.image.
 
     Creates a clickable card displaying an issue's cover image and number,
     linking to the PDF viewer page.
     """
-    cover_url = issue.get("cover_url")
-    if cover_url:
-        img_tag = f'<img src="{cover_url}" alt="{t("issue")} {issue["issue_num"]}" style="width:100%; height:250px; object-fit:cover; display:block; border-radius:0.5rem 0.5rem 0 0;">'
-    else:
-        img_tag = f'<div style="width:100%;height:250px;background:#f1f5f9;border-radius:0.5rem 0.5rem 0 0;display:flex;align-items:center;justify-content:center;color:#94a3b8;">{t("issue")} {issue["issue_num"]}</div>'
+    cover_bytes = issue.get("cover_bytes")
 
-    card_html = f"""
-    <a href="?page=pdf_viewer&volume={volume_id}&issue={issue['issue_num']}" target="_self" style="text-decoration:none; display:block;">
-        <div style="background:#ffffff; border:1px solid #e2e8f0; border-radius:0.75rem; overflow:hidden;
-                    box-shadow:0 2px 8px rgba(0,0,0,0.08); transition:all 0.3s ease; cursor:pointer;">
-            {img_tag}
-            <div style="padding:0.75rem; font-weight:600; font-size:1rem; color:#1e3a8a; text-align:center;">
-                {t('issue')} {issue['issue_num']}
-            </div>
-        </div>
-    </a>
-    """
+    st.markdown(
+        f'<a href="?page=pdf_viewer&volume={volume_id}&issue={issue["issue_num"]}" target="_self" style="text-decoration:none; display:block;">',
+        unsafe_allow_html=True,
+    )
+    if cover_bytes:
+        st.image(cover_bytes, use_container_width=True)
+    else:
+        st.markdown(
+            f'<div style="height:150px;background:#f1f5f9;border-radius:0.5rem;display:flex;align-items:center;justify-content:center;color:#94a3b8;">{t("issue")} {issue["issue_num"]}</div>',
+            unsafe_allow_html=True,
+        )
+    st.markdown(
+        f'<div style="text-align:center;font-weight:600;font-size:1rem;color:#1e3a8a;padding:0.5rem 0;">{t("issue")} {issue["issue_num"]}</div></a>',
+        unsafe_allow_html=True,
+    )
     st.markdown(card_html, unsafe_allow_html=True)
 
 
@@ -1058,22 +1057,19 @@ def render_pdf_viewer_page(volume_id: str, issue_num: str):
 
 def load_image(image_name: str):
     """
-    Load and display an image via API proxy.
+    Load and display an image via API proxy using st.image.
     Handles both volume covers ("Volume1") and about images ("about1").
     """
-    url = None
+    img_bytes = None
     if image_name.startswith("Volume"):
         vol_num = image_name.replace("Volume", "")
         if vol_num.isdigit():
-            url = _volume_cover_url(int(vol_num))
+            img_bytes = _volume_cover_bytes(int(vol_num))
     elif image_name.startswith("about"):
-        url = _fetch_image_b64(f"/api/images/about/{image_name}.png")
+        img_bytes = _fetch_image_bytes(f"/api/images/about/{image_name}.png")
 
-    if url:
-        st.markdown(
-            f'<img src="{url}" style="max-width:100%;border-radius:0.5rem;">',
-            unsafe_allow_html=True,
-        )
+    if img_bytes:
+        st.image(img_bytes, use_container_width=True)
         logger.debug(f"Loaded image from API proxy: {image_name}")
     else:
         logger.warning(f"Could not resolve image: {image_name}")
@@ -1392,10 +1388,13 @@ def fetch_article_content(doc_id, doc_issue, article_no):
         return None
 
 
-@st.cache_data
 def _get_issue_thumbnail_base64(volume_id, issue_num):
-    """Return API proxy URL for an issue cover thumbnail."""
-    return _issue_cover_url(int(volume_id), str(issue_num))
+    """Return base64 data URI for an issue cover thumbnail (used in HTML)."""
+    img_bytes = _issue_cover_bytes(int(volume_id), str(issue_num))
+    if img_bytes:
+        b64 = base64.b64encode(img_bytes).decode()
+        return f"data:image/jpeg;base64,{b64}"
+    return None
 
 
 
