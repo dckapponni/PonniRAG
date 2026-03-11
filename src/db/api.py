@@ -430,6 +430,24 @@ async def get_issue_cover(volume_id: int, issue_name: str):
     )
 
 
+@app.get("/api/images/about/{filename}", tags=["Images"])
+async def get_about_image(filename: str):
+    """Proxy about page images from S3. Never expires."""
+    # Only allow specific filenames to prevent path traversal
+    allowed = {f"about{i}.png" for i in range(1, 10)}
+    if filename not in allowed:
+        raise HTTPException(status_code=404, detail="Image not found")
+    key = f"about/{filename}"
+    img = await asyncio.to_thread(_fetch_s3_image, key)
+    if not img:
+        raise HTTPException(status_code=404, detail="About image not found")
+    return Response(
+        content=img["body"],
+        media_type=img["content_type"],
+        headers={"Cache-Control": f"public, max-age={_IMAGE_CACHE_SECONDS}"},
+    )
+
+
 @app.post("/api/ask", response_model=QuestionResponse, tags=["Search"])
 async def ask_question_endpoint(request: QuestionRequest):
     """

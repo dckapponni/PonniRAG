@@ -26,18 +26,29 @@ for _vol in _magazine["volumes"]:
 _API_BASE = os.environ.get("API_BASE_URL", "http://localhost:8000")
 
 
-@st.cache_data(ttl=3600)
+# In-memory cache for successful image fetches (avoids caching failures)
+_image_cache: Dict[str, str] = {}
+
+
 def _fetch_image_b64(api_path: str) -> Optional[str]:
     """Fetch image from API proxy and return as base64 data URI."""
+    if api_path in _image_cache:
+        return _image_cache[api_path]
+    url = f"{_API_BASE}{api_path}"
     try:
-        with httpx.Client(timeout=5) as client:
-            resp = client.get(f"{_API_BASE}{api_path}")
+        with httpx.Client(timeout=10) as client:
+            resp = client.get(url)
         if resp.status_code == 200:
             ct = resp.headers.get("Content-Type", "image/jpeg")
             b64 = base64.b64encode(resp.content).decode()
-            return f"data:{ct};base64,{b64}"
-    except Exception:
-        pass
+            data_uri = f"data:{ct};base64,{b64}"
+            _image_cache[api_path] = data_uri
+            logging.info("Image fetched OK: %s (%d bytes)", api_path, len(resp.content))
+            return data_uri
+        else:
+            logging.warning("Image fetch %s returned status %s", url, resp.status_code)
+    except Exception as e:
+        logging.warning("Image fetch %s failed: %s", url, e)
     return None
 
 
