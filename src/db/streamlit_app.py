@@ -8,7 +8,9 @@ from typing import Dict, List, Optional, Tuple
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 import streamlit as st
-from PIL import Image
+from PIL import Image, ImageFile
+
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
@@ -1075,11 +1077,20 @@ def load_image(image_name: str):
         s3_key = f"about/{image_name}.jpg"
 
     if s3_key:
-        img = _load_s3_image(s3_key, thumbnail_size=(350, 500))
-        if img:
-            st.image(img, use_container_width=False)
-            logger.debug(f"Loaded image: {image_name}")
-            return
+        # No thumbnail — pass full image to st.image, let CSS control display size
+        # (matches original local-file behavior)
+        if _s3_client:
+            try:
+                resp = _s3_client.get_object(Bucket=_s3_conf["bucket"], Key=s3_key)
+                raw = resp["Body"].read()
+                img = Image.open(io.BytesIO(raw))
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+                st.image(img, use_container_width=False)
+                logger.debug(f"Loaded image: {image_name}")
+                return
+            except Exception as e:
+                logger.warning(f"Failed to load about image {s3_key}: {e}")
 
     logger.warning(f"Could not resolve image: {image_name}")
 
@@ -1402,7 +1413,7 @@ def _get_issue_thumbnail_base64(volume_id, issue_num):
     s3_key = _issue_cover_s3_key(int(volume_id), str(issue_num))
     if not s3_key:
         return None
-    img = _load_s3_image(s3_key, thumbnail_size=(48, 48))
+    img = _load_s3_image(s3_key, thumbnail_size=(40, 55))
     if img:
         return f"data:image/jpeg;base64,{_pil_to_base64(img)}"
     return None
