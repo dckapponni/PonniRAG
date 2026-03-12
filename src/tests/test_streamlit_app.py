@@ -973,10 +973,13 @@ class TestLoadImage:
     """Test suite for image loading utility."""
     
     @patch('streamlit_app.st')
-    @patch('streamlit_app._fetch_image_bytes')
-    def test_load_image_success(self, mock_fetch, mock_st):
-        """Test loading image via API proxy using st.image."""
-        mock_fetch.return_value = b'\xff\xd8\xff\xe0fake-jpeg'
+    @patch('streamlit_app._load_s3_image')
+    @patch('streamlit_app._volume_cover_s3_key')
+    def test_load_image_success(self, mock_key, mock_load, mock_st):
+        """Test loading image from S3 using st.image."""
+        mock_key.return_value = "Front_cover_of_volumes/Volumes/Volume1.jpg"
+        mock_img = Image.new("RGB", (100, 100))
+        mock_load.return_value = mock_img
 
         from streamlit_app import load_image
 

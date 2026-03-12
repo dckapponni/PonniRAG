@@ -1,12 +1,12 @@
 import base64
 import io
 import logging
-import os
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-import httpx
+import boto3
+from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 import streamlit as st
 from PIL import Image
 
@@ -24,73 +24,69 @@ for _vol in _magazine["volumes"]:
     for _iss in _vol["issues"]:
         PDF_LINKS[f"vol_{_vol['id']}_issue_{_iss['num']}"] = _iss["pdf_url"]
 
-# Internal API base URL (server-side fetch, always localhost)
-_API_BASE = os.environ.get("API_BASE_URL", "http://localhost:8000")
+# S3 client for direct image fetching
+try:
+    _s3_client = boto3.client("s3")
+except Exception:
+    _s3_client = None
 
-# In-memory cache for successful image fetches (raw bytes)
-_image_cache: Dict[str, bytes] = {}
+# In-memory cache: S3 key -> PIL Image (already thumbnailed)
+_s3_image_cache: Dict[str, Image.Image] = {}
 
 
-def _resize_image(raw: bytes, max_width: int = 400) -> bytes:
-    """Resize image to max_width, preserving aspect ratio. Returns JPEG bytes."""
+def _load_s3_image(s3_key: str, thumbnail_size: tuple = (250, 375)) -> Optional[Image.Image]:
+    """Fetch image from S3, thumbnail it, cache, and return PIL Image."""
+    if s3_key in _s3_image_cache:
+        return _s3_image_cache[s3_key]
+    if not _s3_client:
+        logging.warning("S3 client not available")
+        return None
     try:
+        resp = _s3_client.get_object(Bucket=_s3_conf["bucket"], Key=s3_key)
+        raw = resp["Body"].read()
         img = Image.open(io.BytesIO(raw))
-        if img.width > max_width:
-            ratio = max_width / img.width
-            new_size = (max_width, int(img.height * ratio))
-            img = img.resize(new_size, Image.LANCZOS)
-        buf = io.BytesIO()
-        img.convert("RGB").save(buf, format="JPEG", quality=80)
-        return buf.getvalue()
-    except Exception:
-        return raw
-
-
-def _fetch_image_bytes(api_path: str, max_width: int = 400) -> Optional[bytes]:
-    """Fetch image from API proxy, resize for Streamlit, and cache."""
-    if api_path in _image_cache:
-        return _image_cache[api_path]
-    url = f"{_API_BASE}{api_path}"
-    try:
-        with httpx.Client(timeout=10) as client:
-            resp = client.get(url)
-        if resp.status_code == 200:
-            resized = _resize_image(resp.content, max_width)
-            _image_cache[api_path] = resized
-            logging.info("Image OK: %s (%d -> %d bytes)", api_path, len(resp.content), len(resized))
-            return resized
-        else:
-            logging.warning("Image fetch %s returned status %s", url, resp.status_code)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        img.thumbnail(thumbnail_size, Image.Resampling.LANCZOS)
+        _s3_image_cache[s3_key] = img
+        logging.info("S3 image loaded: %s (%d bytes -> %dx%d)", s3_key, len(raw), img.width, img.height)
+        return img
+    except (ClientError, NoCredentialsError, BotoCoreError) as e:
+        logging.warning("S3 fetch failed %s: %s", s3_key, e)
     except Exception as e:
-        logging.warning("Image fetch %s failed: %s", url, e)
+        logging.warning("S3 image error %s: %s", s3_key, e)
     return None
 
 
-def _bytes_to_data_uri(img_bytes: bytes) -> str:
-    """Convert image bytes to base64 data URI."""
-    b64 = base64.b64encode(img_bytes).decode()
-    return f"data:image/jpeg;base64,{b64}"
+def _pil_to_base64(img: Image.Image, quality: int = 85) -> str:
+    """Convert PIL Image to base64 string for embedding in HTML."""
+    buffered = io.BytesIO()
+    img.save(buffered, format="JPEG", quality=quality)
+    return base64.b64encode(buffered.getvalue()).decode()
 
 
-def _volume_cover_data_uri(volume_id: int) -> Optional[str]:
-    """Fetch volume cover and return as base64 data URI."""
-    b = _fetch_image_bytes(f"/api/images/volumes/{volume_id}/cover")
-    return _bytes_to_data_uri(b) if b else None
+def _volume_cover_s3_key(volume_id: int) -> Optional[str]:
+    """Derive S3 key for a volume cover image."""
+    vol_data = next((v for v in _magazine["volumes"] if v["id"] == volume_id), None)
+    if not vol_data or not vol_data.get("cover_image"):
+        return None
+    return f"{_s3_conf['covers_prefix']}Volumes/{vol_data['cover_image']}"
 
 
-def _issue_cover_data_uri(volume_id: int, issue_name: str) -> Optional[str]:
-    """Fetch issue cover and return as base64 data URI."""
-    b = _fetch_image_bytes(
-        f"/api/images/volumes/{volume_id}/issues/{issue_name}/cover"
+def _issue_cover_s3_key(volume_id: int, issue_name: str) -> Optional[str]:
+    """Derive S3 key for an issue cover image."""
+    vol_data = next((v for v in _magazine["volumes"] if v["id"] == volume_id), None)
+    if not vol_data:
+        return None
+    iss_data = next((i for i in vol_data["issues"] if str(i["num"]) == str(issue_name)), None)
+    if not iss_data:
+        return None
+    year = iss_data.get("year", vol_data["year"])
+    folder = _s3_conf["cover_folder_pattern"].format(vol_id=volume_id)
+    filename = _s3_conf["cover_file_pattern"].format(
+        vol_id=volume_id, issue_num=issue_name, year=year,
     )
-    return _bytes_to_data_uri(b) if b else None
-
-
-def _issue_cover_bytes(volume_id: int, issue_name: str) -> Optional[bytes]:
-    """Fetch issue cover image bytes from API proxy."""
-    return _fetch_image_bytes(
-        f"/api/images/volumes/{volume_id}/issues/{issue_name}/cover"
-    )
+    return f"{_s3_conf['covers_prefix']}{folder}{filename}"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -910,7 +906,6 @@ def render_library_page():
         volumes.append({
             "id": vol["id"],
             "desc": year_display,
-            "cover_img": _fetch_image_bytes(f"/api/images/volumes/{vol['id']}/cover"),
         })
 
     for i in range(0, len(volumes), 3):
@@ -920,20 +915,31 @@ def render_library_page():
                 vol = volumes[i + j]
                 with cols[j]:
                     render_volume_card(vol)
+        st.markdown("<br><br>", unsafe_allow_html=True)
 
 
 def render_volume_card(vol: Dict):
-    """Render a single volume card with cover image."""
-    cover = vol.get("cover_img")
-    if cover:
-        st.image(Image.open(io.BytesIO(cover)), use_container_width=True)
-    st.markdown(
-        f'<a href="?page=issues&volume={vol["id"]}" target="_self" '
-        f'style="text-decoration:none;display:block;text-align:center;padding:0.5rem;">'
-        f'<div style="font-weight:600;font-size:1.1rem;color:#1e3a8a;">பொன்னி<br>{t("lib_vol")} {vol["id"]}</div>'
-        f'<div style="color:#64748b;">{vol["desc"]}</div></a>',
-        unsafe_allow_html=True,
-    )
+    """Render a single volume card — same pattern as original local-file code."""
+    s3_key = _volume_cover_s3_key(vol["id"])
+    img = _load_s3_image(s3_key) if s3_key else None
+    if img:
+        img_str = _pil_to_base64(img)
+        card_html = f"""
+        <a href="?page=issues&volume={vol['id']}" target="_self" style="text-decoration:none; display:block; width:100%;">
+            <div style="background:#ffffff; border:1px solid #e2e8f0; border-radius:0.75rem; padding:1rem; text-align:center;
+                        box-shadow:0 2px 8px rgba(0,0,0,0.08); transition:all 0.3s ease; cursor:pointer; width:350px; margin:0 auto;">
+                <img src="data:image/jpeg;base64,{img_str}" style="max-width:100%; height:auto; border-radius:0.5rem; margin-bottom:0.8rem;">
+                <div style="font-weight:600; font-size:1.1rem; color:#1e3a8a; line-height:1.4;">
+                    பொன்னி<br>{t('lib_vol')} {vol['id']}
+                    <div style="margin-top:0.4rem;"></div>
+                    <span style="font-weight:500; color:#64748b;">{vol['desc']}</span>
+                </div>
+            </div>
+        </a>
+        """
+        st.markdown(card_html, unsafe_allow_html=True)
+    else:
+        logger.warning(f"Volume cover not found for vol {vol['id']}")
     logger.debug(f"Rendered volume card: {vol['id']}")
 
 
@@ -988,9 +994,7 @@ def load_volume_issues(volume_id: str) -> List[Dict]:
         issues_data.append({
             "issue_num": issue_name,
             "has_pdf": bool(iss.get("pdf_url")),
-            "cover_img": _fetch_image_bytes(
-                f"/api/images/volumes/{vol_id}/issues/{issue_name}/cover"
-            ),
+            "s3_key": _issue_cover_s3_key(vol_id, issue_name),
         })
     logger.info(f"Loaded {len(issues_data)} issues for volume {volume_id}")
     return issues_data
@@ -1005,19 +1009,24 @@ def render_issue_grid(issues_data: List[Dict], volume_id: str):
                 issue = issues_data[i + j]
                 with cols[j]:
                     render_issue_card(issue, volume_id)
+        st.markdown("<br>", unsafe_allow_html=True)
 
 
 def render_issue_card(issue: Dict, volume_id: str):
-    """Render a single issue card with cover image."""
-    cover = issue.get("cover_img")
-    if cover:
-        st.image(Image.open(io.BytesIO(cover)), use_container_width=True)
-    st.markdown(
-        f'<a href="?page=pdf_viewer&volume={volume_id}&issue={issue["issue_num"]}" target="_self" '
-        f'style="text-decoration:none;display:block;text-align:center;padding:0.25rem;">'
-        f'<div style="font-weight:600;font-size:1rem;color:#1e3a8a;">{t("issue")} {issue["issue_num"]}</div></a>',
-        unsafe_allow_html=True,
-    )
+    """Render a single issue card — same pattern as original local-file code."""
+    s3_key = issue.get("s3_key")
+    img = _load_s3_image(s3_key, thumbnail_size=(300, 400)) if s3_key else None
+    if img:
+        img_str = _pil_to_base64(img)
+        card_html = f"""
+        <a href="?page=pdf_viewer&volume={volume_id}&issue={issue['issue_num']}" target="_self" class="issue-card">
+            <img src="data:image/jpeg;base64,{img_str}" alt="{t('issue')} {issue['issue_num']}">
+            <div class="issue-card-title">{t('issue')} {issue['issue_num']}</div>
+        </a>
+        """
+        st.markdown(card_html, unsafe_allow_html=True)
+    else:
+        logger.warning(f"Issue cover not found: vol {volume_id} issue {issue['issue_num']}")
 
 
 def render_pdf_viewer_page(volume_id: str, issue_num: str):
@@ -1054,22 +1063,25 @@ def render_pdf_viewer_page(volume_id: str, issue_num: str):
 
 def load_image(image_name: str):
     """
-    Load and display an image from API proxy using st.image.
+    Load and display an image from S3 — same pattern as original local-file code.
     Handles volume covers ("Volume1") and about images ("about1").
     """
-    img_bytes = None
+    s3_key = None
     if image_name.startswith("Volume"):
         vol_num = image_name.replace("Volume", "")
         if vol_num.isdigit():
-            img_bytes = _fetch_image_bytes(f"/api/images/volumes/{int(vol_num)}/cover")
+            s3_key = _volume_cover_s3_key(int(vol_num))
     elif image_name.startswith("about"):
-        img_bytes = _fetch_image_bytes(f"/api/images/about/{image_name}.jpg", max_width=800)
+        s3_key = f"about/{image_name}.jpg"
 
-    if img_bytes:
-        st.image(Image.open(io.BytesIO(img_bytes)), use_container_width=True)
-        logger.debug(f"Loaded image: {image_name}")
-    else:
-        logger.warning(f"Could not resolve image: {image_name}")
+    if s3_key:
+        img = _load_s3_image(s3_key, thumbnail_size=(600, 800))
+        if img:
+            st.image(img, use_container_width=True)
+            logger.debug(f"Loaded image: {image_name}")
+            return
+
+    logger.warning(f"Could not resolve image: {image_name}")
 
 
 @st.cache_data(ttl=300)
@@ -1386,11 +1398,13 @@ def fetch_article_content(doc_id, doc_issue, article_no):
 
 
 def _get_issue_thumbnail_base64(volume_id, issue_num):
-    """Return base64 data URI for an issue cover thumbnail (used in HTML)."""
-    img_bytes = _issue_cover_bytes(int(volume_id), str(issue_num))
-    if img_bytes:
-        b64 = base64.b64encode(img_bytes).decode()
-        return f"data:image/jpeg;base64,{b64}"
+    """Return base64 data URI for an issue cover thumbnail (used in sidebar HTML)."""
+    s3_key = _issue_cover_s3_key(int(volume_id), str(issue_num))
+    if not s3_key:
+        return None
+    img = _load_s3_image(s3_key, thumbnail_size=(48, 48))
+    if img:
+        return f"data:image/jpeg;base64,{_pil_to_base64(img)}"
     return None
 
 
