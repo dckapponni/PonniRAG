@@ -30,7 +30,7 @@ const About = ({ language }) => {
 
       <div className="about-image">
         <img
-          src="/api/images/about/about1.png"
+          src="/api/images/about/about1.jpg"
           alt={ta ? 'பொன்னி இதழ்' : 'Ponni Magazine'}
           onError={(e) => {
             e.target.style.display = 'none';
@@ -69,14 +69,14 @@ const About = ({ language }) => {
 
       <div className="about-double-image">
         <img
-          src="/api/images/about/about2.png"
+          src="/api/images/about/about2.jpg"
           alt={ta ? 'பொன்னி வரலாறு 1' : 'Ponni History 1'}
           onError={(e) => {
             e.target.style.display = 'none';
           }}
         />
         <img
-          src="/api/images/about/about3.png"
+          src="/api/images/about/about3.jpg"
           alt={ta ? 'பொன்னி வரலாறு 2' : 'Ponni History 2'}
           onError={(e) => {
             e.target.style.display = 'none';
@@ -108,14 +108,14 @@ const About = ({ language }) => {
 
       <div className="about-double-image">
         <img
-          src="/api/images/about/about4.png"
+          src="/api/images/about/about4.jpg"
           alt={ta ? 'பொன்னி வரலாறு 3' : 'Ponni History 3'}
           onError={(e) => {
             e.target.style.display = 'none';
           }}
         />
         <img
-          src="/api/images/about/about5.png"
+          src="/api/images/about/about5.jpg"
           alt={ta ? 'பொன்னி வரலாறு 4' : 'Ponni History 4'}
           onError={(e) => {
             e.target.style.display = 'none';

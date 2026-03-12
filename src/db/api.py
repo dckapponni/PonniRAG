@@ -434,7 +434,7 @@ async def get_issue_cover(volume_id: int, issue_name: str):
 async def get_about_image(filename: str):
     """Proxy about page images from S3. Never expires."""
     # Only allow specific filenames to prevent path traversal
-    allowed = {f"about{i}.png" for i in range(1, 10)}
+    allowed = {f"about{i}.{ext}" for i in range(1, 10) for ext in ("png", "jpg")}
     if filename not in allowed:
         raise HTTPException(status_code=404, detail="Image not found")
     key = f"about/{filename}"
