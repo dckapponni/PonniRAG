@@ -1075,9 +1075,9 @@ def load_image(image_name: str):
         s3_key = f"about/{image_name}.jpg"
 
     if s3_key:
-        img = _load_s3_image(s3_key, thumbnail_size=(600, 800))
+        img = _load_s3_image(s3_key, thumbnail_size=(350, 500))
         if img:
-            st.image(img, use_container_width=True)
+            st.image(img, use_container_width=False)
             logger.debug(f"Loaded image: {image_name}")
             return
 
