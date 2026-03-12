@@ -26,7 +26,7 @@ for _vol in _magazine["volumes"]:
 
 # S3 client for direct image fetching
 try:
-    _s3_client = boto3.client("s3")
+    _s3_client = boto3.client("s3", region_name=_s3_conf["region"])
 except Exception:
     _s3_client = None
 
