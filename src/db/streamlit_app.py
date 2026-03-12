@@ -27,7 +27,6 @@ for _vol in _magazine["volumes"]:
 # Internal API base URL (server-side fetch, always localhost)
 _API_BASE = os.environ.get("API_BASE_URL", "http://localhost:8000")
 
-
 # In-memory cache for successful image fetches (raw bytes)
 _image_cache: Dict[str, bytes] = {}
 
@@ -48,7 +47,7 @@ def _resize_image(raw: bytes, max_width: int = 400) -> bytes:
 
 
 def _fetch_image_bytes(api_path: str, max_width: int = 400) -> Optional[bytes]:
-    """Fetch image from API proxy, resize, and return bytes."""
+    """Fetch image from API proxy, resize for Streamlit, and cache."""
     if api_path in _image_cache:
         return _image_cache[api_path]
     url = f"{_API_BASE}{api_path}"
@@ -58,7 +57,7 @@ def _fetch_image_bytes(api_path: str, max_width: int = 400) -> Optional[bytes]:
         if resp.status_code == 200:
             resized = _resize_image(resp.content, max_width)
             _image_cache[api_path] = resized
-            logging.info("Image fetched OK: %s (%d -> %d bytes)", api_path, len(resp.content), len(resized))
+            logging.info("Image OK: %s (%d -> %d bytes)", api_path, len(resp.content), len(resized))
             return resized
         else:
             logging.warning("Image fetch %s returned status %s", url, resp.status_code)
@@ -923,7 +922,7 @@ def render_volume_card(vol: Dict):
         unsafe_allow_html=True,
     )
     if cover_bytes:
-        st.image(cover_bytes, use_container_width=True)
+        st.image(Image.open(io.BytesIO(cover_bytes)), use_container_width=True)
     else:
         st.markdown(
             '<div style="height:200px;background:#f1f5f9;border-radius:0.5rem;display:flex;align-items:center;justify-content:center;color:#94a3b8;">No cover</div>',
@@ -1027,7 +1026,7 @@ def render_issue_card(issue: Dict, volume_id: str):
         unsafe_allow_html=True,
     )
     if cover_bytes:
-        st.image(cover_bytes, use_container_width=True)
+        st.image(Image.open(io.BytesIO(cover_bytes)), use_container_width=True)
     else:
         st.markdown(
             f'<div style="height:150px;background:#f1f5f9;border-radius:0.5rem;display:flex;align-items:center;justify-content:center;color:#94a3b8;">{t("issue")} {issue["issue_num"]}</div>',
@@ -1085,7 +1084,7 @@ def load_image(image_name: str):
         img_bytes = _fetch_image_bytes(f"/api/images/about/{image_name}.png")
 
     if img_bytes:
-        st.image(img_bytes, use_container_width=True)
+        st.image(Image.open(io.BytesIO(img_bytes)), use_container_width=True)
         logger.debug(f"Loaded image from API proxy: {image_name}")
     else:
         logger.warning(f"Could not resolve image: {image_name}")
