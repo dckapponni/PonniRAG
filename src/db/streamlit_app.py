@@ -1063,9 +1063,9 @@ def render_pdf_viewer_page(volume_id: str, issue_num: str):
     st.markdown(f"[Open PDF in new tab]({pdf_url})", unsafe_allow_html=True)
 
 
-def load_image(image_name: str):
+def load_image(image_name: str, use_container_width: bool = False):
     """
-    Load and display an image from S3 — same pattern as original local-file code.
+    Load and display an image from S3.
     Handles volume covers ("Volume1") and about images ("about1").
     """
     s3_key = None
@@ -1076,21 +1076,18 @@ def load_image(image_name: str):
     elif image_name.startswith("about"):
         s3_key = f"about/{image_name}.jpg"
 
-    if s3_key:
-        # No thumbnail — pass full image to st.image, let CSS control display size
-        # (matches original local-file behavior)
-        if _s3_client:
-            try:
-                resp = _s3_client.get_object(Bucket=_s3_conf["bucket"], Key=s3_key)
-                raw = resp["Body"].read()
-                img = Image.open(io.BytesIO(raw))
-                if img.mode != "RGB":
-                    img = img.convert("RGB")
-                st.image(img, use_container_width=False)
-                logger.debug(f"Loaded image: {image_name}")
-                return
-            except Exception as e:
-                logger.warning(f"Failed to load about image {s3_key}: {e}")
+    if s3_key and _s3_client:
+        try:
+            resp = _s3_client.get_object(Bucket=_s3_conf["bucket"], Key=s3_key)
+            raw = resp["Body"].read()
+            img = Image.open(io.BytesIO(raw))
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            st.image(img, use_container_width=use_container_width)
+            logger.debug(f"Loaded image: {image_name}")
+            return
+        except Exception as e:
+            logger.warning(f"Failed to load image {s3_key}: {e}")
 
     logger.warning(f"Could not resolve image: {image_name}")
 
@@ -1818,43 +1815,9 @@ def render_about_page():
         margin-bottom: 2rem;
         font-family: 'Inter', sans-serif;
     }
-    .about-single-image {
-        display: flex;
-        justify-content: center;
-        margin: 0 0 2rem 0; 
-    }
-    .about-single-image img {
-        max-width: 50% !important;
-        width: auto !important;
-        height: auto !important;
-        border-radius: 1rem;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
-        display: block;
-        margin: 0 auto;
-    }
-    .about-double-image {
-        display: flex;
-        justify-content: center;
-        gap: 2rem;
-        margin: 2rem 0;
-    }
-    .about-double-image > div {
-        flex: 0 0 10% !important;
-        max-width: 10% !important;
-    }
-    .about-double-image img {
-        width: 100% !important;
-        max-width: 100% !important;
-        height: auto !important;
-        border-radius: 1rem;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
-    }
-    .stImage {
-        max-width: 100% !important;
-    }
     .stImage > img {
-        max-width: 100% !important;
-        width: auto !important;
+        border-radius: 1rem;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
     }
     </style>
     """, unsafe_allow_html=True)
@@ -1869,11 +1832,9 @@ def render_about_page():
     1900களில் வெளிவந்த இதழ்கள் சமூக மாற்றத்திற்கும் முன்னேற்றத்திற்கும் பெருந்துணையாக அமைந்துள்ளன என்பது வரலாற்று ரீதியான உண்மை. 1947 முதல் 1955 வரை இயங்கிய கலை இலக்கிய இதழ் 'பொன்னி'. பொன்னி இதழ் திரு. அரு. பெரியண்ணன் மற்றும் திரு. முருகு. சுப்பிரமணியம் ஆகியோரால் 1947ஆம் ஆண்டு பிப்ரவரி மாதம் தொடங்கப்பெற்றது. தொடங்கப்பட்ட முதல் வருடத்தில் மாதம் ஓர் இதழ் என வெளிவந்த பொன்னி 1948 முதல் மாதம் ஈரிதழாக வெளிவந்தது.
     </div>''', unsafe_allow_html=True)
     
-    st.markdown('<div class="about-single-image">', unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        load_image("about1")
-    st.markdown('</div>', unsafe_allow_html=True)
+        load_image("about1", use_container_width=True)
     
     st.markdown('''<div class="about-text">
     திராவிட இதழ்களின் வரிசையில் வைத்து போற்றத்தக்க பெரிதும் அறியப்படாத இதழாகப் பொன்னி இதழ் திகழ்கிறது. பகுத்தறிவு, சுயமரியாதை, சமத்துவம் ஆகியவற்றை மிகத் தீவிரமாக எடுத்துரைக்கும் இதழாக இவ்விதழ் வெளிவந்தது. தமிழகத்தின் தலைசிறந்த எழுத்தாளர்களும் படைப்பாளர்களும் தம் சீரிய கருத்துகளை இவ்விதழின்வழி எடுத்துரைத்தனர். தமிழ்ச் சமூகத்தை அறிவுச் சமூகமாக்கும் முன்னெடுப்பில் பொன்னி இதழின் பணி தலையாயதாகும்.
@@ -1883,13 +1844,11 @@ def render_about_page():
     தமிழ் இலக்கிய உலகில் முக்கியமான கவிஞர் பாரதிதாசன் அவரின் 'குயில்' இதழ் அரசால் தடை செய்யப்பட்ட பிறகு பொன்னியில் எழுதினார். அவரின் கொள்கைகளையும் நடையையும் பின்பற்றி எழுதியவர்களை 'பாரதிதாசன் பரம்பரை கவிஞர்கள்' என்று அறிமுகப்படுத்தியது பொன்னி இதழ்.
     </div>''', unsafe_allow_html=True)
     
-    st.markdown('<div class="about-double-image">', unsafe_allow_html=True)
     col1, col2 = st.columns(2, gap="large")
     with col1:
-        load_image("about2")
+        load_image("about2", use_container_width=True)
     with col2:
-        load_image("about3")
-    st.markdown('</div>', unsafe_allow_html=True)
+        load_image("about3", use_container_width=True)
     
     st.markdown('''<div class="about-text">
     இவ்விதழில் மாநில சுயாட்சி, இந்தித் திணிப்பு, தனித்தமிழ் பற்று, விடுதலை, அரசியல், சமூகம் சார்ந்த திராவிடச் சிந்தனைகள் கட்டுரைகளாக, கதைகளாக, கவிதைகளாக. கிறனாய்வுகளாக, துணுக்குகளாக வெளிவந்தன.
@@ -1899,13 +1858,11 @@ def render_about_page():
     கவிதைகள், சிறுகதைகள், தொடர்கதைகள், நொடிக் கதைகள், நாடகங்கள், பொதுக் கட்டுரைகள், ஆய்வுக் கட்டுரைகள், ஒப்பாய்வுக் கட்டுரைகள், தொடர் கட்டுரைகள், செய்திப் பாட்டு போன்ற இலக்கிய வகைமைகளில் பொன்னியில் படைப்புகள் வெளியாகியுள்ளன. இது மட்டுமன்றி அட்டைப்படக் குறிப்பு, மகளிர் அழகுக் குறிப்புகள், குழந்தை வளர்ப்புமுறை, பொன்னி வாழ்த்துகள், விகடங்கள், சிறுவர் அரங்கம் (சிறுவர் இலக்கியம்) போன்ற படைப்புகளும் இடம்பெற்றுள்ளன.
     </div>''', unsafe_allow_html=True)
     
-    st.markdown('<div class="about-double-image">', unsafe_allow_html=True)
     col1, col2 = st.columns(2, gap="large")
     with col1:
-        load_image("about4")
+        load_image("about4", use_container_width=True)
     with col2:
-        load_image("about5")
-    st.markdown('</div>', unsafe_allow_html=True)
+        load_image("about5", use_container_width=True)
     
     st.markdown('''<div class="about-text">
     1948ல் போராட்டச் செய்தி நாட்குறிப்பு என்னும் தலைப்பில் கா. அப்பாதுரையார் அவர்கள், அக்கால விடுதலைப் போராட்ட நிலவரங்களை பதிவு செய்துள்ளார். எங்கே, யார் எதற்காக கைது செய்யப் படுகிறார்கள்? அவர்களுக்கு என்ன தண்டனை? போன்றவற்றை இப்பகுதியில் காணமுடிகிறது. தமிழ் இலக்கியம் மட்டுமன்றி சீனம், யார் எதற்காகக் கைது செய்யப் உலக இலக்கியங்களையும் பொன்னியில் அறிமுகம் செய்துள்ளனர். பாரசீகம், ரஷ்ய, கன்னடம், உருது, வடமொழி, தெலுங்கு போன்ற உலக இலக்கியங்களையும் பொன்னியில் அறிமுகம் செய்துள்ளனர்.
