@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Tuple
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 import streamlit as st
-from PIL import Image, ImageFile
+from PIL import Image, ImageFile,ImageOps
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -63,7 +63,7 @@ def _load_s3_image(s3_key: str, thumbnail_size: tuple = (250, 375)) -> Optional[
             img = Image.open(io.BytesIO(raw))
             if img.mode != "RGB":
                 img = img.convert("RGB")
-            img.thumbnail(thumbnail_size, Image.Resampling.LANCZOS)
+            img = ImageOps.fit(img, thumbnail_size, Image.Resampling.LANCZOS)
             _s3_image_cache[s3_key] = img
             logging.info("S3 image loaded: %s (%d bytes -> %dx%d)", key, len(raw), img.width, img.height)
             return img
