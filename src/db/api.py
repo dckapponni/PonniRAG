@@ -239,7 +239,7 @@ class VolumeIssue(BaseModel):
 class PDFLinkResponse(BaseModel):
     """Response model for PDF link."""
     volume_id: int
-    issue_id: int
+    issue_id: str
     pdf_url: Optional[str] = None
     embed_url: Optional[str] = None
     found: bool
@@ -911,12 +911,12 @@ async def get_volume_issues(volume_id: int, request: Request):
 
 
 @app.get("/api/library/volumes/{volume_id}/issues/{issue_id}/pdf", response_model=PDFLinkResponse, tags=["Library"])
-async def get_pdf_link(volume_id: int, issue_id: int):
+async def get_pdf_link(volume_id: int, issue_id: str):
     """
     Get PDF link for a specific issue.
 
     - **volume_id**: Volume number (1-8)
-    - **issue_id**: Issue number within the volume
+    - **issue_id**: Issue number or name (e.g., "1", "PONGAL")
 
     Returns the Google Drive PDF URL and embeddable preview URL.
     """
