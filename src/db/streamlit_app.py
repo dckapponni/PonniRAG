@@ -949,7 +949,7 @@ def render_volume_card(vol: Dict):
         <a href="?page=issues&volume={vol['id']}" target="_self" style="text-decoration:none; display:block; width:100%;">
             <div style="background:#ffffff; border:1px solid #e2e8f0; border-radius:0.75rem; padding:1rem; text-align:center;
                         box-shadow:0 2px 8px rgba(0,0,0,0.08); transition:all 0.3s ease; cursor:pointer; width:350px; margin:0 auto;">
-                <img src="data:image/jpeg;base64,{img_str}" style="max-width:100%; height:auto; border-radius:0.5rem; margin-bottom:0.8rem;">
+                <img src="data:image/jpeg;base64,{img_str}" style="width:100%; height:300px; object-fit:contain; border-radius:0.5rem; margin-bottom:0.8rem;">
                 <div style="font-weight:600; font-size:1.1rem; color:#1e3a8a; line-height:1.4;">
                     பொன்னி<br>{t('lib_vol')} {vol['id']}
                     <div style="margin-top:0.4rem;"></div>
