@@ -907,61 +907,80 @@ def handle_user_input():
 def render_library_page():
     """
     Render the digital library page showing all volumes.
-
-    Displays a grid of volume cards (8 volumes total) representing Ponni magazine
-    issues from 1947-1954. Each card shows volume cover image, number, and year.
-
+    Layout matches the React frontend: 4-column grid, card with image + title + year.
     """
     logger.info("Rendering library page")
-    st.markdown("<div style='height: 6rem;'></div>", unsafe_allow_html=True)
-    st.markdown(f"## {t('lib_title')}")
-    st.markdown(t('lib_desc'))
-    st.markdown("<br>", unsafe_allow_html=True)
-    
+
+    # Inject CSS matching React .library-container / .volumes-grid / .volume-card
+    st.markdown("""
+    <style>
+    .sl-library-container { padding: 6rem 2rem 3rem; max-width: 1200px; margin: 0 auto; }
+    .sl-library-header { margin-bottom: 2.5rem; }
+    .sl-library-title {
+        font-family: 'Lora', 'Noto Serif Tamil', Georgia, serif;
+        font-size: 2rem; font-weight: 700; color: #1e3a8a;
+        margin-bottom: 0.5rem; letter-spacing: -0.01em;
+    }
+    .sl-library-rule { width: 40px; height: 2px; background: linear-gradient(90deg, #1e3a8a, #3b82f6); border-radius: 1px; margin: 0.75rem 0; }
+    .sl-library-desc { color: #64748b; font-size: 0.95rem; line-height: 1.6; }
+    .sl-volumes-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.5rem; }
+    @media (max-width: 1024px) { .sl-volumes-grid { grid-template-columns: repeat(3, 1fr); } }
+    @media (max-width: 768px) { .sl-volumes-grid { grid-template-columns: repeat(2, 1fr); } }
+    .sl-volume-card {
+        background: #ffffff; border: 1px solid #e2e8f0; border-radius: 0.75rem;
+        overflow: hidden; text-align: center; text-decoration: none; display: block;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.04); transition: all 0.35s ease;
+    }
+    .sl-volume-card:hover { box-shadow: 0 8px 24px rgba(30,58,138,0.1); transform: translateY(-4px); border-color: #93c5fd; }
+    .sl-volume-card-img { width: 100%; height: auto; display: block; }
+    .sl-volume-card-info { padding: 0.85rem 0.75rem; background: #ffffff; }
+    .sl-volume-card-title { font-family: 'Lora', 'Noto Serif Tamil', Georgia, serif; font-weight: 600; font-size: 1rem; color: #1e3a8a; line-height: 1.4; }
+    .sl-volume-card-year { font-family: 'Inter', sans-serif; font-weight: 500; font-size: 0.78rem; color: #94a3b8; margin-top: 0.25rem; letter-spacing: 0.04em; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Build volume data
     volumes = []
     for vol in _magazine["volumes"]:
         issue_years = sorted(set(
             iss.get("year", vol["year"]) for iss in vol["issues"]
         ))
         year_display = f"{issue_years[0]}-{issue_years[-1]}" if len(issue_years) > 1 else (issue_years[0] if issue_years else vol["year"])
-        volumes.append({
-            "id": vol["id"],
-            "desc": year_display,
-        })
+        volumes.append({"id": vol["id"], "year": year_display})
 
-    for i in range(0, len(volumes), 3):
-        cols = st.columns(3, gap="medium")
-        for j in range(3):
-            if i + j < len(volumes):
-                vol = volumes[i + j]
-                with cols[j]:
-                    render_volume_card(vol)
-        st.markdown("<br><br>", unsafe_allow_html=True)
-
-
-def render_volume_card(vol: Dict):
-    """Render a single volume card — same pattern as original local-file code."""
-    s3_key = _volume_cover_s3_key(vol["id"])
-    img = _load_s3_image(s3_key) if s3_key else None
-    if img:
-        img_str = _pil_to_base64(img)
-        card_html = f"""
-        <a href="?page=issues&volume={vol['id']}" target="_self" style="text-decoration:none; display:block; width:100%;">
-            <div style="background:#ffffff; border:1px solid #e2e8f0; border-radius:0.75rem; padding:1rem; text-align:center;
-                        box-shadow:0 2px 8px rgba(0,0,0,0.08); transition:all 0.3s ease; cursor:pointer; width:350px; margin:0 auto;">
-                <img src="data:image/jpeg;base64,{img_str}" style="width:100%; height:300px; object-fit:contain; border-radius:0.5rem; margin-bottom:0.8rem;">
-                <div style="font-weight:600; font-size:1.1rem; color:#1e3a8a; line-height:1.4;">
-                    பொன்னி<br>{t('lib_vol')} {vol['id']}
-                    <div style="margin-top:0.4rem;"></div>
-                    <span style="font-weight:500; color:#64748b;">{vol['desc']}</span>
-                </div>
+    # Build cards HTML
+    cards_html = ""
+    for vol in volumes:
+        s3_key = _volume_cover_s3_key(vol["id"])
+        img = _load_s3_image(s3_key) if s3_key else None
+        if img:
+            img_str = _pil_to_base64(img)
+            img_tag = f'<img class="sl-volume-card-img" src="data:image/jpeg;base64,{img_str}" alt="{t("lib_vol")} {vol["id"]}">'
+        else:
+            img_tag = f'<div style="height:250px;background:#f1f5f9;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:1.2rem;">{t("lib_vol")} {vol["id"]}</div>'
+            logger.warning(f"Volume cover not found for vol {vol['id']}")
+        cards_html += f"""
+        <a href="?page=issues&volume={vol['id']}" target="_self" class="sl-volume-card">
+            {img_tag}
+            <div class="sl-volume-card-info">
+                <div class="sl-volume-card-title">{t('lib_vol')} {vol['id']}</div>
+                <div class="sl-volume-card-year">{vol['year']}</div>
             </div>
-        </a>
-        """
-        st.markdown(card_html, unsafe_allow_html=True)
-    else:
-        logger.warning(f"Volume cover not found for vol {vol['id']}")
-    logger.debug(f"Rendered volume card: {vol['id']}")
+        </a>"""
+
+    page_html = f"""
+    <div class="sl-library-container">
+        <div class="sl-library-header">
+            <div class="sl-library-title">{t('lib_title')}</div>
+            <div class="sl-library-rule"></div>
+            <div class="sl-library-desc">{t('lib_desc')}</div>
+        </div>
+        <div class="sl-volumes-grid">
+            {cards_html}
+        </div>
+    </div>
+    """
+    st.markdown(page_html, unsafe_allow_html=True)
 
 
 def set_page(**params):
@@ -1800,106 +1819,158 @@ def render_article_detail(article_no, volume_id, issue_num, actual_doc_issue=Non
 
 
 
+def _about_image_b64(image_name: str) -> str:
+    """Return base64 img tag for an about image, or empty string on failure."""
+    s3_key = f"about/{image_name}.jpg"
+    if not _s3_client:
+        return ""
+    for key in _s3_key_with_fallback(s3_key):
+        try:
+            resp = _s3_client.get_object(Bucket=_s3_conf["bucket"], Key=key)
+            raw = resp["Body"].read()
+            img = Image.open(io.BytesIO(raw))
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            buffered = io.BytesIO()
+            img.save(buffered, format="JPEG", quality=85)
+            b64 = base64.b64encode(buffered.getvalue()).decode()
+            return f'<img src="data:image/jpeg;base64,{b64}" alt="{image_name}">'
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "NoSuchKey":
+                continue
+        except Exception as e:
+            logger.warning(f"About image load failed {key}: {e}")
+    return ""
+
+
 def render_about_page():
     """
-    Render the About page with historical information about Ponni magazine.
-
-    Displays comprehensive Tamil text about Ponni magazine's history, significance,
-    contributors, and impact on Dravidian movement. Includes historical images
-    integrated throughout the content.
+    Render the About page — layout matches React frontend (ponniarchive.com/about).
+    All images rendered as base64 in HTML for full CSS control.
     """
     logger.info("Rendering about page")
-    st.markdown("<div style='height: 1rem;'></div>", unsafe_allow_html=True)
-    
+
+    # Load about images as base64
+    img1 = _about_image_b64("about1")
+    img2 = _about_image_b64("about2")
+    img3 = _about_image_b64("about3")
+    img4 = _about_image_b64("about4")
+    img5 = _about_image_b64("about5")
+
+    ta = st.session_state.get("language", "ta") == "ta"
+    heading = "பொன்னி களஞ்சியம்" if ta else "Ponni Archive"
+    subtitle = "1947–1955 வரையிலான தமிழ் கலை இலக்கிய இதழ்" if ta else "A Tamil literary magazine, 1947–1955"
+
+    # Pull quote
+    if ta:
+        pull_quote = "'திராவிடர் கழகத்தை ஆதரிக்கும் ஏடுகள் மிகக் குறைவாக இருந்த காலம். அவையும் அழகில்லாமல், அச்சுப்பிழை மிகுந்து வெளிவந்தன. அந்த நேரத்தில் வண்ண முகப்பு அட்டை போட்டு அழகாக நடந்த இதழ் 'பொன்னி' தான்.'"
+        pull_cite = "— கவியரசு கண்ணதாசன்"
+    else:
+        pull_quote = '"There were very few publications supporting the Dravidar Kazhagam at that time. Even those were published without aesthetics and full of printing errors. At that time, the only magazine that came out beautifully with a colour cover page was Ponni."'
+        pull_cite = "— Poet Laureate Kannadasan"
+
     st.markdown("""
     <style>
-    .about-main-container {
-        padding: 1.5rem;
-        max-width: 100%;
-    }
-    .about-content-wrapper {
-        max-width: 900px;
-        margin: 0 auto;
-        padding: 0 15%;
-    }
-    .about-heading {
-        color: #1e3a8a;
-        font-size: 2.5rem;
-        font-weight: 800;
-        margin-bottom: 2rem;
-        text-align: center;
-        padding-bottom: 1rem;
-        font-family: 'Inter', sans-serif;
-    }
-    .about-text {
-        line-height: 1.8;
-        text-align: justify;
-        color: #1e293b;
-        font-size: 0.95rem;
-        margin-bottom: 2rem;
-        font-family: 'Inter', sans-serif;
-    }
-    .stImage > img {
-        border-radius: 1rem;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+    .sl-about { padding: 6rem 2rem 4rem; max-width: 780px; margin: 0 auto; }
+    .sl-about-header { text-align: center; margin-bottom: 3rem; padding-bottom: 2rem; border-bottom: 1px solid #e2e8f0; position: relative; }
+    .sl-about-header::after { content: ''; position: absolute; bottom: -1px; left: 50%; transform: translateX(-50%); width: 40px; height: 2px; background: linear-gradient(90deg, #1e3a8a, #3b82f6); }
+    .sl-about-heading { font-family: 'Lora', 'Noto Serif Tamil', Georgia, serif; color: #1e3a8a; font-size: 2.25rem; font-weight: 700; margin-bottom: 0.75rem; letter-spacing: -0.01em; }
+    .sl-about-subtitle { font-size: 0.95rem; color: #64748b; font-weight: 400; max-width: 500px; margin: 0 auto; line-height: 1.6; }
+    .sl-about-text { font-family: 'Noto Serif Tamil', 'Lora', Georgia, serif; line-height: 2; text-align: justify; color: #334155; font-size: 0.95rem; margin-bottom: 2rem; }
+    .sl-about-section { margin-bottom: 2.5rem; }
+    .sl-about-pull-quote { font-family: 'Lora', 'Noto Serif Tamil', Georgia, serif; font-size: 1.1rem; font-style: italic; color: #1e3a8a; border-left: 3px solid #3b82f6; padding: 1.25rem 1.5rem; margin: 2rem 0; background: linear-gradient(135deg, rgba(219,234,254,0.3), rgba(241,245,249,0.3)); border-radius: 0 0.5rem 0.5rem 0; line-height: 1.8; }
+    .sl-about-pull-quote cite { display: block; font-size: 0.85rem; font-style: normal; color: #64748b; margin-top: 0.75rem; font-weight: 500; }
+    .sl-about-divider { border: none; height: 1px; background: linear-gradient(90deg, transparent, #e2e8f0, transparent); margin: 2.5rem 0; }
+    .sl-about-image { display: flex; justify-content: center; margin: 2.5rem 0; }
+    .sl-about-image img { max-width: 55%; height: auto; border-radius: 0.75rem; box-shadow: 0 8px 32px rgba(0,0,0,0.1), 0 2px 6px rgba(0,0,0,0.04); transition: transform 0.4s ease; }
+    .sl-about-image img:hover { transform: translateY(-2px); }
+    .sl-about-double-image { display: flex; justify-content: center; gap: 1.5rem; margin: 2.5rem 0; }
+    .sl-about-double-image img { width: 45%; height: auto; border-radius: 0.75rem; box-shadow: 0 8px 32px rgba(0,0,0,0.1), 0 2px 6px rgba(0,0,0,0.04); transition: transform 0.4s ease; }
+    .sl-about-double-image img:hover { transform: translateY(-2px); }
+    @media (max-width: 768px) {
+        .sl-about { padding: 5.5rem 1.25rem 3rem; }
+        .sl-about-heading { font-size: 1.75rem; }
+        .sl-about-text { font-size: 0.9rem; line-height: 1.9; }
+        .sl-about-image img { max-width: 85%; }
+        .sl-about-double-image { flex-direction: column; align-items: center; }
+        .sl-about-double-image img { width: 85%; }
     }
     </style>
     """, unsafe_allow_html=True)
-    
-    st.markdown('<div class="about-main-container">', unsafe_allow_html=True)
-    st.markdown('<div class="about-content-wrapper">', unsafe_allow_html=True)
-    st.markdown('<h2 class="about-heading">பொன்னி களஞ்சியம்</h2>', unsafe_allow_html=True)
-    
-    st.markdown('''<div class="about-text">
-    திராவிட கருத்தியலைப் பட்டித்தொட்டி எங்கும் பரப்பும் முயற்சிக்குத் திராவிட கருத்தியலாளர்கள் பல்வேறு ஊடகங்களைப் கைக்கொண்டனர். அவற்றுள் இதழ்கள் குறிப்பிடத்தக்கன. குடியரசு, விடுதலை, திராவிடநாடு, திராவிடன், போர்வாள், தனியரசு, கிளர்ச்சி, குயில் போன்ற இதழ்கள் மிகப்பெரிய அளவில் அறிவு அரசியல் தளத்தில் தமிழ் மக்களிடையே பெரும் தாக்கத்தை ஏற்படுத்தின. இவ்விதழ்கள் பகுத்தறிவு, சுயமரியாதை, சமத்துவம் போன்ற கொள்கைகளை மக்களிடையே பரப்பியதுடன், சாதி, மத மூடநம்பிக்கைகளுக்கு எதிரான கருத்துகளை மிகக் காத்திரமாக முன்வைத்தன.
-    <br><br>
-    1900களில் வெளிவந்த இதழ்கள் சமூக மாற்றத்திற்கும் முன்னேற்றத்திற்கும் பெருந்துணையாக அமைந்துள்ளன என்பது வரலாற்று ரீதியான உண்மை. 1947 முதல் 1955 வரை இயங்கிய கலை இலக்கிய இதழ் 'பொன்னி'. பொன்னி இதழ் திரு. அரு. பெரியண்ணன் மற்றும் திரு. முருகு. சுப்பிரமணியம் ஆகியோரால் 1947ஆம் ஆண்டு பிப்ரவரி மாதம் தொடங்கப்பெற்றது. தொடங்கப்பட்ட முதல் வருடத்தில் மாதம் ஓர் இதழ் என வெளிவந்த பொன்னி 1948 முதல் மாதம் ஈரிதழாக வெளிவந்தது.
-    </div>''', unsafe_allow_html=True)
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        load_image("about1", use_container_width=True)
-    
-    st.markdown('''<div class="about-text">
-    திராவிட இதழ்களின் வரிசையில் வைத்து போற்றத்தக்க பெரிதும் அறியப்படாத இதழாகப் பொன்னி இதழ் திகழ்கிறது. பகுத்தறிவு, சுயமரியாதை, சமத்துவம் ஆகியவற்றை மிகத் தீவிரமாக எடுத்துரைக்கும் இதழாக இவ்விதழ் வெளிவந்தது. தமிழகத்தின் தலைசிறந்த எழுத்தாளர்களும் படைப்பாளர்களும் தம் சீரிய கருத்துகளை இவ்விதழின்வழி எடுத்துரைத்தனர். தமிழ்ச் சமூகத்தை அறிவுச் சமூகமாக்கும் முன்னெடுப்பில் பொன்னி இதழின் பணி தலையாயதாகும்.
-    <br><br>
-    திராவிடக் கருத்தியலை துப்பாக்கியாகச் செயல்பட்ட திரு. அரு. பெரியண்ணன் அவர்களும், உள்வாங்கி இரட்டைக்குழல் திரு. முருகு. சுப்பிரமணியம் அவர்களும் இணைந்து 1947ஆம் ஆண்டு பிப்ரவரி மாதம் பொன்னி இதழைத் தொடங்கினர். பொன்னி இதழ் வண்ண அட்டைப்படத்தில் மிக நேர்த்தியாக வடிவமைக்கப்பட்டு வெளியிடப்பெற்றது. கவிஞர் கண்ணதாசன் தன் வனவாசம் புத்தகத்தில் 'திராவிடர் கழகத்தை ஆதரிக்கும் ஏடுகள் மிகக் குறைவாக இருந்த காலம். அவையும் அழகில்லாமல், அச்சுப்பிழை மிகுந்து வெளிவந்தன. அந்த நேரத்தில் வண்ண முகப்பு அட்டை போட்டு அழகாக நடந்த இதழ் 'பொன்னி' தான். பத்திரிக்கை துறையில் மற்றவர்கள் செய்துகாட்டாத புதுமை எல்லாம் அவர்கள் செய்து காட்டினார்கள். இன்றும் தமிழகத்தில் சிலரை அச்சுக்கலை நிபுணர்கள் என்று தேர்ந்தெடுத்தால், அவர்களில் பெரியண்ணன் மிக முக்கியமானவராக இருப்பார்' என்று குறிப்பிட்டுள்ளார்.
-    <br><br>
-    தமிழ் இலக்கிய உலகில் முக்கியமான கவிஞர் பாரதிதாசன் அவரின் 'குயில்' இதழ் அரசால் தடை செய்யப்பட்ட பிறகு பொன்னியில் எழுதினார். அவரின் கொள்கைகளையும் நடையையும் பின்பற்றி எழுதியவர்களை 'பாரதிதாசன் பரம்பரை கவிஞர்கள்' என்று அறிமுகப்படுத்தியது பொன்னி இதழ்.
-    </div>''', unsafe_allow_html=True)
-    
-    col1, col2 = st.columns(2, gap="large")
-    with col1:
-        load_image("about2", use_container_width=True)
-    with col2:
-        load_image("about3", use_container_width=True)
-    
-    st.markdown('''<div class="about-text">
-    இவ்விதழில் மாநில சுயாட்சி, இந்தித் திணிப்பு, தனித்தமிழ் பற்று, விடுதலை, அரசியல், சமூகம் சார்ந்த திராவிடச் சிந்தனைகள் கட்டுரைகளாக, கதைகளாக, கவிதைகளாக. கிறனாய்வுகளாக, துணுக்குகளாக வெளிவந்தன.
-    <br><br>
-    தந்தை பெரியார், பேரறிஞர் அண்ணா, பாவேந்தர், திரு.வி.க., கலைஞர் மு. கருணாநிதி, கா. அப்பாதுரையார், கவியரசு கண்ணதாசன், டி. கே. சீனிவாசன், மு. வ., மு. அண்ணாமலை, கவிஞர் வாணிதாசன், கவிஞர் சுரதா போன்ற பல முதன்மையான இலக்கிய, அரசியல் ஆளுமைகள் பொன்னியில் எழுதியுள்ளனர்.
-    <br><br>
-    கவிதைகள், சிறுகதைகள், தொடர்கதைகள், நொடிக் கதைகள், நாடகங்கள், பொதுக் கட்டுரைகள், ஆய்வுக் கட்டுரைகள், ஒப்பாய்வுக் கட்டுரைகள், தொடர் கட்டுரைகள், செய்திப் பாட்டு போன்ற இலக்கிய வகைமைகளில் பொன்னியில் படைப்புகள் வெளியாகியுள்ளன. இது மட்டுமன்றி அட்டைப்படக் குறிப்பு, மகளிர் அழகுக் குறிப்புகள், குழந்தை வளர்ப்புமுறை, பொன்னி வாழ்த்துகள், விகடங்கள், சிறுவர் அரங்கம் (சிறுவர் இலக்கியம்) போன்ற படைப்புகளும் இடம்பெற்றுள்ளன.
-    </div>''', unsafe_allow_html=True)
-    
-    col1, col2 = st.columns(2, gap="large")
-    with col1:
-        load_image("about4", use_container_width=True)
-    with col2:
-        load_image("about5", use_container_width=True)
-    
-    st.markdown('''<div class="about-text">
-    1948ல் போராட்டச் செய்தி நாட்குறிப்பு என்னும் தலைப்பில் கா. அப்பாதுரையார் அவர்கள், அக்கால விடுதலைப் போராட்ட நிலவரங்களை பதிவு செய்துள்ளார். எங்கே, யார் எதற்காக கைது செய்யப் படுகிறார்கள்? அவர்களுக்கு என்ன தண்டனை? போன்றவற்றை இப்பகுதியில் காணமுடிகிறது. தமிழ் இலக்கியம் மட்டுமன்றி சீனம், யார் எதற்காகக் கைது செய்யப் உலக இலக்கியங்களையும் பொன்னியில் அறிமுகம் செய்துள்ளனர். பாரசீகம், ரஷ்ய, கன்னடம், உருது, வடமொழி, தெலுங்கு போன்ற உலக இலக்கியங்களையும் பொன்னியில் அறிமுகம் செய்துள்ளனர்.
-    <br><br>
-    நாடக விளம்பரங்கள், புத்தக விளம்பரங்கள், திரைப்பட விளம்பரங்கள், வணிக விளம்பரங்கள் போன்றவை பொன்னி இதழில் இடம் பெற்றுள்ளன. கலையுலகம் என்ற பகுதியின் கீழ் திரைப்படங்கள், நாடகங்களின் விமர்சனங்களை எழுதியுள்ளனர். பொன்னியில் மேலும் ஒரு சிறப்பிற்குரிய விஷயம் அதில் இடம்பெற்றுள்ள படங்கள் மற்றும் ஓவியங்கள். படைப்பின் தலைப்புகளை வரைந்து இதழில் சேர்த்துள்ளனர். புதுமைப்பித்தன் நினைவுகளைப் பற்றி அவரது மனைவி கமலா அவர்கள் பொன்னி இதழில் எழுதியுள்ளார். பொன்னி இதழ் தொடங்கப்பெற்ற காலத்திலிருந்து இந்தி எதிர்ப்பு குறித்தான எழுத்துகள் தொடர்ந்து காத்திரமாக இடம்பெற்றுள்ளது. அறிஞர்களும் மக்களும் இதில் எழுதியுள்ளனர். பொன்னி இதழ் விடுதலை போராட்ட காலகட்டத்தில் வெளியான இதழ் என்பதால், அக்கால அரசியல் சூழ்நிலைகள் மற்றும் சமூக நிலைகள் படைப்புகளில் பிரதிபலிக்கின்றன.
-    <br><br>
-    மார்க்சியம், பெண்ணியம் போன்ற இசங்களும் பொன்னி இதழில் இடம்பெற்றுள்ளன. இன்றைய தமிழ்நாடு 1947இல் மதராஸ் மாகாணமாக இருந்தது. 1950ல் அது மெட்ராஸ் மாநிலமாக மாறியது. இது தொடர்பான கட்டுரைகள் பொன்னியில் இடம்பெற்றுள்ளன. பொன்னியில் பார்ப்பனியத்திற்கு எதிரான கருத்துகளும் திராவிடத்தை ஆதரிக்கும் கருத்துகளும் வலுவாகத் தொடர்ந்து இடம்பெற்று வந்திருக்கின்றன. மாநில சுயாட்சி, தனித்தமிழ் போன்றவற்றைக் குறித்தும் பொன்னியில் எழுதப்பட்டுள்ளன. ஓர் இலக்கியம் கருத்துடன் சேர்ந்து காலத்திற்கு ஏற்ப அமைந்தால் மட்டுமே அது நிலைத்து நிற்கும். பொன்னியில் இடம் பெற்றுள்ள படைப்புகளும் அக்காலகட்ட சூழலுக்கு ஏற்ப அமைந்திருக்கின்றன. பொன்னி இதழ் ஒரு கலை இலக்கிய இதழாக மட்டுமின்றி புரட்சி இதழாகவே இருந்திருக்கிறது.
-    <br><br>
-    1947 முதல் 1955 வரையிலான தமிழகத்தின் காலக் கண்ணாடியாகப் பொன்னி இதழ் விளங்குகிறது. தொடக்க காலத் திராவிடக் கருத்தியல்களையும், அவை பரப்பப்பெற்ற வடிவங்களையும் முறைகளையும் ஆயும் ஆய்வாளர்களுக்கு மிகச் சிறந்த களமாகப் பொன்னி இதழ்கள் அமையும். 1947க்கு பிறகான எழுத்துருக்கள், சிந்தனைகள், உரிமை முழக்கங்கள், கேலிச் சித்திரங்கள், நூலறிமுகங்கள் போன்றவற்றை அறியவும், அவற்றை ஆய்வுக்குட்படுத்தவும் பெரும் வாய்ப்பை பொன்னி இதழ்கள் ஏற்படுத்திக் கொடுக்கும்.
-    </div>''', unsafe_allow_html=True)
-    
-    st.markdown('</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+
+    about_html = f"""
+    <div class="sl-about">
+        <div class="sl-about-header">
+            <div class="sl-about-heading">{heading}</div>
+            <div class="sl-about-subtitle">{subtitle}</div>
+        </div>
+
+        <div class="sl-about-section">
+            <div class="sl-about-text">
+                திராவிட கருத்தியலைப் பட்டித்தொட்டி எங்கும் பரப்பும் முயற்சிக்குத் திராவிட கருத்தியலாளர்கள் பல்வேறு ஊடகங்களைப் கைக்கொண்டனர். அவற்றுள் இதழ்கள் குறிப்பிடத்தக்கன. குடியரசு, விடுதலை, திராவிடநாடு, திராவிடன், போர்வாள், தனியரசு, கிளர்ச்சி, குயில் போன்ற இதழ்கள் மிகப்பெரிய அளவில் அறிவு அரசியல் தளத்தில் தமிழ் மக்களிடையே பெரும் தாக்கத்தை ஏற்படுத்தின. இவ்விதழ்கள் பகுத்தறிவு, சுயமரியாதை, சமத்துவம் போன்ற கொள்கைகளை மக்களிடையே பரப்பியதுடன், சாதி, மத மூடநம்பிக்கைகளுக்கு எதிரான கருத்துகளை மிகக் காத்திரமாக முன்வைத்தன.
+            </div>
+            <div class="sl-about-text">
+                1900களில் வெளிவந்த இதழ்கள் சமூக மாற்றத்திற்கும் முன்னேற்றத்திற்கும் பெருந்துணையாக அமைந்துள்ளன என்பது வரலாற்று ரீதியான உண்மை. 1947 முதல் 1955 வரை இயங்கிய கலை இலக்கிய இதழ் 'பொன்னி'. பொன்னி இதழ் திரு. அரு. பெரியண்ணன் மற்றும் திரு. முருகு. சுப்பிரமணியம் ஆகியோரால் 1947ஆம் ஆண்டு பிப்ரவரி மாதம் தொடங்கப்பெற்றது. தொடங்கப்பட்ட முதல் வருடத்தில் மாதம் ஓர் இதழ் என வெளிவந்த பொன்னி 1948 முதல் மாதம் ஈரிதழாக வெளிவந்தது.
+            </div>
+        </div>
+
+        <div class="sl-about-image">{img1}</div>
+
+        <hr class="sl-about-divider">
+
+        <div class="sl-about-section">
+            <div class="sl-about-text">
+                திராவிட இதழ்களின் வரிசையில் வைத்து போற்றத்தக்க பெரிதும் அறியப்படாத இதழாகப் பொன்னி இதழ் திகழ்கிறது. பகுத்தறிவு, சுயமரியாதை, சமத்துவம் ஆகியவற்றை மிகத் தீவிரமாக எடுத்துரைக்கும் இதழாக இவ்விதழ் வெளிவந்தது. தமிழகத்தின் தலைசிறந்த எழுத்தாளர்களும் படைப்பாளர்களும் தம் சீரிய கருத்துகளை இவ்விதழின்வழி எடுத்துரைத்தனர். தமிழ்ச் சமூகத்தை அறிவுச் சமூகமாக்கும் முன்னெடுப்பில் பொன்னி இதழின் பணி தலையாயதாகும்.
+            </div>
+            <div class="sl-about-pull-quote">
+                {pull_quote}
+                <cite>{pull_cite}</cite>
+            </div>
+            <div class="sl-about-text">
+                திராவிடக் கருத்தியலை துப்பாக்கியாகச் செயல்பட்ட திரு. அரு. பெரியண்ணன் அவர்களும், உள்வாங்கி இரட்டைக்குழல் திரு. முருகு. சுப்பிரமணியம் அவர்களும் இணைந்து 1947ஆம் ஆண்டு பிப்ரவரி மாதம் பொன்னி இதழைத் தொடங்கினர். பொன்னி இதழ் வண்ண அட்டைப்படத்தில் மிக நேர்த்தியாக வடிவமைக்கப்பட்டு வெளியிடப்பெற்றது. பத்திரிக்கை துறையில் மற்றவர்கள் செய்துகாட்டாத புதுமை எல்லாம் அவர்கள் செய்து காட்டினார்கள். இன்றும் தமிழகத்தில் சிலரை அச்சுக்கலை நிபுணர்கள் என்று தேர்ந்தெடுத்தால், அவர்களில் பெரியண்ணன் மிக முக்கியமானவராக இருப்பார்' என்று குறிப்பிட்டுள்ளார்.
+            </div>
+            <div class="sl-about-text">
+                தமிழ் இலக்கிய உலகில் முக்கியமான கவிஞர் பாரதிதாசன் அவரின் 'குயில்' இதழ் அரசால் தடை செய்யப்பட்ட பிறகு பொன்னியில் எழுதினார். அவரின் கொள்கைகளையும் நடையையும் பின்பற்றி எழுதியவர்களை 'பாரதிதாசன் பரம்பரை கவிஞர்கள்' என்று அறிமுகப்படுத்தியது பொன்னி இதழ்.
+            </div>
+        </div>
+
+        <div class="sl-about-double-image">{img2}{img3}</div>
+
+        <hr class="sl-about-divider">
+
+        <div class="sl-about-section">
+            <div class="sl-about-text">
+                இவ்விதழில் மாநில சுயாட்சி, இந்தித் திணிப்பு, தனித்தமிழ் பற்று, விடுதலை, அரசியல், சமூகம் சார்ந்த திராவிடச் சிந்தனைகள் கட்டுரைகளாக, கதைகளாக, கவிதைகளாக. கிறனாய்வுகளாக, துணுக்குகளாக வெளிவந்தன.
+            </div>
+            <div class="sl-about-text">
+                தந்தை பெரியார், பேரறிஞர் அண்ணா, பாவேந்தர், திரு.வி.க., கலைஞர் மு. கருணாநிதி, கா. அப்பாதுரையார், கவியரசு கண்ணதாசன், டி. கே. சீனிவாசன், மு. வ., மு. அண்ணாமலை, கவிஞர் வாணிதாசன், கவிஞர் சுரதா போன்ற பல முதன்மையான இலக்கிய, அரசியல் ஆளுமைகள் பொன்னியில் எழுதியுள்ளனர்.
+            </div>
+            <div class="sl-about-text">
+                கவிதைகள், சிறுகதைகள், தொடர்கதைகள், நொடிக் கதைகள், நாடகங்கள், பொதுக் கட்டுரைகள், ஆய்வுக் கட்டுரைகள், ஒப்பாய்வுக் கட்டுரைகள், தொடர் கட்டுரைகள், செய்திப் பாட்டு போன்ற இலக்கிய வகைமைகளில் பொன்னியில் படைப்புகள் வெளியாகியுள்ளன. இது மட்டுமன்றி அட்டைப்படக் குறிப்பு, மகளிர் அழகுக் குறிப்புகள், குழந்தை வளர்ப்புமுறை, பொன்னி வாழ்த்துகள், விகடங்கள், சிறுவர் அரங்கம் (சிறுவர் இலக்கியம்) போன்ற படைப்புகளும் இடம்பெற்றுள்ளன.
+            </div>
+        </div>
+
+        <div class="sl-about-double-image">{img4}{img5}</div>
+
+        <hr class="sl-about-divider">
+
+        <div class="sl-about-section">
+            <div class="sl-about-text">
+                1948ல் போராட்டச் செய்தி நாட்குறிப்பு என்னும் தலைப்பில் கா. அப்பாதுரையார் அவர்கள், அக்கால விடுதலைப் போராட்ட நிலவரங்களை பதிவு செய்துள்ளார். எங்கே, யார் எதற்காக கைது செய்யப் படுகிறார்கள்? அவர்களுக்கு என்ன தண்டனை? போன்றவற்றை இப்பகுதியில் காணமுடிகிறது. தமிழ் இலக்கியம் மட்டுமன்றி சீனம், யார் எதற்காகக் கைது செய்யப் உலக இலக்கியங்களையும் பொன்னியில் அறிமுகம் செய்துள்ளனர். பாரசீகம், ரஷ்ய, கன்னடம், உருது, வடமொழி, தெலுங்கு போன்ற உலக இலக்கியங்களையும் பொன்னியில் அறிமுகம் செய்துள்ளனர்.
+            </div>
+            <div class="sl-about-text">
+                நாடக விளம்பரங்கள், புத்தக விளம்பரங்கள், திரைப்பட விளம்பரங்கள், வணிக விளம்பரங்கள் போன்றவை பொன்னி இதழில் இடம் பெற்றுள்ளன. கலையுலகம் என்ற பகுதியின் கீழ் திரைப்படங்கள், நாடகங்களின் விமர்சனங்களை எழுதியுள்ளனர். பொன்னியில் மேலும் ஒரு சிறப்பிற்குரிய விஷயம் அதில் இடம்பெற்றுள்ள படங்கள் மற்றும் ஓவியங்கள். படைப்பின் தலைப்புகளை வரைந்து இதழில் சேர்த்துள்ளனர். புதுமைப்பித்தன் நினைவுகளைப் பற்றி அவரது மனைவி கமலா அவர்கள் பொன்னி இதழில் எழுதியுள்ளார். பொன்னி இதழ் தொடங்கப்பெற்ற காலத்திலிருந்து இந்தி எதிர்ப்பு குறித்தான எழுத்துகள் தொடர்ந்து காத்திரமாக இடம்பெற்றுள்ளது. அறிஞர்களும் மக்களும் இதில் எழுதியுள்ளனர். பொன்னி இதழ் விடுதலை போராட்ட காலகட்டத்தில் வெளியான இதழ் என்பதால், அக்கால அரசியல் சூழ்நிலைகள் மற்றும் சமூக நிலைகள் படைப்புகளில் பிரதிபலிக்கின்றன.
+            </div>
+            <div class="sl-about-text">
+                மார்க்சியம், பெண்ணியம் போன்ற இசங்களும் பொன்னி இதழில் இடம்பெற்றுள்ளன. இன்றைய தமிழ்நாடு 1947இல் மதராஸ் மாகாணமாக இருந்தது. 1950ல் அது மெட்ராஸ் மாநிலமாக மாறியது. இது தொடர்பான கட்டுரைகள் பொன்னியில் இடம்பெற்றுள்ளன. பொன்னியில் பார்ப்பனியத்திற்கு எதிரான கருத்துகளும் திராவிடத்தை ஆதரிக்கும் கருத்துகளும் வலுவாகத் தொடர்ந்து இடம்பெற்று வந்திருக்கின்றன. மாநில சுயாட்சி, தனித்தமிழ் போன்றவற்றைக் குறித்தும் பொன்னியில் எழுதப்பட்டுள்ளன. ஓர் இலக்கியம் கருத்துடன் சேர்ந்து காலத்திற்கு ஏற்ப அமைந்தால் மட்டுமே அது நிலைத்து நிற்கும். பொன்னியில் இடம் பெற்றுள்ள படைப்புகளும் அக்காலகட்ட சூழலுக்கு ஏற்ப அமைந்திருக்கின்றன. பொன்னி இதழ் ஒரு கலை இலக்கிய இதழாக மட்டுமின்றி புரட்சி இதழாகவே இருந்திருக்கிறது.
+            </div>
+            <div class="sl-about-text">
+                1947 முதல் 1955 வரையிலான தமிழகத்தின் காலக் கண்ணாடியாகப் பொன்னி இதழ் விளங்குகிறது. தொடக்க காலத் திராவிடக் கருத்தியல்களையும், அவை பரப்பப்பெற்ற வடிவங்களையும் முறைகளையும் ஆயும் ஆய்வாளர்களுக்கு மிகச் சிறந்த களமாகப் பொன்னி இதழ்கள் அமையும். 1947க்கு பிறகான எழுத்துருக்கள், சிந்தனைகள், உரிமை முழக்கங்கள், கேலிச் சித்திரங்கள், நூலறிமுகங்கள் போன்றவற்றை அறியவும், அவற்றை ஆய்வுக்குட்படுத்தவும் பெரும் வாய்ப்பை பொன்னி இதழ்கள் ஏற்படுத்திக் கொடுக்கும்.
+            </div>
+        </div>
+    </div>
+    """
+    st.markdown(about_html, unsafe_allow_html=True)
 
 
 def main():
