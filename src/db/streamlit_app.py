@@ -36,27 +36,46 @@ except Exception:
 _s3_image_cache: Dict[str, Image.Image] = {}
 
 
+def _s3_key_with_fallback(s3_key: str) -> List[str]:
+    """Return list of S3 keys to try: original + alternate extensions (.jpg/.png/.jpeg)."""
+    base, ext = s3_key.rsplit(".", 1) if "." in s3_key else (s3_key, "")
+    alternates = ["jpg", "png", "jpeg"]
+    keys = [s3_key]
+    for alt in alternates:
+        if alt != ext.lower():
+            keys.append(f"{base}.{alt}")
+    return keys
+
+
 def _load_s3_image(s3_key: str, thumbnail_size: tuple = (250, 375)) -> Optional[Image.Image]:
-    """Fetch image from S3, thumbnail it, cache, and return PIL Image."""
+    """Fetch image from S3, thumbnail it, cache, and return PIL Image. Tries alternate extensions on failure."""
     if s3_key in _s3_image_cache:
         return _s3_image_cache[s3_key]
     if not _s3_client:
         logging.warning("S3 client not available")
         return None
-    try:
-        resp = _s3_client.get_object(Bucket=_s3_conf["bucket"], Key=s3_key)
-        raw = resp["Body"].read()
-        img = Image.open(io.BytesIO(raw))
-        if img.mode != "RGB":
-            img = img.convert("RGB")
-        img.thumbnail(thumbnail_size, Image.Resampling.LANCZOS)
-        _s3_image_cache[s3_key] = img
-        logging.info("S3 image loaded: %s (%d bytes -> %dx%d)", s3_key, len(raw), img.width, img.height)
-        return img
-    except (ClientError, NoCredentialsError, BotoCoreError) as e:
-        logging.warning("S3 fetch failed %s: %s", s3_key, e)
-    except Exception as e:
-        logging.warning("S3 image error %s: %s", s3_key, e)
+    for key in _s3_key_with_fallback(s3_key):
+        if key in _s3_image_cache:
+            return _s3_image_cache[key]
+        try:
+            resp = _s3_client.get_object(Bucket=_s3_conf["bucket"], Key=key)
+            raw = resp["Body"].read()
+            img = Image.open(io.BytesIO(raw))
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            img.thumbnail(thumbnail_size, Image.Resampling.LANCZOS)
+            _s3_image_cache[s3_key] = img
+            logging.info("S3 image loaded: %s (%d bytes -> %dx%d)", key, len(raw), img.width, img.height)
+            return img
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "NoSuchKey":
+                continue
+            logging.warning("S3 fetch failed %s: %s", key, e)
+        except (NoCredentialsError, BotoCoreError) as e:
+            logging.warning("S3 fetch failed %s: %s", key, e)
+            break
+        except Exception as e:
+            logging.warning("S3 image error %s: %s", key, e)
     return None
 
 
@@ -1077,17 +1096,22 @@ def load_image(image_name: str, use_container_width: bool = False):
         s3_key = f"about/{image_name}.jpg"
 
     if s3_key and _s3_client:
-        try:
-            resp = _s3_client.get_object(Bucket=_s3_conf["bucket"], Key=s3_key)
-            raw = resp["Body"].read()
-            img = Image.open(io.BytesIO(raw))
-            if img.mode != "RGB":
-                img = img.convert("RGB")
-            st.image(img, use_container_width=use_container_width)
-            logger.debug(f"Loaded image: {image_name}")
-            return
-        except Exception as e:
-            logger.warning(f"Failed to load image {s3_key}: {e}")
+        for key in _s3_key_with_fallback(s3_key):
+            try:
+                resp = _s3_client.get_object(Bucket=_s3_conf["bucket"], Key=key)
+                raw = resp["Body"].read()
+                img = Image.open(io.BytesIO(raw))
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+                st.image(img, use_container_width=use_container_width)
+                logger.debug(f"Loaded image: {image_name} (from {key})")
+                return
+            except ClientError as e:
+                if e.response["Error"]["Code"] == "NoSuchKey":
+                    continue
+                logger.warning(f"Failed to load image {key}: {e}")
+            except Exception as e:
+                logger.warning(f"Failed to load image {key}: {e}")
 
     logger.warning(f"Could not resolve image: {image_name}")
 
