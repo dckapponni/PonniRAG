@@ -78,16 +78,36 @@ def _issue_cover_s3_key(volume_id: int, issue_name: str) -> Optional[str]:
     return f"{_s3_conf['covers_prefix']}{folder}{filename}"
 
 
+def _s3_key_with_fallback(key: str) -> list:
+    """Return list of S3 keys to try: original + alternate extensions (.jpg/.png/.jpeg)."""
+    if "." not in key:
+        return [key]
+    base, ext = key.rsplit(".", 1)
+    keys = [key]
+    for alt in ["jpg", "png", "jpeg"]:
+        if alt != ext.lower():
+            keys.append(f"{base}.{alt}")
+    return keys
+
+
 def _fetch_s3_image(key: str) -> Optional[dict]:
-    """Fetch an image from S3. Returns {'body': bytes, 'content_type': str} or None."""
-    try:
-        resp = _s3_client.get_object(Bucket=_s3_conf["bucket"], Key=key)
-        body = resp["Body"].read()
-        content_type = resp.get("ContentType", "image/jpeg")
-        return {"body": body, "content_type": content_type}
-    except (ClientError, NoCredentialsError, BotoCoreError) as e:
-        logger.warning(f"Failed to fetch S3 image {key}: {e}")
-        return None
+    """Fetch an image from S3, trying alternate extensions on failure."""
+    for candidate in _s3_key_with_fallback(key):
+        try:
+            resp = _s3_client.get_object(Bucket=_s3_conf["bucket"], Key=candidate)
+            body = resp["Body"].read()
+            content_type = resp.get("ContentType", "image/jpeg")
+            return {"body": body, "content_type": content_type}
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "NoSuchKey":
+                continue
+            logger.warning(f"Failed to fetch S3 image {candidate}: {e}")
+            return None
+        except (NoCredentialsError, BotoCoreError) as e:
+            logger.warning(f"Failed to fetch S3 image {candidate}: {e}")
+            return None
+    logger.warning(f"S3 image not found with any extension: {key}")
+    return None
 
 logging.basicConfig(
     level=logging.INFO,
