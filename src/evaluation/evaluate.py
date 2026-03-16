@@ -41,15 +41,13 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import sys
+
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
-
-# ---------------------------------------------------------------------------
-# sys.path manipulation — mirrors the project's established pattern
-# ---------------------------------------------------------------------------
+import pandas as pd
+import sys
 _EVAL_DIR = Path(__file__).resolve().parent       # src/evaluation/
 _SRC_DIR = _EVAL_DIR.parent                       # src/
 _DB_DIR = _SRC_DIR / "db"                         # src/db/
@@ -85,7 +83,6 @@ class EvaluationReport:
 
     # Macro-averages
     avg_semantic_similarity: float = 0.0
-    avg_bertscore_f1: float = 0.0
     avg_bleu_1: float = 0.0
     avg_bleu_2: float = 0.0
     avg_rouge_l: float = 0.0
@@ -102,7 +99,6 @@ class EvaluationReport:
             "skipped_samples": self.skipped_samples,
             "averages": {
                 "semantic_similarity": round(self.avg_semantic_similarity, 4),
-                "bertscore_f1": round(self.avg_bertscore_f1, 4),
                 "bleu_1": round(self.avg_bleu_1, 4),
                 "bleu_2": round(self.avg_bleu_2, 4),
                 "rouge_l": round(self.avg_rouge_l, 4),
@@ -120,7 +116,7 @@ class EvaluationReport:
 def run_evaluation(
     dataset_path: str | Path,
     live: bool = False,
-    use_bertscore: bool = True,
+    use_bertscore: bool = False,
     save_answers_path: Optional[str | Path] = None,
     output_path: Optional[str | Path] = None,
 ) -> EvaluationReport:
@@ -210,7 +206,7 @@ def run_evaluation(
     _print_report(report, samples=ready)
 
     if output_path:
-        _save_report(report, output_path)
+        _save_report_csv(report,ready,output_path)
 
     return report
 
@@ -327,7 +323,6 @@ def _build_report(
         evaluated_samples=len(metric_results),
         skipped_samples=skipped,
         avg_semantic_similarity=avg("semantic_similarity"),
-        avg_bertscore_f1=avg("bertscore_f1"),
         avg_bleu_1=avg("bleu_1"),
         avg_bleu_2=avg("bleu_2"),
         avg_rouge_l=avg("rouge_l"),
@@ -365,7 +360,6 @@ def _print_report(report: EvaluationReport, samples: List[EvalSample]) -> None:
     print()
     print("  Macro-average scores:")
     print(f"    Semantic similarity : {report.avg_semantic_similarity:.4f}")
-    print(f"    BERTScore F1        : {report.avg_bertscore_f1:.4f}")
     print(f"    BLEU-1 (char)       : {report.avg_bleu_1:.4f}")
     print(f"    BLEU-2 (char)       : {report.avg_bleu_2:.4f}")
     print(f"    ROUGE-L (char)      : {report.avg_rouge_l:.4f}")
@@ -382,11 +376,9 @@ def _print_report(report: EvaluationReport, samples: List[EvalSample]) -> None:
     header = (
         f"{'ID':<12} "
         f"{'Semantic':>9} "
-        f"{'BERT-F1':>9} "
         f"{'BLEU-1':>7} "
         f"{'ROUGE-L':>8} "
         f"{'Composite':>10}  "
-        f"{'Category':<14}"
     )
     print(header)
     print(sep)
@@ -396,7 +388,6 @@ def _print_report(report: EvaluationReport, samples: List[EvalSample]) -> None:
         row = (
             f"{str(entry.get('id', '')):<12} "
             f"{entry.get('semantic_similarity', 0.0):>9.4f} "
-            f"{entry.get('bertscore_f1', 0.0):>9.4f} "
             f"{entry.get('bleu_1', 0.0):>7.4f} "
             f"{entry.get('rouge_l', 0.0):>8.4f} "
             f"{entry.get('composite_score', 0.0):>10.4f}  "
@@ -419,19 +410,37 @@ def _print_report(report: EvaluationReport, samples: List[EvalSample]) -> None:
     print()
 
 
-def _save_report(report: EvaluationReport, output_path: str | Path) -> None:
-    """Write EvaluationReport to a JSON file."""
-    output_path = Path(output_path)
+def _save_report_csv(report: EvaluationReport, samples: List[EvalSample], output_path: str | Path) -> None:
+    """Save evaluation results to Excel."""
+
+    output_path = Path(output_path).with_suffix(".xlsx")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as fh:
-        json.dump(report.to_dict(), fh, ensure_ascii=False, indent=2)
-    logger.info("Report saved to %s", output_path)
 
+    sample_map = {s.id: s for s in samples}
 
-# ---------------------------------------------------------------------------
-# CLI entry point
-# ---------------------------------------------------------------------------
+    rows = []
 
+    for i, entry in enumerate(report.per_sample, start=1):
+        s = sample_map.get(entry["id"])
+
+        rows.append({
+            "S.no": i,
+            "Question": s.question if s else "",
+            "Human answer": s.human_answer if s else "",
+            "LLM answer": s.llm_answer if s else "",
+            "Semantic similarity": entry.get("semantic_similarity", 0),
+            "BERTScore F1": entry.get("bertscore_f1", 0),
+            "BLEU-1": entry.get("bleu_1", 0),
+            "BLEU-2": entry.get("bleu_2", 0),
+            "ROUGE-L": entry.get("rouge_l", 0),
+            "Composite score": entry.get("composite_score", 0),
+        })
+
+    df = pd.DataFrame(rows)
+
+    df.to_excel(output_path, index=False)
+
+    logger.info("Excel report saved to %s", output_path)
 
 def _build_argparser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(

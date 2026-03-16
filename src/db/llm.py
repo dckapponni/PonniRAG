@@ -9,12 +9,13 @@ import logging
 import time
 import threading
 from typing import List, Dict
+from dotenv import load_dotenv
 
 from google import genai
 from google.genai import types as genai_types
 from guardrails import ANTI_INJECTION_PREAMBLE, sanitize_output
 from retry import with_gemini_retry, with_gemini_retry_async, is_retryable_gemini
-
+load_dotenv()
 logger = logging.getLogger(__name__)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")

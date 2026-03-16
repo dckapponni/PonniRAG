@@ -54,9 +54,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Weights for the composite score
 # ---------------------------------------------------------------------------
-WEIGHT_SEMANTIC = 0.50
-WEIGHT_BERTSCORE = 0.25
-WEIGHT_ROUGE_L = 0.15
+WEIGHT_SEMANTIC = 0.70
+WEIGHT_ROUGE_L = 0.20
 WEIGHT_BLEU1 = 0.10
 
 # E5 prefix used when encoding evaluation texts (symmetrical pair comparison,
@@ -75,9 +74,6 @@ class MetricResult:
 
     sample_id: str
     semantic_similarity: float = 0.0
-    bertscore_precision: float = 0.0
-    bertscore_recall: float = 0.0
-    bertscore_f1: float = 0.0
     bleu_1: float = 0.0
     bleu_2: float = 0.0
     rouge_l: float = 0.0
@@ -87,7 +83,6 @@ class MetricResult:
         return {
             "id": self.sample_id,
             "semantic_similarity": round(self.semantic_similarity, 4),
-            "bertscore_f1": round(self.bertscore_f1, 4),
             "bleu_1": round(self.bleu_1, 4),
             "bleu_2": round(self.bleu_2, 4),
             "rouge_l": round(self.rouge_l, 4),
@@ -114,7 +109,7 @@ class MetricsCalculator:
         self,
         embedding_model_name: str = DEFAULT_EMBEDDING_MODEL,
         device: Optional[str] = None,
-        use_bertscore: bool = True,
+        use_bertscore: bool = False,
     ) -> None:
         self._embedding_model_name = embedding_model_name
         self._use_bertscore = use_bertscore
@@ -158,14 +153,6 @@ class MetricsCalculator:
         # 1. Semantic similarity
         result.semantic_similarity = self._semantic_similarity(reference, hypothesis)
 
-        # 2. BERTScore
-        if self._use_bertscore:
-            p, r, f1 = self._bertscore(reference, hypothesis)
-            result.bertscore_precision = p
-            result.bertscore_recall = r
-            result.bertscore_f1 = f1
-        else:
-            logger.debug("BERTScore disabled for sample %s", sample_id)
 
         # 3. BLEU (character-level)
         result.bleu_1, result.bleu_2 = self._bleu(reference, hypothesis)
@@ -215,11 +202,6 @@ class MetricsCalculator:
                 results.append(r)
                 continue
 
-            if self._use_bertscore:
-                p, rec, f1 = self._bertscore(ref, hyp)
-                r.bertscore_precision = p
-                r.bertscore_recall = rec
-                r.bertscore_f1 = f1
 
             r.bleu_1, r.bleu_2 = self._bleu(ref, hyp)
             r.rouge_l = self._rouge_l(ref, hyp)
@@ -283,46 +265,6 @@ class MetricsCalculator:
         # Element-wise dot product along dim=1
         sims = np.einsum("ij,ij->i", ref_vecs, hyp_vecs)
         return [max(0.0, min(1.0, float(s))) for s in sims]
-
-    # ------------------------------------------------------------------
-    # Internal: BERTScore
-    # ------------------------------------------------------------------
-
-    def _bertscore(
-        self, ref: str, hyp: str
-    ) -> Tuple[float, float, float]:
-        """
-        Compute BERTScore (P, R, F1) using the E5-large model.
-
-        bert_score expects list inputs even for single pairs.
-        We pass lang="ta" so the library uses the correct rescaling
-        baseline if IDF rescaling is requested in future.
-        """
-        try:
-            from bert_score import score as bert_score_fn  # noqa: PLC0415
-        except ImportError:
-            logger.warning(
-                "bert_score not installed. Skipping BERTScore. "
-                "Install with: pip install bert-score"
-            )
-            return 0.0, 0.0, 0.0
-
-        try:
-            P, R, F1 = bert_score_fn(
-                cands=[hyp],
-                refs=[ref],
-                model_type=self._embedding_model_name,
-                lang="ta",
-                verbose=False,
-                device=self._device,
-                # rescale_with_baseline=False: baselines are English-only;
-                # raw scores are more interpretable for Tamil
-                rescale_with_baseline=False,
-            )
-            return float(P[0]), float(R[0]), float(F1[0])
-        except Exception as exc:
-            logger.error("BERTScore computation failed: %s", exc)
-            return 0.0, 0.0, 0.0
 
     # ------------------------------------------------------------------
     # Internal: BLEU (character-level)
@@ -446,14 +388,12 @@ def _composite(r: MetricResult) -> float:
     Compute the weighted composite score from individual metric values.
 
     Weights (see module docstring for rationale):
-        semantic_similarity : 0.50
-        bertscore_f1        : 0.25
-        rouge_l             : 0.15
+        semantic_similarity : 0.70
+        rouge_l             : 0.20
         bleu_1              : 0.10
     """
     return (
         WEIGHT_SEMANTIC * r.semantic_similarity
-        + WEIGHT_BERTSCORE * r.bertscore_f1
         + WEIGHT_ROUGE_L * r.rouge_l
         + WEIGHT_BLEU1 * r.bleu_1
     )
