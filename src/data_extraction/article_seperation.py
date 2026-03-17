@@ -42,7 +42,8 @@ from csv_fuzzy_matcher import (
     extract_articles_from_csv,
     extract_malar_ithal_from_filename,
     extract_malar_ithal_from_text,
-    normalize_csv_value
+    normalize_csv_value,
+    load_csv
 )
 from s3_utils import (
     list_files,
@@ -134,9 +135,7 @@ def load_csv_from_local(csv_path):
         if not csv_path.exists():
             raise FileNotFoundError(f"CSV not found: {csv_path}")
         logger.info(f"Loading CSV: {csv_path}")
-        csv_df = pd.read_csv(
-            csv_path, encoding='utf-8', on_bad_lines='skip'
-        )
+        csv_df = load_csv(csv_path)
         logger.info(
             f"CSV loaded: {len(csv_df)} rows, "
             f"columns: {list(csv_df.columns)}"
@@ -147,7 +146,6 @@ def load_csv_from_local(csv_path):
     except Exception as e:
         logger.error(f"Error loading CSV: {e}", exc_info=True)
         raise
-
 
 def save_authors_to_s3(bucket, output_key_prefix, doc_id, doc_issue, authors_list):
     try:

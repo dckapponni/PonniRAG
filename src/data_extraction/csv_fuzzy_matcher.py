@@ -1,6 +1,7 @@
 # csv_fuzzy_matcher.py
 
 import re
+import io
 import logging
 import pandas as pd
 from pathlib import Path
@@ -8,6 +9,32 @@ from difflib import SequenceMatcher
 
 logger = logging.getLogger('TamilDocProcessor.csv_fuzzy_matcher')
 
+
+# ====================================================================
+# CSV LOADER — replaces pd.read_csv everywhere in this project
+#
+# PROBLEM:
+#   Rows like:
+#     7,1947,1,6,வளரும் இலக்கியம்,[பாண்டியன், நா. வேத்தரசன், வணங்காமுடி]
+#   have commas INSIDE [...] — pandas treats them as column separators
+#   and breaks the row into 8 columns instead of 6.
+#   Result: that row is never read → title never found →
+#           content merges into the previous article.
+#
+# SOLUTION:
+#   Before passing to pandas, auto-wrap any [...,...] field in
+#   double quotes so pandas reads the whole bracket as one field.
+#   Single-author rows like [மு.கருணாநிதி] have no comma inside
+#   so they are left untouched.
+# ====================================================================
+
+def load_csv(csv_path):
+    """
+    Load CSV file where multi-author fields are wrapped in double quotes:
+    "[பாண்டியன், நா. வேத்தரசன், வணங்காமுடி]"
+    pandas needs quotechar='"' to read them as a single field.
+    """
+    return pd.read_csv(csv_path, encoding='utf-8', quotechar='"')
 
 def calculate_similarity(str1, str2):
     """
@@ -41,6 +68,37 @@ def remove_symbols(text):
     text = re.sub(r'[^\w\s]', '', text, flags=re.UNICODE)
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
+
+
+def parse_author_field(author_val):
+    """
+    Parse author field that may contain bracket-wrapped names.
+
+    Handles:
+    - NA                                         -> []
+    - [நக்கீரன்]                                  -> ['நக்கீரன்']
+    - [பாண்டியன், நா. வேத்தரசன், வணங்காமுடி]    -> ['பாண்டியன்', 'நா. வேத்தரசன்', 'வணங்காமுடி']
+    - நக்கீரன் (no brackets, legacy)              -> ['நக்கீரன்']
+
+    Args:
+        author_val: raw CSV cell value
+
+    Returns:
+        list[str]: list of author name strings (may be empty)
+    """
+    if pd.isna(author_val):
+        return []
+    raw = str(author_val).strip()
+    if not raw or raw == 'NA':
+        return []
+
+    # Strip outer brackets if present
+    if raw.startswith('[') and raw.endswith(']'):
+        raw = raw[1:-1].strip()
+
+    # Split by comma for multiple authors
+    authors = [a.strip() for a in raw.split(',') if a.strip()]
+    return authors
 
 
 def normalize_csv_value(val):
@@ -111,7 +169,7 @@ def extract_malar_ithal_from_filename(filename):
             year       = vol_text_match.group(3)
 
             ITHAL_MAP = {
-                'PONGAL':    'பொங்கல் மலர்'
+                'PONGAL': 'பொங்கல் மலர்'
             }
             ithal = ITHAL_MAP.get(ithal_text, ithal_text)
             logger.info(f"VOL-TEXT pattern: மலர்={malar}, இதழ்={ithal}, year={year}")
@@ -340,17 +398,9 @@ def find_article_boundary_fuzzy(lines, title, next_title=None):
             return None, -1, -1
 
         # --- PASS 2: prefer standalone (near-exact) match ---
-        # Near-exact = similarity >= 95%
-        # These are lines that contain ONLY the title text,
-        # i.e., the actual article heading outside TOC.
-        # TOC lines are longer (title + author + page number)
-        # so they score lower similarity.
-
         near_exact = [c for c in candidates if c[0] >= 95]
 
         if near_exact:
-            # Among near-exact matches, pick the one with
-            # shortest line (most standalone = least extra text)
             best = min(near_exact, key=lambda c: c[2])
             logger.info(
                 f"Title '{title[:50]}' → standalone match "
@@ -359,8 +409,6 @@ def find_article_boundary_fuzzy(lines, title, next_title=None):
             )
             start_line = best[1]
         else:
-            # No near-exact — fall back to highest similarity,
-            # preferring shorter lines as tiebreak
             best = max(candidates, key=lambda c: (c[0], -c[2]))
             logger.info(
                 f"Title '{title[:50]}' → fuzzy match "
@@ -388,7 +436,6 @@ def find_article_boundary_fuzzy(lines, title, next_title=None):
                     next_candidates.append((similarity, i, len(stripped)))
 
             if next_candidates:
-                # Same rule: prefer standalone (near-exact) for next title
                 near_exact_next = [c for c in next_candidates if c[0] >= 95]
                 if near_exact_next:
                     next_best = min(near_exact_next, key=lambda c: c[2])
@@ -434,6 +481,16 @@ def extract_articles_from_csv(lines, csv_df, file_path):
     - TOC lines contain title + author + page → lower similarity
     - Standalone lines contain only the title → near-exact match
 
+    Author field format:
+    - Single author:   [நக்கீரன்]
+    - Multi-author:    [பாண்டியன், நா. வேத்தரசன், வணங்காமுடி]
+    - No author:       NA
+    Brackets are stripped; multiple authors are split by comma.
+
+    NOTE: csv_df must be loaded via load_csv() not pd.read_csv()
+    directly, so that multi-author bracketed fields are parsed
+    correctly by pandas.
+
     Flow:
     1. Extract மலர்/இதழ் from filename
     2. If filename fails → try document text
@@ -446,8 +503,7 @@ def extract_articles_from_csv(lines, csv_df, file_path):
 
     Args:
         lines (list): document lines (full document)
-        csv_df (pd.DataFrame): CSV with columns மலர், இதழ், தலைப்பு,
-                               ஆசிரியர், ஆண்டு
+        csv_df (pd.DataFrame): CSV loaded via load_csv()
         file_path (Path-like): file path with .name attribute
 
     Returns:
@@ -514,10 +570,14 @@ def extract_articles_from_csv(lines, csv_df, file_path):
 
     for idx_pos, (idx, row) in enumerate(matched_articles.iterrows()):
 
-        # All metadata from CSV
-        title  = str(row['தலைப்பு']) if pd.notna(row['தலைப்பு']) else ""
-        author = str(row['ஆசிரியர்']) if pd.notna(row['ஆசிரியர்']) else "NA"
-        year   = (
+        # Title from CSV
+        title = str(row['தலைப்பு']) if pd.notna(row['தலைப்பு']) else ""
+
+        # Parse author field — strips brackets, splits multiple authors
+        author_names = parse_author_field(row['ஆசிரியர்'])
+
+        # Year from CSV row, fallback to filename year
+        year = (
             str(int(row['ஆண்டு']))
             if pd.notna(row['ஆண்டு'])
             else (year_from_file or "Unknown")
@@ -552,7 +612,7 @@ def extract_articles_from_csv(lines, csv_df, file_path):
                 "doc_id":          malar_norm,
                 "doc_issue":       ithal_norm,
                 "article_no":      article_no,
-                "author_name":     author,
+                "author_name":     author_names if author_names else ["NA"],
                 "title":           title,
                 "content":         content,
                 "year":            year,
@@ -573,14 +633,15 @@ def extract_articles_from_csv(lines, csv_df, file_path):
                 f"{'not found' if not content else f'only {len(content)} chars (too short)'}"
             )
 
-    # Build authors list from CSV
+    # ----------------------------------------------------------------
+    # Build authors_list — one entry per unique author across all rows
+    # ----------------------------------------------------------------
     authors_list   = []
     unique_authors = set()
+
     for _, row in matched_articles.iterrows():
-        if pd.notna(row['ஆசிரியர்']):
-            author_name = str(row['ஆசிரியர்']).strip()
-            if author_name not in ("NA", "", "nan") and \
-               author_name not in unique_authors:
+        for author_name in parse_author_field(row['ஆசிரியர்']):
+            if author_name not in unique_authors:
                 unique_authors.add(author_name)
                 authors_list.append({
                     "doc_id":      malar_norm,
