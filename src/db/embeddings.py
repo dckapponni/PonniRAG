@@ -27,12 +27,11 @@ if USE_CUDA:
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
 else:
-    # CPU optimizations: use all but one core for torch, 2 for interop
     try:
         torch.set_num_threads(max(1, (os.cpu_count() or 4) - 1))
         torch.set_num_interop_threads(2)
     except RuntimeError:
-        pass  # Already configured by another module
+        pass
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -42,11 +41,39 @@ COLLECTION_NAME = "qdrant_indexer"
 
 EMBEDDING_MODEL = "intfloat/multilingual-e5-large"
 CSV_PATH = BASE_DIR / "data" / "summary.csv"
-SCORE_THRESHOLD = 0.65 # Minimum cosine similarity for dense vector search
+SCORE_THRESHOLD = 0.65
 
 _embed_lock = threading.Lock()
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# HELPER — flatten author_name for embedding text
+# ============================================================================
+
+def _flatten_author(author_val) -> str:
+    """
+    Safely convert author_name to a plain string for embedding.
+
+    author_name is now stored as a list in Qdrant metadata
+    (e.g. ["கோவை இளஞ்சேரன்", "சாமி பழனியப்பன்"]) but the CSV ஆசிரியர்
+    column still holds the raw bracket string "[கோவை இளஞ்சேரன், சாமி பழனியப்பன்]".
+
+    Handles:
+      list   → join with ", "
+      str    → strip brackets and return
+      other  → str()
+    """
+    if isinstance(author_val, list):
+        return ", ".join(str(a) for a in author_val if a and str(a).upper() != "NA")
+    raw = str(author_val).strip()
+    # Strip outer brackets if present (CSV format)
+    if raw.startswith("[") and raw.endswith("]"):
+        raw = raw[1:-1].strip()
+    if raw.upper() in {"NA", "NAN", "NONE", ""}:
+        return ""
+    return raw
 
 
 # ============================================================================
@@ -55,9 +82,9 @@ logger = logging.getLogger(__name__)
 
 _singletons = {}
 _singleton_locks = {
-    'embed_model': threading.Lock(),
-    'qdrant_client': threading.Lock(),
-    'csv_dataframe': threading.Lock(),
+    'embed_model':    threading.Lock(),
+    'qdrant_client':  threading.Lock(),
+    'csv_dataframe':  threading.Lock(),
     'csv_embeddings': threading.Lock(),
 }
 
@@ -93,21 +120,45 @@ def get_qdrant_client() -> QdrantClient:
 
 
 def get_csv_dataframe():
-    """Load CSV once and cache it (thread-safe singleton)."""
+    """
+    Load CSV once and cache it (thread-safe singleton).
+
+    Uses load_csv (from csv_fuzzy_matcher) as primary loader so that
+    multi-author rows like [பாண்டியன், நா. வேத்தரசன், வணங்காமுடி] are
+    parsed correctly — pd.read_csv with on_bad_lines="skip" silently
+    drops those rows because commas inside brackets break column parsing.
+    """
     if 'csv_dataframe' not in _singletons:
         with _singleton_locks['csv_dataframe']:
             if 'csv_dataframe' not in _singletons:
                 if not CSV_PATH.exists():
                     _singletons['csv_dataframe'] = pd.DataFrame()
                 else:
-                    df = pd.read_csv(CSV_PATH, encoding="utf-8", on_bad_lines="skip")
-                    df.columns = df.columns.str.strip()
+                    try:
+                        from csv_fuzzy_matcher import load_csv
+                        df = load_csv(CSV_PATH)
+                        df.columns = df.columns.str.strip()
+                        logger.info(f"CSV loaded via load_csv: {len(df)} rows")
+                    except Exception as e:
+                        logger.warning(f"load_csv failed, falling back: {e}")
+                        df = pd.read_csv(CSV_PATH, encoding="utf-8", on_bad_lines="skip")
+                        df.columns = df.columns.str.strip()
                     _singletons['csv_dataframe'] = df
     return _singletons['csv_dataframe']
 
 
 def get_csv_embeddings():
-    """Precompute embeddings for CSV rows (thread-safe singleton)."""
+    """
+    Precompute embeddings for CSV rows (thread-safe singleton).
+
+    CHANGE: the ஆசிரியர் column now holds bracket-wrapped author strings
+    like "[கோவை இளஞ்சேரன், சாமி பழனியப்பன்]". We use _flatten_author()
+    to strip brackets and join names before building the embedding text,
+    so the semantic search sees clean author names instead of raw brackets.
+
+    Row text format:
+      "வ.எ. | ஆண்டு | மலர் | இதழ் | தலைப்பு | author1, author2"
+    """
     if 'csv_embeddings' not in _singletons:
         with _singleton_locks['csv_embeddings']:
             if 'csv_embeddings' not in _singletons:
@@ -117,17 +168,36 @@ def get_csv_embeddings():
                 if df.empty:
                     _singletons['csv_embeddings'] = []
                 else:
+                    # Identify the author column (Tamil header)
+                    author_col = next(
+                        (c for c in df.columns if "ஆசிரியர்" in c),
+                        None
+                    )
+
                     texts = []
                     for _, row in df.iterrows():
-                        text = " | ".join([str(v) for v in row.values if pd.notna(v)])
-                        texts.append(text)
+                        parts = []
+                        for col in df.columns:
+                            val = row[col]
+                            if not pd.notna(val):
+                                continue
+                            # Flatten author field — strip brackets, join names
+                            if col == author_col:
+                                flat = _flatten_author(val)
+                                if flat:
+                                    parts.append(flat)
+                            else:
+                                parts.append(str(val))
+                        texts.append(" | ".join(parts))
 
                     embeddings = model.encode(
                         [f"passage: {t}" for t in texts],
                         show_progress_bar=False,
-                        normalize_embeddings=True
+                        normalize_embeddings=True,
                     )
                     _singletons['csv_embeddings'] = list(zip(texts, embeddings))
+                    logger.info(f"CSV embeddings computed: {len(texts)} rows")
+
     return _singletons['csv_embeddings']
 
 
@@ -137,15 +207,17 @@ def dense_embed_query(text: str):
     with _embed_lock:
         return model.encode(
             f"query: {text}",
-            normalize_embeddings=True
+            normalize_embeddings=True,
         ).tolist()
 
+
 def _deterministic_token_hash(token: str) -> int:
-    """Deterministic token hash using MD5, consistent across processes.
+    """
+    Deterministic token hash using MD5, consistent across processes.
 
     Python's built-in hash() is randomized per process (PYTHONHASHSEED),
     which causes sparse vectors at query time to mismatch those created
-    at indexing time.  MD5 is deterministic and fast for this use case.
+    at indexing time. MD5 is deterministic and fast for this use case.
     """
     return int(hashlib.md5(token.encode("utf-8")).hexdigest(), 16) % (2**31)
 
@@ -153,7 +225,6 @@ def _deterministic_token_hash(token: str) -> int:
 def sparse_embed(text: str):
     """Generate sparse BM25-style embedding for text."""
     text = unicodedata.normalize("NFC", text)
-    # Include Tamil Unicode characters in tokenization (not just ASCII \w)
     tokens = re.findall(r"[\w\u0B80-\u0BFF]+", text.lower())
     counts = defaultdict(int)
     for t in tokens:
@@ -162,7 +233,6 @@ def sparse_embed(text: str):
     for token, freq in counts.items():
         indices.append(_deterministic_token_hash(token))
         values.append(float(freq))
-    # Guard: Qdrant rejects empty sparse vectors; use a dummy zero-weight token
     if not indices:
         indices = [0]
         values = [0.0]
@@ -180,7 +250,7 @@ def search_csv_semantic(question: str, top_k: int = 5):
     with _embed_lock:
         query_emb = model.encode(
             f"query: {question}",
-            normalize_embeddings=True
+            normalize_embeddings=True,
         )
 
     scored = []
@@ -189,7 +259,6 @@ def search_csv_semantic(question: str, top_k: int = 5):
         scored.append((text, score))
 
     scored.sort(key=lambda x: x[1], reverse=True)
-
     return [text for text, _ in scored[:top_k]]
 
 
@@ -201,14 +270,13 @@ def check_qdrant_health() -> Dict:
     """Check Qdrant database health and connectivity."""
     try:
         client = get_qdrant_client()
-
         try:
             collection_info = client.get_collection(COLLECTION_NAME)
             return {
                 "healthy": True,
                 "collection": COLLECTION_NAME,
                 "points_count": collection_info.points_count,
-                "message": "Qdrant server is healthy"
+                "message": "Qdrant server is healthy",
             }
         except Exception as e:
             return {
@@ -216,7 +284,7 @@ def check_qdrant_health() -> Dict:
                 "error": "collection_not_found",
                 "message": f"Collection '{COLLECTION_NAME}' not found",
                 "details": str(e),
-                "action": "Create the collection on the server"
+                "action": "Create the collection on the server",
             }
     except Exception as e:
         return {
@@ -224,7 +292,7 @@ def check_qdrant_health() -> Dict:
             "error": "connection_failed",
             "message": "Failed to connect to Qdrant server",
             "details": str(e),
-            "action": "Check Qdrant server connection or run the indexer"
+            "action": "Check Qdrant server connection or run the indexer",
         }
 
 
@@ -234,29 +302,23 @@ class HybridQdrantSearch:
     def __init__(self, client: QdrantClient):
         self.client = client
 
-    def search(self, query: str, limit: int = 30, score_threshold: float = SCORE_THRESHOLD, tags: List[str] = None):
-        """
-        Perform hybrid search using dense and sparse vectors.
-
-        Executes a two-stage search combining dense embeddings for semantic similarity
-        and sparse embeddings for keyword matching, then fuses results using RRF.
-
-        Args:
-            query (str): Search query string in Tamil or English
-            limit (int, optional): Maximum number of results to return. Defaults to 30.
-            score_threshold (float, optional): Minimum cosine similarity for dense
-                vector results. Defaults to SCORE_THRESHOLD (0.8).
-            tags (List[str], optional): Filter results to articles matching any of these tag IDs.
-
-        Returns:
-            List[ScoredPoint]: List of scored points from Qdrant with fused relevance scores
-        """
+    def search(
+        self,
+        query: str,
+        limit: int = 30,
+        score_threshold: float = SCORE_THRESHOLD,
+        tags: List[str] = None,
+    ):
+        """Perform hybrid search using dense and sparse vectors."""
         filter_conditions = [
             models.FieldCondition(key="type", match=models.MatchValue(value="article"))
         ]
         if tags:
             filter_conditions.append(
-                models.FieldCondition(key="metadata.tags", match=models.MatchAny(any=tags))
+                models.FieldCondition(
+                    key="metadata.tags",
+                    match=models.MatchAny(any=tags),
+                )
             )
         search_filter = models.Filter(must=filter_conditions)
 

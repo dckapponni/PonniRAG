@@ -9,7 +9,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 from contextlib import asynccontextmanager
 
 import boto3
@@ -260,11 +260,10 @@ class TagsResponse(BaseModel):
 
 
 class TagArticleInfo(BaseModel):
-    """Response model for an article under a tag."""
     doc_id: Optional[str] = None
     doc_issue: Optional[str] = None
     title: Optional[str] = None
-    author_name: Optional[str] = None
+    author_name: Optional[Union[str, List[str]]] = None   # ← list or str
     year: Optional[str] = None
     tags: Optional[List[str]] = None
 
@@ -279,12 +278,11 @@ class TagArticlesResponse(BaseModel):
 
 
 class IssueArticleInfo(BaseModel):
-    """Response model for an article within a specific issue."""
     doc_id: Optional[str] = None
     doc_issue: Optional[str] = None
     article_no: Optional[str] = None
     title: Optional[str] = None
-    author_name: Optional[str] = None
+    author_name: Optional[Union[str, List[str]]] = None   # ← list or str
     year: Optional[str] = None
     tags: Optional[List[str]] = None
 
@@ -299,10 +297,9 @@ class IssueArticlesResponse(BaseModel):
 
 
 class ArticleContentResponse(BaseModel):
-    """Response model for full article content."""
     success: bool
     title: Optional[str] = None
-    author_name: Optional[str] = None
+    author_name: Optional[Union[str, List[str]]] = None   # ← list or str
     year: Optional[str] = None
     doc_issue: Optional[str] = None
     tags: Optional[List[str]] = None

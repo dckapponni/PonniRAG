@@ -234,33 +234,46 @@ class ArticleTagger:
 
     def _apply_rules(self, article: Dict) -> List[str]:
         """Apply rule-based classification. Returns list of matching category IDs."""
+
         title = (article.get("title") or "").strip()
-        author = (article.get("author_name") or "").strip()
+
+        # ✅ FIX: handle author as list safely
+        author = article.get("author_name", [])
+        if isinstance(author, str):
+            author_list = [author.strip()]
+        elif isinstance(author, list):
+            author_list = [a.strip() for a in author if a]
+        else:
+            author_list = []
+
         tags = []
 
-        # Check serial detection first
-        if title in _SERIAL_TITLES and author and author.lower() != "na":
-            if "FICTION" not in tags:
-                tags.append("FICTION")
+        # ✅ Serial detection
+        if title in _SERIAL_TITLES and author_list:
+            tags.append("FICTION")
 
+        # ✅ MAIN RULE LOOP (you accidentally removed this earlier)
         for cat_id, patterns in self.rules.items():
+
             if cat_id in tags:
                 continue
 
-            # Exact title match
-            exact_titles = patterns.get("title_exact", [])
-            if title in exact_titles:
-                tags.append(cat_id)
+            # Exact match
+            for exact in patterns.get("title_exact", []):
+                if title == exact:
+                    tags.append(cat_id)
+                    break
+
+            if cat_id in tags:
                 continue
 
-            # Title substring match
+            # Substring match
             for keyword in patterns.get("title_contains", []):
                 if keyword in title:
                     tags.append(cat_id)
                     break
 
         return tags
-
     def _tfidf_classify(self, article: Dict) -> List[str]:
         """TF-IDF based classification for articles not matched by rules."""
         if self.tfidf is None or self.category_vectors is None:
