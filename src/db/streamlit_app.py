@@ -984,17 +984,21 @@ def fetch_issue_articles(volume_id, issue_num):
                 if str((p.payload or {}).get("metadata", {}).get("doc_id", "")) == vol_str
             ]
 
-        all_issue_vals = set()
-        for p in all_points:
-            raw_val = (p.payload or {}).get("metadata", {}).get("doc_issue")
-            all_issue_vals.add(str(raw_val).strip() if raw_val is not None else "NA")
-        sorted_issues = sorted(
-            [v for v in all_issue_vals if v not in ("NA", "None", "")],
-            key=lambda x: int(x) if x.isdigit() else float("inf"),
-        )
-
-        issue_position_map = {i + 1: v for i, v in enumerate(sorted_issues)}
-        target_issue = issue_position_map.get(int(issue_num), issue_str)
+        # target_issue = the doc_issue value to match in Qdrant.
+        # The sidebar uses iss["num"] from the config registry (real magazine issue numbers).
+        # Qdrant stores doc_issue = the same issue number extracted from the article text.
+        # They match directly — NO position-mapping needed.
+        #
+        # The old position-map code ({1->"4", 2->"5"...}) caused issue 6 to resolve
+        # to doc_issue "9" for volumes whose issues don't start at 1, showing
+        # articles from the wrong issue.
+        #
+        # Normalise only for float-read edge case: "6.0" -> "6"
+        raw_target = str(issue_num).strip()
+        if raw_target.endswith(".0"):
+            raw_target = raw_target[:-2]
+        target_issue = raw_target
+        logger.info(f"Fetching articles for vol={volume_id}, doc_issue='{target_issue}'")
 
         for p in all_points:
             metadata = (p.payload or {}).get("metadata", {})
