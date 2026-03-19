@@ -243,7 +243,7 @@ html, body {
 
 .hero-title {
   font-family: 'Lora', 'Noto Serif Tamil', Georgia, serif;
-  font-size: 3rem;
+  font-size: 2.5rem;
   font-weight: 700;
   margin-bottom: 4.5rem;
   background: linear-gradient(135deg, #0f2057, #1e3a8a, #2563eb);
@@ -257,13 +257,13 @@ html, body {
 
 @media (max-width: 768px) {
   .hero-title {
-    font-size: 2.25rem;
+    font-size: 2rem;
   }
 }
 
 @media (max-width: 480px) {
   .hero-title {
-    font-size: 1.75rem;
+    font-size: 1.5rem;
   }
 }
 
