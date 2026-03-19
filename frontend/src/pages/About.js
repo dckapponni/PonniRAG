@@ -1,5 +1,8 @@
 import React from 'react';
 
+// API base URL — same pattern as api.js
+const API_BASE = process.env.REACT_APP_API_URL || '';
+
 const About = ({ language }) => {
   const ta = language === 'ta';
 
@@ -23,18 +26,17 @@ const About = ({ language }) => {
 
         <div className="about-text">
           {ta
-            ? '1900களில் வெளிவந்த இதழ்கள் சமூக மாற்றத்திற்கும் முன்னேற்றத்திற்கும் பெருந்துணையாக அமைந்துள்ளன என்பது வரலாற்று ரீதியான உண்மை. 1947 முதல் 1955 வரை இயங்கிய கலை இலக்கிய இதழ் \'பொன்னி\'. பொன்னி இதழ் திரு. அரு. பெரியண்ணன் மற்றும் திரு. முருகு. சுப்பிரமணியம் ஆகியோரால் 1947ஆம் ஆண்டு பிப்ரவரி மாதம் தொடங்கப்பெற்றது. தொடங்கப்பட்ட முதல் வருடத்தில் மாதம் ஓர் இதழ் என வெளிவந்த பொன்னி 1948 முதல் மாதம் ஈரிதழாக வெளிவந்தது.'
-            : 'It is a historical fact that magazines published from the 1900s served as a great aid to social change and progress. Ponni was an arts and literary magazine that ran from 1947 to 1955. It was founded by Mr. Aru. Periyannan and Mr. Murugu. Subramaniam in February 1947. In its first year, Ponni was published as a monthly magazine, and from 1948 onward it became a bi-monthly publication.'}
+            ? "1900களில் வெளிவந்த இதழ்கள் சமூக மாற்றத்திற்கும் முன்னேற்றத்திற்கும் பெருந்துணையாக அமைந்துள்ளன என்பது வரலாற்று ரீதியான உண்மை. 1947 முதல் 1955 வரை இயங்கிய கலை இலக்கிய இதழ் 'பொன்னி'. பொன்னி இதழ் திரு. அரு. பெரியண்ணன் மற்றும் திரு. முருகு. சுப்பிரமணியம் ஆகியோரால் 1947ஆம் ஆண்டு பிப்ரவரி மாதம் தொடங்கப்பெற்றது. தொடங்கப்பட்ட முதல் வருடத்தில் மாதம் ஓர் இதழ் என வெளிவந்த பொன்னி 1948 முதல் மாதம் ஈரிதழாக வெளிவந்தது."
+            : "It is a historical fact that magazines published from the 1900s served as a great aid to social change and progress. Ponni was an arts and literary magazine that ran from 1947 to 1955. It was founded by Mr. Aru. Periyannan and Mr. Murugu. Subramaniam in February 1947. In its first year, Ponni was published as a monthly magazine, and from 1948 onward it became a bi-monthly publication."}
         </div>
       </div>
 
+      {/* ── Image 1 ── */}
       <div className="about-image">
         <img
-          src="/api/images/about/about1.jpg"
+          src={`${API_BASE}/api/images/about/about1.jpg`}
           alt={ta ? 'பொன்னி இதழ்' : 'Ponni Magazine'}
-          onError={(e) => {
-            e.target.style.display = 'none';
-          }}
+          onError={(e) => { e.target.style.display = 'none'; }}
         />
       </div>
 
@@ -44,43 +46,40 @@ const About = ({ language }) => {
         <div className="about-text">
           {ta
             ? 'திராவிட இதழ்களின் வரிசையில் வைத்து போற்றத்தக்க பெரிதும் அறியப்படாத இதழாகப் பொன்னி இதழ் திகழ்கிறது. பகுத்தறிவு, சுயமரியாதை, சமத்துவம் ஆகியவற்றை மிகத் தீவிரமாக எடுத்துரைக்கும் இதழாக இவ்விதழ் வெளிவந்தது. தமிழகத்தின் தலைசிறந்த எழுத்தாளர்களும் படைப்பாளர்களும் தம் சீரிய கருத்துக்களை இவ்விதழின்வழி எடுத்துரைத்தனர். தமிழ்ச் சமூகத்தை அறிவுச் சமூகமாக்கும் முன்னெடுப்பில் பொன்னி இதழின் பணி தலையாயதாகும்.'
-            : 'Among the Dravidian publications, Ponni stands as a remarkable yet largely lesser-known magazine. It was published as a journal that vigorously advocated rationalism, self-respect, and equality. The finest writers and creators of Tamil Nadu expressed their distinguished ideas through this magazine. Ponni\'s contribution to transforming Tamil society into an intellectually aware community was paramount.'}
+            : "Among the Dravidian publications, Ponni stands as a remarkable yet largely lesser-known magazine. It was published as a journal that vigorously advocated rationalism, self-respect, and equality. The finest writers and creators of Tamil Nadu expressed their distinguished ideas through this magazine. Ponni's contribution to transforming Tamil society into an intellectually aware community was paramount."}
         </div>
 
         <div className="about-pull-quote">
           {ta
-            ? '\'திராவிடர் கழகத்தை ஆதரிக்கும் ஏடுகள் மிகக் குறைவாக இருந்த காலம். அவையும் அழகில்லாமல், அச்சுப்பிழை மிகுந்து வெளிவந்தன. அந்த நேரத்தில் வண்ண முகப்பு அட்டை போட்டு அழகாக நடந்த இதழ் \'பொன்னி\' தான்.\''
+            ? "'திராவிடர் கழகத்தை ஆதரிக்கும் ஏடுகள் மிகக் குறைவாக இருந்த காலம். அவையும் அழகில்லாமல், அச்சுப்பிழை மிகுந்து வெளிவந்தன. அந்த நேரத்தில் வண்ண முகப்பு அட்டை போட்டு அழகாக நடந்த இதழ் 'பொன்னி' தான்.'"
             : '"There were very few publications supporting the Dravidar Kazhagam at that time. Even those were published without aesthetics and full of printing errors. At that time, the only magazine that came out beautifully with a colour cover page was Ponni."'}
           <cite>&mdash; {ta ? 'கவியரசு கண்ணதாசன்' : 'Poet Laureate Kannadasan'}</cite>
         </div>
 
         <div className="about-text">
           {ta
-            ? 'திராவிடக் கருத்தியலை துப்பாக்கியாகச் செயல்பட்ட திரு. அரு. பெரியண்ணன் அவர்களும், உள்வாங்கி இரட்டைக்குழல் திரு. முருகு. சுப்பிரமணியம் அவர்களும் இணைந்து 1947ஆம் ஆண்டு பிப்ரவரி மாதம் பொன்னி இதழைத் தொடங்கினர். பொன்னி இதழ் வண்ண அட்டைப்படத்தில் மிக நேர்த்தியாக வடிவமைக்கப்பட்டு வெளியிடப்பெற்றது. பத்திரிக்கை துறையில் மற்றவர்கள் செய்துகாட்டாத புதுமை எல்லாம் அவர்கள் செய்து காட்டினார்கள். இன்றும் தமிழகத்தில் சிலரை அச்சுக்கலை நிபுணர்கள் என்று தேர்ந்தெடுத்தால், அவர்களில் பெரியண்ணன் மிக முக்கியமானவராக இருப்பார்\' என்று குறிப்பிட்டுள்ளார்.'
-            : 'Mr. Aru. Periyannan, who wielded Dravidian ideology like a weapon, and Mr. Murugu. Subramaniam together founded Ponni magazine in February 1947. Ponni was published with beautifully designed colour cover pages. They pioneered innovations in publishing that no one else had achieved. Even today, if one were to select typography experts in Tamil Nadu, Periyannan would be among the most important.'}
+            ? "திராவிடக் கருத்தியலை துப்பாக்கியாகச் செயல்பட்ட திரு. அரு. பெரியண்ணன் அவர்களும், உள்வாங்கி இரட்டைக்குழல் திரு. முருகு. சுப்பிரமணியம் அவர்களும் இணைந்து 1947ஆம் ஆண்டு பிப்ரவரி மாதம் பொன்னி இதழைத் தொடங்கினர். பொன்னி இதழ் வண்ண அட்டைப்படத்தில் மிக நேர்த்தியாக வடிவமைக்கப்பட்டு வெளியிடப்பெற்றது. பத்திரிக்கை துறையில் மற்றவர்கள் செய்துகாட்டாத புதுமை எல்லாம் அவர்கள் செய்து காட்டினார்கள். இன்றும் தமிழகத்தில் சிலரை அச்சுக்கலை நிபுணர்கள் என்று தேர்ந்தெடுத்தால், அவர்களில் பெரியண்ணன் மிக முக்கியமானவராக இருப்பார்' என்று குறிப்பிட்டுள்ளார்."
+            : "Mr. Aru. Periyannan, who wielded Dravidian ideology like a weapon, and Mr. Murugu. Subramaniam together founded Ponni magazine in February 1947. Ponni was published with beautifully designed colour cover pages. They pioneered innovations in publishing that no one else had achieved. Even today, if one were to select typography experts in Tamil Nadu, Periyannan would be among the most important."}
         </div>
 
         <div className="about-text">
           {ta
-            ? 'தமிழ் இலக்கிய உலகில் முக்கியமான கவிஞர் பாரதிதாசன் அவரின் \'குயில்\' இதழ் அரசால் தடை செய்யப்பட்ட பிறகு பொன்னியில் எழுதினார். அவரின் கொள்கைகளையும் நடையையும் பின்பற்றி எழுதியவர்களை \'பாரதிதாசன் பரம்பரை கவிஞர்கள்\' என்று அறிமுகப்படுத்தியது பொன்னி இதழ்.'
+            ? "தமிழ் இலக்கிய உலகில் முக்கியமான கவிஞர் பாரதிதாசன் அவரின் 'குயில்' இதழ் அரசால் தடை செய்யப்பட்ட பிறகு பொன்னியில் எழுதினார். அவரின் கொள்கைகளையும் நடையையும் பின்பற்றி எழுதியவர்களை 'பாரதிதாசன் பரம்பரை கவிஞர்கள்' என்று அறிமுகப்படுத்தியது பொன்னி இதழ்."
             : 'After the government banned poet Bharathidasan\'s magazine "Kuyil", he began writing for Ponni. Ponni magazine introduced writers who followed his principles and style as "Bharathidasan Heritage Poets".'}
         </div>
       </div>
 
+      {/* ── Images 2 & 3 ── */}
       <div className="about-double-image">
         <img
-          src="/api/images/about/about2.jpg"
+          src={`${API_BASE}/api/images/about/about2.jpg`}
           alt={ta ? 'பொன்னி வரலாறு 1' : 'Ponni History 1'}
-          onError={(e) => {
-            e.target.style.display = 'none';
-          }}
+          onError={(e) => { e.target.style.display = 'none'; }}
         />
         <img
-          src="/api/images/about/about3.jpg"
+          src={`${API_BASE}/api/images/about/about3.jpg`}
           alt={ta ? 'பொன்னி வரலாறு 2' : 'Ponni History 2'}
-          onError={(e) => {
-            e.target.style.display = 'none';
-          }}
+          onError={(e) => { e.target.style.display = 'none'; }}
         />
       </div>
 
@@ -102,24 +101,21 @@ const About = ({ language }) => {
         <div className="about-text">
           {ta
             ? 'கவிதைகள், சிறுகதைகள், தொடர்கதைகள், நொடிக் கதைகள், நாடகங்கள், பொதுக் கட்டுரைகள், ஆய்வுக் கட்டுரைகள், ஒப்பாய்வுக் கட்டுரைகள், தொடர் கட்டுரைகள், செய்திப் பாட்டு போன்ற இலக்கிய வகைமைகளில் பொன்னியில் படைப்புகள் வெளியாகியுள்ளன. இது மட்டுமன்றி அட்டைப்படக் குறிப்பு, மகளிர் அழகுக் குறிப்புகள், குழந்தை வளர்ப்புமுறை, பொன்னி வாழ்த்துகள், விகடங்கள், சிறுவர் அரங்கம் (சிறுவர் இலக்கியம்) போன்ற படைப்புகளும் இடம்பெற்றுள்ளன.'
-            : 'Ponni published works in literary genres including poetry, short stories, serialized novels, flash fiction, plays, general articles, research articles, comparative reviews, serial articles, and news songs. Additionally, the magazine featured cover notes, women\'s beauty tips, child-rearing guidance, greetings, humour columns, and children\'s literature.'}
+            : "Ponni published works in literary genres including poetry, short stories, serialized novels, flash fiction, plays, general articles, research articles, comparative reviews, serial articles, and news songs. Additionally, the magazine featured cover notes, women's beauty tips, child-rearing guidance, greetings, humour columns, and children's literature."}
         </div>
       </div>
 
+      {/* ── Images 4 & 5 ── */}
       <div className="about-double-image">
         <img
-          src="/api/images/about/about4.jpg"
+          src={`${API_BASE}/api/images/about/about4.jpg`}
           alt={ta ? 'பொன்னி வரலாறு 3' : 'Ponni History 3'}
-          onError={(e) => {
-            e.target.style.display = 'none';
-          }}
+          onError={(e) => { e.target.style.display = 'none'; }}
         />
         <img
-          src="/api/images/about/about5.jpg"
+          src={`${API_BASE}/api/images/about/about5.jpg`}
           alt={ta ? 'பொன்னி வரலாறு 4' : 'Ponni History 4'}
-          onError={(e) => {
-            e.target.style.display = 'none';
-          }}
+          onError={(e) => { e.target.style.display = 'none'; }}
         />
       </div>
 
@@ -135,7 +131,7 @@ const About = ({ language }) => {
         <div className="about-text">
           {ta
             ? 'நாடக விளம்பரங்கள், புத்தக விளம்பரங்கள், திரைப்பட விளம்பரங்கள், வணிக விளம்பரங்கள் போன்றவை பொன்னி இதழில் இடம் பெற்றுள்ளன. கலையுலகம் என்ற பகுதியின் கீழ் திரைப்படங்கள், நாடகங்களின் விமர்சனங்களை எழுதியுள்ளனர். பொன்னியில் மேலும் ஒரு சிறப்பிற்குரிய விஷயம் அதில் இடம்பெற்றுள்ள படங்கள் மற்றும் ஓவியங்கள். படைப்பின் தலைப்புகளை வரைந்து இதழில் சேர்த்துள்ளனர். புதுமைப்பித்தன் நினைவுகளைப் பற்றி அவரது மனைவி கமலா அவர்கள் பொன்னி இதழில் எழுதியுள்ளார். பொன்னி இதழ் தொடங்கப்பெற்ற காலத்திலிருந்து இந்தி எதிர்ப்பு குறித்தான எழுத்துகள் தொடர்ந்து காத்திரமாக இடம்பெற்றுள்ளது. அறிஞர்களும் மக்களும் இதில் எழுதியுள்ளனர். பொன்னி இதழ் விடுதலை போராட்ட காலகட்டத்தில் வெளியான இதழ் என்பதால், அக்கால அரசியல் சூழ்நிலைகள் மற்றும் சமூக நிலைகள் படைப்புகளில் பிரதிபலிக்கின்றன.'
-            : 'Ponni featured advertisements for plays, books, films, and commercial products. Under the "Art World" section, they published reviews of films and plays. A notable feature was its illustrations and artwork — artistic title headers were hand-drawn for each piece. Pudhumaipithan\'s wife Kamala wrote about her memories of him in Ponni. From its inception, Ponni consistently featured powerful writings against Hindi imposition. Both scholars and common people contributed. As a magazine published during the freedom struggle era, the political and social conditions of the time are reflected throughout its content.'}
+            : "Ponni featured advertisements for plays, books, films, and commercial products. Under the 'Art World' section, they published reviews of films and plays. A notable feature was its illustrations and artwork — artistic title headers were hand-drawn for each piece. Pudhumaipithan's wife Kamala wrote about her memories of him in Ponni. From its inception, Ponni consistently featured powerful writings against Hindi imposition. Both scholars and common people contributed. As a magazine published during the freedom struggle era, the political and social conditions of the time are reflected throughout its content."}
         </div>
 
         <div className="about-text">

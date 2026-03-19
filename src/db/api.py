@@ -446,8 +446,7 @@ async def get_issue_cover(volume_id: int, issue_name: str):
         headers={"Cache-Control": f"public, max-age={_IMAGE_CACHE_SECONDS}"},
     )
 
-
-@app.get("/api/images/about/{filename}", tags=["Images"])
+@app.api_route("/api/images/about/{filename}", methods=["GET", "HEAD"], tags=["Images"])
 async def get_about_image(filename: str):
     """Proxy about page images from S3. Never expires."""
     # Only allow specific filenames to prevent path traversal
