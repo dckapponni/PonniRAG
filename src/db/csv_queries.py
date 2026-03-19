@@ -82,6 +82,12 @@ def _load_csv_safe(csv_path) -> pd.DataFrame:
 # AUTHOR FIELD PARSING
 # ============================================================================
 
+def _format_author_display(csv_name: str) -> str:
+    """Format a CSV author cell for display: comma-separated, no brackets, 'NA' if empty."""
+    authors = _parse_csv_authors(csv_name)
+    return ", ".join(authors) if authors else "NA"
+
+
 def _parse_csv_authors(csv_name: str) -> List[str]:
     """
     Parse a CSV author cell that may contain bracket-wrapped names.
@@ -443,7 +449,7 @@ class EnhancedAuthorQuerySystem:
 
         articles = []
         for _, row in matches.iterrows():
-            article = {"title": row.get('தலைப்பு', ''), "author": row.get('ஆசிரியர்', '')}
+            article = {"title": row.get('தலைப்பு', ''), "author": _format_author_display(str(row.get('ஆசிரியர்', '')))}
             for col in ['ஆண்டு', 'இதழ்', 'ச.எ.', 'வ.எ.']:
                 if col in row and pd.notna(row[col]):
                     try:
@@ -473,7 +479,7 @@ class EnhancedAuthorQuerySystem:
         def _build_articles(df_slice):
             articles = []
             for _, row in df_slice.iterrows():
-                article = {"title": row.get('தலைப்பு', ''), "author": row.get('ஆசிரியர்', '')}
+                article = {"title": row.get('தலைப்பு', ''), "author": _format_author_display(str(row.get('ஆசிரியர்', '')))}
                 for col in ['ஆண்டு', 'இதழ்', 'ச.எ.', 'வ.எ.']:
                     if col in row and pd.notna(row[col]):
                         try:
