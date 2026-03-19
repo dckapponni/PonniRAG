@@ -201,13 +201,19 @@ def _check_context_relevance(question: str, relevant_docs: list) -> bool:
 
     # --- Build combined text from retrieved documents ---
     all_text_parts = []
+    from embeddings import _flatten_author
+
     for doc in relevant_docs[:10]:
-        all_text_parts.append(doc.get("content", ""))
-        all_text_parts.append(doc.get("heading", ""))
+        all_text_parts.append(str(doc.get("content", "")))
+        all_text_parts.append(str(doc.get("heading", "")))
         all_text_parts.append(str(doc.get("doc_issue", "")))
         all_text_parts.append(str(doc.get("volume", "")))
-        all_text_parts.append(doc.get("author_name", ""))
-    all_text = " ".join(all_text_parts)
+
+        author_val = doc.get("author_name", "")
+        all_text_parts.append(_flatten_author(author_val))
+
+    # ✅ FIX: Combine into single text
+    all_text = " ".join(all_text_parts).lower()
 
     # --- Year check ---
     # If the query asks about a specific year, at least one doc must
@@ -227,7 +233,6 @@ def _check_context_relevance(question: str, relevant_docs: list) -> bool:
     key_terms = tamil_terms | english_terms
     if key_terms:
         doc_tamil_words = set(_re.findall(r'[\u0B80-\u0BFF]{3,}', all_text))
-        all_text_lower = all_text.lower()
 
         def _common_prefix_len(a, b):
             n = min(len(a), len(b))
@@ -239,7 +244,7 @@ def _check_context_relevance(question: str, relevant_docs: list) -> bool:
         def _term_found(term):
             tl = term.lower()
             # Direct substring in full text (works well for English)
-            if tl in all_text_lower:
+            if tl in all_text:
                 return True
             # Tamil stem match via common prefix
             for dw in doc_tamil_words:

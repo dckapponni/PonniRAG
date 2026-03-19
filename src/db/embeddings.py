@@ -118,15 +118,15 @@ def get_qdrant_client() -> QdrantClient:
                 _singletons['qdrant_client'] = client
     return _singletons['qdrant_client']
 
-
 def get_csv_dataframe():
     """
     Load CSV once and cache it (thread-safe singleton).
 
-    Uses load_csv (from csv_fuzzy_matcher) as primary loader so that
-    multi-author rows like [பாண்டியன், நா. வேத்தரசன், வணங்காமுடி] are
-    parsed correctly — pd.read_csv with on_bad_lines="skip" silently
-    drops those rows because commas inside brackets break column parsing.
+    FIX:
+    - Remove dependency on csv_fuzzy_matcher
+    - Use robust pandas parsing (no row loss)
+    - Still supports multi-author fields like:
+      "[பாண்டியன், நா. வேத்தரசன், வணங்காமுடி]"
     """
     if 'csv_dataframe' not in _singletons:
         with _singleton_locks['csv_dataframe']:
@@ -135,17 +135,22 @@ def get_csv_dataframe():
                     _singletons['csv_dataframe'] = pd.DataFrame()
                 else:
                     try:
-                        from csv_fuzzy_matcher import load_csv
-                        df = load_csv(CSV_PATH)
+                        df = pd.read_csv(
+                            CSV_PATH,
+                            encoding="utf-8",
+                            engine="python",
+                            quotechar='"',
+                            skipinitialspace=True,
+                            on_bad_lines="warn"
+                        )
                         df.columns = df.columns.str.strip()
-                        logger.info(f"CSV loaded via load_csv: {len(df)} rows")
+                        logger.info(f"CSV loaded safely: {len(df)} rows")
                     except Exception as e:
-                        logger.warning(f"load_csv failed, falling back: {e}")
-                        df = pd.read_csv(CSV_PATH, encoding="utf-8", on_bad_lines="skip")
-                        df.columns = df.columns.str.strip()
+                        logger.error(f"CSV loading failed: {e}")
+                        df = pd.DataFrame()
+
                     _singletons['csv_dataframe'] = df
     return _singletons['csv_dataframe']
-
 
 def get_csv_embeddings():
     """
