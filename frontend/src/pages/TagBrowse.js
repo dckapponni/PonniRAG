@@ -3,6 +3,31 @@ import { getTags, getIssueArticles, getArticleContent, getPDFLink, getVolumes, g
 import { getTranslation } from '../services/translations';
 
 // ============================================================================
+// HELPER — flatten author_name (list or string) to a display string
+// ============================================================================
+
+/**
+ * author_name is stored as a list in Qdrant e.g. ["A", "B", "C"].
+ * Rendering a list directly in JSX or calling .toLowerCase() on it
+ * crashes React silently and produces a blank white page.
+ *
+ * Handles:
+ *   ["A", "B"]  → "A, B"
+ *   ["NA"]      → ""
+ *   "A"         → "A"
+ *   null/undef  → ""
+ */
+const flattenAuthor = (val) => {
+  if (Array.isArray(val)) {
+    return val
+      .filter((v) => v && v !== 'NA' && v !== 'nan' && v !== 'None')
+      .join(', ');
+  }
+  const s = String(val || '').trim();
+  return ['NA', 'nan', 'None', ''].includes(s) ? '' : s;
+};
+
+// ============================================================================
 // Component
 // ============================================================================
 
@@ -27,9 +52,7 @@ const TagBrowse = ({ language }) => {
   // Load tags and volumes on mount
   useEffect(() => {
     getTags()
-      .then((data) => {
-        if (data.success) setTags(data.tags);
-      })
+      .then((data) => { if (data.success) setTags(data.tags); })
       .catch((err) => console.error('Failed to load tags:', err));
     getVolumes()
       .then((data) => setVolumes(data))
@@ -53,7 +76,6 @@ const TagBrowse = ({ language }) => {
     setArticles([]);
     setArticlesLoading(true);
     setPdfUrl(null);
-
     try {
       const [articlesData, pdfData] = await Promise.all([
         getIssueArticles(volumeId, issueIdx),
@@ -84,19 +106,20 @@ const TagBrowse = ({ language }) => {
 
   // Resolve tag ID → display name based on language
   const getTagName = (tagId) => {
-    const info = tags.find((t) => t.id === tagId);
+    const info = tags.find((tag) => tag.id === tagId);
     if (!info) return tagId;
     return language === 'ta' ? info.tamil : info.english;
   };
 
   // Filter articles client-side
+  // FIX: use flattenAuthor() so searching never crashes on a list value
   const filteredArticles = articles.filter((article) => {
     if (categoryFilter !== 'ALL' && !(article.tags || []).includes(categoryFilter)) return false;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       return (
         (article.title || '').toLowerCase().includes(q) ||
-        (article.author_name || '').toLowerCase().includes(q)
+        flattenAuthor(article.author_name).toLowerCase().includes(q)
       );
     }
     return true;
@@ -115,17 +138,17 @@ const TagBrowse = ({ language }) => {
 
   // ---- Render right pane content ----
   const renderContent = () => {
-    // State 3: Article detail
+
+    // ── State 3: Article detail ──────────────────────────────────────────────
     if (selectedArticle) {
       if (contentLoading) {
         return (
           <div className="tags-loading">
-            <div className="spinner"></div>
+            <div className="spinner" />
             <span>{t('searching')}</span>
           </div>
         );
       }
-
       if (!articleContent) {
         return (
           <div className="tags-empty-state">
@@ -133,6 +156,9 @@ const TagBrowse = ({ language }) => {
           </div>
         );
       }
+
+      // FIX: flatten list → plain string before rendering
+      const detailAuthor = flattenAuthor(articleContent.author_name);
 
       return (
         <div className="tags-content-animate" key="detail">
@@ -161,8 +187,9 @@ const TagBrowse = ({ language }) => {
           </div>
 
           <div className="tags-detail-meta">
-            {articleContent.author_name && (
-              <span>{t('author_label')}: {articleContent.author_name}</span>
+            {/* FIX: render flattened string, not raw list */}
+            {detailAuthor && (
+              <span>{t('author_label')}: {detailAuthor}</span>
             )}
             {articleContent.doc_issue && (
               <span>{t('issue_label')}: {articleContent.doc_issue}</span>
@@ -190,12 +217,12 @@ const TagBrowse = ({ language }) => {
       );
     }
 
-    // State 2: Issue selected — show articles list
+    // ── State 2: Issue selected — article list ───────────────────────────────
     if (selectedIssue) {
       if (articlesLoading) {
         return (
           <div className="tags-loading">
-            <div className="spinner"></div>
+            <div className="spinner" />
             <span>{t('searching')}</span>
           </div>
         );
@@ -204,7 +231,10 @@ const TagBrowse = ({ language }) => {
       const coverPath = getIssueCoverUrl(selectedIssue.volumeId, selectedIssue.issueIdx);
 
       return (
-        <div className="tags-content-animate" key={`issue-${selectedIssue.volumeId}-${selectedIssue.issueIdx}`}>
+        <div
+          className="tags-content-animate"
+          key={`issue-${selectedIssue.volumeId}-${selectedIssue.issueIdx}`}
+        >
           <div className="tags-badge-row">
             <span className="tags-badge-vol">
               {t('tags_volume_label')} {selectedIssue.volumeId}
@@ -245,41 +275,50 @@ const TagBrowse = ({ language }) => {
             </div>
           ) : (
             <div className="tags-articles-grid">
-              {filteredArticles.map((article, idx) => (
-                <div
-                  key={`${article.doc_id}-${article.doc_issue}-${article.article_no}-${idx}`}
-                  className="tags-article-block"
-                  style={{ animationDelay: `${Math.min(idx * 0.04, 0.6)}s` }}
-                  onClick={() => handleSelectArticle(article)}
-                >
-                  <div className="tags-article-block-title">
-                    {article.title || t('untitled')}
+              {filteredArticles.map((article, idx) => {
+                // FIX: flatten list → string before any rendering
+                const articleAuthor = flattenAuthor(article.author_name);
+
+                return (
+                  <div
+                    key={`${article.doc_id}-${article.doc_issue}-${article.article_no}-${idx}`}
+                    className="tags-article-block"
+                    style={{ animationDelay: `${Math.min(idx * 0.04, 0.6)}s` }}
+                    onClick={() => handleSelectArticle(article)}
+                  >
+                    <div className="tags-article-block-title">
+                      {article.title || t('untitled')}
+                    </div>
+                    {/* FIX: render flattened string, not raw list */}
+                    {articleAuthor && (
+                      <div className="tags-article-block-author">
+                        {articleAuthor}
+                      </div>
+                    )}
+                    {(article.tags || []).length > 0 && (
+                      <div className="tags-article-block-tags">
+                        {article.tags.map((tag) => (
+                          <span key={tag} className="tag-badge">{getTagName(tag)}</span>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  {article.author_name && (
-                    <div className="tags-article-block-author">
-                      {article.author_name}
-                    </div>
-                  )}
-                  {(article.tags || []).length > 0 && (
-                    <div className="tags-article-block-tags">
-                      {article.tags.map((tag) => (
-                        <span key={tag} className="tag-badge">{getTagName(tag)}</span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
       );
     }
 
-    // State 1: Empty — no issue selected
+    // ── State 1: Nothing selected ────────────────────────────────────────────
     return (
       <div className="tags-empty-state">
         <div className="tags-empty-icon">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <svg
+            width="32" height="32" viewBox="0 0 24 24" fill="none"
+            stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
+          >
             <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
             <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
             <line x1="8" y1="7" x2="16" y2="7" />
@@ -329,7 +368,7 @@ const TagBrowse = ({ language }) => {
             />
           </div>
 
-          {/* Results count (only when issue is selected) */}
+          {/* Results count — only when an issue is selected */}
           {selectedIssue && !selectedArticle && (
             <div className="tags-result-count">
               {filteredArticles.length} {t('tags_results_found')}
@@ -379,7 +418,10 @@ const TagBrowse = ({ language }) => {
                         >
                           <img
                             className="tags-issue-thumb"
-                            src={issue.cover_image_url || thumbPlaceholder(String(issue.issue_number))}
+                            src={
+                              issue.cover_image_url ||
+                              thumbPlaceholder(String(issue.issue_number))
+                            }
                             alt={`${t('issue_label')} ${issue.issue_number}`}
                             onError={(e) => {
                               e.target.src = thumbPlaceholder(String(issue.issue_number));
