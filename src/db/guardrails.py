@@ -88,6 +88,10 @@ _CONTROL_CHAR_RE = re.compile(
 _SEPARATOR_RE = re.compile(r"={4,}")
 _BACKTICK_BLOCK_RE = re.compile(r"`{3,}")
 
+# Quotation marks (ASCII + smart/curly quotes) — users wrap Tamil names in quotes
+# which adds no search value and can cause request parsing issues
+_QUOTE_CHARS_RE = re.compile(r'["\'\u2018\u2019\u201C\u201D\u00AB\u00BB]')
+
 # Excessive whitespace
 _MULTI_NEWLINE_RE = re.compile(r"\n{3,}")
 _MULTI_SPACE_RE = re.compile(r" {3,}")
@@ -106,6 +110,9 @@ def sanitize_query(question: str) -> str:
 
     # Strip control characters
     question = _CONTROL_CHAR_RE.sub("", question)
+
+    # Strip quotation marks (ASCII and smart/curly quotes)
+    question = _QUOTE_CHARS_RE.sub("", question)
 
     # Neutralize separators
     question = _SEPARATOR_RE.sub("---", question)

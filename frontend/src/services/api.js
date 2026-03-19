@@ -81,8 +81,10 @@ export const getApiInfo = async () => {
  * @param {boolean} useLLM - Whether to use LLM for answer generation
  * @returns {Promise<{answer: string, sources: Array, query_type: string, error: object}>}
  */
+const stripQuotes = (text) => text.replace(/["'\u2018\u2019\u201C\u201D\u00AB\u00BB]/g, '');
+
 export const askQuestion = async (question, useLLM = true, history = [], language = 'ta') => {
-  const body = { question, use_llm: useLLM, language };
+  const body = { question: stripQuotes(question), use_llm: useLLM, language };
   if (history.length > 0) body.history = history;
   const response = await api.post('/api/ask', body);
   return response.data;
@@ -107,7 +109,7 @@ export const askQuestionStream = (question, { onToken, onSources, onDone, onErro
     }
   };
 
-  const body = { question, use_llm: true, language };
+  const body = { question: stripQuotes(question), use_llm: true, language };
   if (history.length > 0) body.history = history;
 
   fetch(`${API_BASE_URL}/api/ask/stream`, {
