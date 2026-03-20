@@ -56,8 +56,14 @@ INPUT_PREFIX = EXTRACTED_OUTPUT
 
 
 def setup_logging(log_file='tamil_doc_processing.log'):
-    """
-    Setup logging with file and console handlers.
+     """
+    Configure logging with file and console handlers.
+
+    Args:
+        log_file (str): Name of the log file.
+
+    Returns:
+        logging.Logger: Configured logger instance.
     """
     log_dir = Path('logs')
     log_dir.mkdir(exist_ok=True)
@@ -95,7 +101,13 @@ logger = setup_logging()
 
 def extract_year_from_s3_key(s3_key):
     """
-    Extract year from S3 key as fallback.
+    Extract year (YYYY) from S3 key string.
+
+    Args:
+        s3_key (str): S3 file path.
+
+    Returns:
+        str: Extracted year or "Unknown".
     """
     try:
         year_match = re.search(r'(19|20)\d{2}', s3_key)
@@ -107,6 +119,15 @@ def extract_year_from_s3_key(s3_key):
 
 
 def is_file_already_processed(bucket, output_key):
+    """
+    Extract year (YYYY) from S3 key string.
+
+    Args:
+        s3_key (str): S3 file path.
+
+    Returns:
+        str: Extracted year or "Unknown".
+    """
     try:
         return file_exists(bucket, output_key)
     except Exception as e:
@@ -115,6 +136,16 @@ def is_file_already_processed(bucket, output_key):
 
 
 def validate_processed_file(bucket, output_key):
+    """
+    Validate structure of processed JSON file in S3.
+
+    Args:
+        bucket (str): S3 bucket name.
+        output_key (str): Output file key.
+
+    Returns:
+        bool: True if valid, else False.
+    """
     try:
         from s3_utils import read_json_from_s3
         data = read_json_from_s3(bucket, output_key)
@@ -130,6 +161,15 @@ def validate_processed_file(bucket, output_key):
 
 
 def load_csv_from_local(csv_path):
+    """
+    Load CSV file from local path.
+
+    Args:
+        csv_path (str): Path to CSV file.
+
+    Returns:
+        pd.DataFrame: Loaded CSV dataframe.
+    """
     try:
         csv_path = Path(csv_path)
         if not csv_path.exists():
@@ -148,6 +188,16 @@ def load_csv_from_local(csv_path):
         raise
 
 def save_authors_to_s3(bucket, output_key_prefix, doc_id, doc_issue, authors_list):
+    """
+    Save or update authors list JSON in S3.
+
+    Args:
+        bucket (str): S3 bucket name.
+        output_key_prefix (str): Output folder prefix.
+        doc_id (str): Document ID (malar).
+        doc_issue (str): Document issue (ithal).
+        authors_list (list): List of authors.
+    """
     try:
         authors_key  = f"{output_key_prefix}authors.json"
         author_names = []
@@ -565,9 +615,6 @@ def parse_tamil_document(lines, shared_authors_dict, csv_df, s3_key):
 
         file_path = S3Path(s3_key)
 
-        # ----------------------------------------------------------------
-        # STEP 1: Extract மலர்/இதழ்/year from FILENAME
-        # ----------------------------------------------------------------
         logger.info("STEP 1: மலர்/இதழ் from filename")
 
         malar, ithal, year_from_file = extract_malar_ithal_from_filename(
@@ -597,11 +644,7 @@ def parse_tamil_document(lines, shared_authors_dict, csv_df, s3_key):
             f"doc_id={doc_id}, doc_issue={doc_issue}, year={year}"
         )
 
-        # ----------------------------------------------------------------
-        # STEP 2: TOC processing FOR PATTERNS ONLY
-        # (பொருளடக்கம் and ஆகியோரின் NOT used by CSV)
-        # ----------------------------------------------------------------
-        logger.info(
+       logger.info(
             "STEP 2: TOC processing (for pattern extraction only)"
         )
 
@@ -690,10 +733,6 @@ def parse_tamil_document(lines, shared_authors_dict, csv_df, s3_key):
             f"{len(authors_original)}"
         )
 
-        # ----------------------------------------------------------------
-        # STEP 3: CSV extraction
-        # NO TOC dependency — searches full document
-        # ----------------------------------------------------------------
         articles   = []
         article_no = 1
 
@@ -756,11 +795,6 @@ def parse_tamil_document(lines, shared_authors_dict, csv_df, s3_key):
                 "(no மலர்/இதழ் found). All content → patterns."
             )
 
-        # ----------------------------------------------------------------
-        # STEP 4: Pattern extraction on REMAINING unprocessed lines
-        # TOC lines already marked → patterns skip them automatically
-        # CSV-extracted lines already marked → no double extraction
-        # ----------------------------------------------------------------
         logger.info(
             "STEP 4: Pattern extraction on remaining lines "
             "(TOC and CSV lines already marked as processed)"
@@ -813,7 +847,10 @@ def parse_tamil_document(lines, shared_authors_dict, csv_df, s3_key):
 
 def process_s3_files(force_reprocess=False):
     """
-    Main orchestration — process all TXT files from S3.
+    Orchestrate processing of all TXT files from S3.
+
+    Args:
+        force_reprocess (bool): Reprocess all files if True.
     """
     try:
         logger.info("=" * 80)

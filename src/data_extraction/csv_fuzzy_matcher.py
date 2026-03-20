@@ -1,5 +1,3 @@
-# csv_fuzzy_matcher.py
-
 import re
 import io
 import logging
@@ -8,25 +6,6 @@ from pathlib import Path
 from difflib import SequenceMatcher
 
 logger = logging.getLogger('TamilDocProcessor.csv_fuzzy_matcher')
-
-
-# ====================================================================
-# CSV LOADER — replaces pd.read_csv everywhere in this project
-#
-# PROBLEM:
-#   Rows like:
-#     7,1947,1,6,வளரும் இலக்கியம்,[பாண்டியன், நா. வேத்தரசன், வணங்காமுடி]
-#   have commas INSIDE [...] — pandas treats them as column separators
-#   and breaks the row into 8 columns instead of 6.
-#   Result: that row is never read → title never found →
-#           content merges into the previous article.
-#
-# SOLUTION:
-#   Before passing to pandas, auto-wrap any [...,...] field in
-#   double quotes so pandas reads the whole bracket as one field.
-#   Single-author rows like [மு.கருணாநிதி] have no comma inside
-#   so they are left untouched.
-# ====================================================================
 
 def load_csv(csv_path):
     """
