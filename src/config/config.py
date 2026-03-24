@@ -1,3 +1,4 @@
+"""Configuration loader for PonniRAG magazine registry and environment settings."""
 
 import json
 import os
@@ -24,6 +25,7 @@ def get_magazine_config(magazine_id="ponni"):
     if magazine_id not in registry:
         raise ValueError(f"Unknown magazine: {magazine_id}")
     return registry[magazine_id]
+
 
 _default = get_magazine_config("ponni")
 _s3 = _default["s3"]
@@ -56,5 +58,3 @@ QDRANT_PORT = int(os.environ.get("QDRANT_PORT", "6333"))
 # S3 snapshot persistence
 SNAPSHOT_S3_PREFIX = _s3["snapshots"]
 MAX_QUERY_LENGTH = 500
-
-
