@@ -1,5 +1,4 @@
-"""
-Main evaluation pipeline for PonniRAG.
+r"""Main evaluation pipeline for PonniRAG.
 
 Two modes
 ---------
@@ -39,18 +38,18 @@ From the project root:
 from __future__ import annotations
 
 import argparse
-import json
 import logging
-
+import sys
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
+
 import pandas as pd
-import sys
-_EVAL_DIR = Path(__file__).resolve().parent       # src/evaluation/
-_SRC_DIR = _EVAL_DIR.parent                       # src/
-_DB_DIR = _SRC_DIR / "db"                         # src/db/
+
+_EVAL_DIR = Path(__file__).resolve().parent  # src/evaluation/
+_SRC_DIR = _EVAL_DIR.parent  # src/
+_DB_DIR = _SRC_DIR / "db"  # src/db/
 for _p in [str(_SRC_DIR), str(_DB_DIR)]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -92,6 +91,7 @@ class EvaluationReport:
     per_sample: List[Dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
+        """Convert the report to a plain dictionary."""
         return {
             "dataset_path": self.dataset_path,
             "total_samples": self.total_samples,
@@ -206,7 +206,7 @@ def run_evaluation(
     _print_report(report, samples=ready)
 
     if output_path:
-        _save_report_csv(report,ready,output_path)
+        _save_report_csv(report, ready, output_path)
 
     return report
 
@@ -216,9 +216,7 @@ def run_evaluation(
 # ---------------------------------------------------------------------------
 
 
-def _fill_llm_answers(
-    samples: List[EvalSample], live: bool
-) -> List[EvalSample]:
+def _fill_llm_answers(samples: List[EvalSample], live: bool) -> List[EvalSample]:
     """
     Populate llm_answer on samples that lack one.
 
@@ -228,17 +226,13 @@ def _fill_llm_answers(
     Falls back gracefully if the RAG system is unavailable (e.g., Qdrant is
     not running), leaving llm_answer as None so the sample gets skipped.
     """
-    needs_answer = [
-        s for s in samples if live or not s.llm_answer
-    ]
+    needs_answer = [s for s in samples if live or not s.llm_answer]
 
     if not needs_answer:
         logger.info("All samples already have llm_answers. Skipping live eval.")
         return samples
 
-    logger.info(
-        "Running live evaluation for %d sample(s) ...", len(needs_answer)
-    )
+    logger.info("Running live evaluation for %d sample(s) ...", len(needs_answer))
 
     try:
         from hybrid_search import ask_question  # noqa: PLC0415
@@ -253,9 +247,7 @@ def _fill_llm_answers(
         )
         return samples
     except Exception as exc:
-        logger.error(
-            "Unexpected error importing hybrid_search: %s", exc
-        )
+        logger.error("Unexpected error importing hybrid_search: %s", exc)
         return samples
 
     for sample in needs_answer:
@@ -275,9 +267,7 @@ def _fill_llm_answers(
                 elapsed,
             )
         except Exception as exc:
-            logger.error(
-                "  RAG query failed for sample '%s': %s", sample.id, exc
-            )
+            logger.error("  RAG query failed for sample '%s': %s", sample.id, exc)
             sample.llm_answer = None
 
     return samples
@@ -354,9 +344,11 @@ def _print_report(report: EvaluationReport, samples: List[EvalSample]) -> None:
     print("  PonniRAG Evaluation Report")
     print("=" * 80)
     print(f"  Dataset : {report.dataset_path}")
-    print(f"  Samples : {report.evaluated_samples} evaluated, "
-          f"{report.skipped_samples} skipped "
-          f"(total {report.total_samples})")
+    print(
+        f"  Samples : {report.evaluated_samples} evaluated, "
+        f"{report.skipped_samples} skipped "
+        f"(total {report.total_samples})"
+    )
     print()
     print("  Macro-average scores:")
     print(f"    Semantic similarity : {report.avg_semantic_similarity:.4f}")
@@ -410,9 +402,10 @@ def _print_report(report: EvaluationReport, samples: List[EvalSample]) -> None:
     print()
 
 
-def _save_report_csv(report: EvaluationReport, samples: List[EvalSample], output_path: str | Path) -> None:
+def _save_report_csv(
+    report: EvaluationReport, samples: List[EvalSample], output_path: str | Path
+) -> None:
     """Save evaluation results to Excel."""
-
     output_path = Path(output_path).with_suffix(".xlsx")
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -423,18 +416,20 @@ def _save_report_csv(report: EvaluationReport, samples: List[EvalSample], output
     for i, entry in enumerate(report.per_sample, start=1):
         s = sample_map.get(entry["id"])
 
-        rows.append({
-            "S.no": i,
-            "Question": s.question if s else "",
-            "Human answer": s.human_answer if s else "",
-            "LLM answer": s.llm_answer if s else "",
-            "Semantic similarity": entry.get("semantic_similarity", 0),
-            "BERTScore F1": entry.get("bertscore_f1", 0),
-            "BLEU-1": entry.get("bleu_1", 0),
-            "BLEU-2": entry.get("bleu_2", 0),
-            "ROUGE-L": entry.get("rouge_l", 0),
-            "Composite score": entry.get("composite_score", 0),
-        })
+        rows.append(
+            {
+                "S.no": i,
+                "Question": s.question if s else "",
+                "Human answer": s.human_answer if s else "",
+                "LLM answer": s.llm_answer if s else "",
+                "Semantic similarity": entry.get("semantic_similarity", 0),
+                "BERTScore F1": entry.get("bertscore_f1", 0),
+                "BLEU-1": entry.get("bleu_1", 0),
+                "BLEU-2": entry.get("bleu_2", 0),
+                "ROUGE-L": entry.get("rouge_l", 0),
+                "Composite score": entry.get("composite_score", 0),
+            }
+        )
 
     df = pd.DataFrame(rows)
 
@@ -442,7 +437,9 @@ def _save_report_csv(report: EvaluationReport, samples: List[EvalSample], output
 
     logger.info("Excel report saved to %s", output_path)
 
+
 def _build_argparser() -> argparse.ArgumentParser:
+    """Create the CLI argument parser for the evaluation script."""
     parser = argparse.ArgumentParser(
         description=(
             "Evaluate PonniRAG LLM response quality against human reference answers."
@@ -505,6 +502,7 @@ Examples:
 
 
 def main() -> None:
+    """Parse CLI arguments and run the evaluation pipeline."""
     parser = _build_argparser()
     args = parser.parse_args()
 

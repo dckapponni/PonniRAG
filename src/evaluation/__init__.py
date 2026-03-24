@@ -1,6 +1,5 @@
-"""
-PonniRAG Evaluation Module
-==========================
+"""PonniRAG Evaluation Module.
+
 Evaluates LLM response quality by comparing system-generated answers against
 human reference answers for Tamil literary content (Ponni magazine, 1947-1955).
 
@@ -21,8 +20,8 @@ Metrics provided:
     - Composite score      (weighted combination of the above)
 """
 
-from evaluation.evaluate import run_evaluation, EvaluationReport  # noqa: F401
-from evaluation.dataset import load_dataset, EvalSample  # noqa: F401
+from evaluation.dataset import EvalSample, load_dataset  # noqa: F401
+from evaluation.evaluate import EvaluationReport, run_evaluation  # noqa: F401
 from evaluation.metrics import MetricsCalculator  # noqa: F401
 
 __all__ = [

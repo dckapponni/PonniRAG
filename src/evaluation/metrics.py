@@ -80,6 +80,7 @@ class MetricResult:
     composite_score: float = 0.0
 
     def to_dict(self) -> dict:
+        """Convert the metric result to a plain dictionary."""
         return {
             "id": self.sample_id,
             "semantic_similarity": round(self.semantic_similarity, 4),
@@ -111,9 +112,10 @@ class MetricsCalculator:
         device: Optional[str] = None,
         use_bertscore: bool = False,
     ) -> None:
+        """Initialise the calculator with model and device settings."""
         self._embedding_model_name = embedding_model_name
         self._use_bertscore = use_bertscore
-        self._embed_model = None   # lazy
+        self._embed_model = None  # lazy
         self._device = device or self._auto_device()
 
     # ------------------------------------------------------------------
@@ -153,7 +155,6 @@ class MetricsCalculator:
         # 1. Semantic similarity
         result.semantic_similarity = self._semantic_similarity(reference, hypothesis)
 
-
         # 3. BLEU (character-level)
         result.bleu_1, result.bleu_2 = self._bleu(reference, hypothesis)
 
@@ -171,9 +172,10 @@ class MetricsCalculator:
         references: List[str],
         hypotheses: List[str],
     ) -> List[MetricResult]:
-        """
-        Compute metrics for multiple pairs.  Embeddings are batched for
-        efficiency; BERTScore and BLEU/ROUGE are computed per-item.
+        """Compute metrics for multiple pairs.
+
+        Embeddings are batched for efficiency; BERTScore and
+        BLEU/ROUGE are computed per-item.
 
         Args:
             ids: Sample identifiers.
@@ -183,9 +185,9 @@ class MetricsCalculator:
         Returns:
             List of MetricResult, one per input pair.
         """
-        assert len(ids) == len(references) == len(hypotheses), (
-            "ids, references, and hypotheses must have the same length."
-        )
+        assert (
+            len(ids) == len(references) == len(hypotheses)
+        ), "ids, references, and hypotheses must have the same length."
 
         refs_norm = [_normalise(r) for r in references]
         hyps_norm = [_normalise(h) for h in hypotheses]
@@ -201,7 +203,6 @@ class MetricsCalculator:
             if not ref or not hyp:
                 results.append(r)
                 continue
-
 
             r.bleu_1, r.bleu_2 = self._bleu(ref, hyp)
             r.rouge_l = self._rouge_l(ref, hyp)
@@ -346,6 +347,7 @@ class MetricsCalculator:
 
     @staticmethod
     def _auto_device() -> str:
+        """Detect whether CUDA is available and return the device string."""
         try:
             import torch  # noqa: PLC0415
 

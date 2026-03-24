@@ -36,7 +36,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
@@ -50,7 +50,7 @@ class EvalSample:
     id: str
     question: str
     human_answer: str
-    llm_answer: Optional[str] = None   # filled by live evaluation if absent
+    llm_answer: Optional[str] = None  # filled by live evaluation if absent
     category: Optional[str] = None
     notes: Optional[str] = None
 
@@ -59,6 +59,7 @@ class EvalSample:
         return bool(self.human_answer) and bool(self.llm_answer)
 
     def to_dict(self) -> dict:
+        """Convert the sample to a plain dictionary."""
         return {
             "id": self.id,
             "question": self.question,
@@ -96,12 +97,11 @@ def load_dataset(path: str | Path) -> List[EvalSample]:
     elif suffix == ".csv":
         return _load_csv(path)
     else:
-        raise ValueError(
-            f"Unsupported dataset format '{suffix}'. Use .json or .csv."
-        )
+        raise ValueError(f"Unsupported dataset format '{suffix}'. Use .json or .csv.")
 
 
 def _load_json(path: Path) -> List[EvalSample]:
+    """Parse a JSON array of sample objects into EvalSample instances."""
     with path.open(encoding="utf-8") as fh:
         raw = json.load(fh)
 
@@ -146,6 +146,7 @@ def _load_json(path: Path) -> List[EvalSample]:
 
 
 def _load_csv(path: Path) -> List[EvalSample]:
+    """Parse a CSV file with header row into EvalSample instances."""
     samples: List[EvalSample] = []
     with path.open(encoding="utf-8", newline="") as fh:
         reader = csv.DictReader(fh)
@@ -183,8 +184,8 @@ def _load_csv(path: Path) -> List[EvalSample]:
 
 
 def save_dataset(samples: List[EvalSample], path: str | Path) -> None:
-    """
-    Persist a list of EvalSamples back to a JSON file.
+    """Persist a list of EvalSamples back to a JSON file.
+
     Useful for saving live-evaluated llm_answers alongside results.
 
     Args:
