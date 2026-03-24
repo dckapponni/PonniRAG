@@ -17,3 +17,7 @@ uvicorn[standard]==0.40.0
 pydantic==2.12.5
 httpx==0.28.1
 google-genai==1.64.0
+pytest
+moto
+pytest-cov
+pytest-asyncio
