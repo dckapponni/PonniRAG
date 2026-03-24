@@ -32,12 +32,12 @@ api.interceptors.response.use(
   },
   (error) => {
     console.error('API Error:', error.response?.data || error.message);
-    
+
     // Handle specific error cases
     if (error.response) {
       // Server responded with error status
       const { status, data } = error.response;
-      
+
       if (status === 404) {
         throw new Error(data.detail || 'Resource not found');
       } else if (status === 500) {
@@ -52,7 +52,7 @@ api.interceptors.response.use(
       // Error in request setup
       throw new Error('Error setting up request: ' + error.message);
     }
-    
+
     return Promise.reject(error);
   }
 );
@@ -84,7 +84,9 @@ export const getApiInfo = async () => {
 const stripQuotes = (text) => text.replace(/["'\u2018\u2019\u201C\u201D\u00AB\u00BB]/g, '');
 
 export const askQuestion = async (question, useLLM = true, history = [], language = 'ta') => {
-  const body = { question: stripQuotes(question), use_llm: useLLM, language };
+  const cleaned = stripQuotes(question).trim();
+  if (!cleaned) throw new Error('Please enter a valid question.');
+  const body = { question: cleaned, use_llm: useLLM, language };
   if (history.length > 0) body.history = history;
   const response = await api.post('/api/ask', body);
   return response.data;
@@ -109,7 +111,13 @@ export const askQuestionStream = (question, { onToken, onSources, onDone, onErro
     }
   };
 
-  const body = { question: stripQuotes(question), use_llm: true, language };
+  const cleaned = stripQuotes(question).trim();
+  if (!cleaned) {
+    if (onError) onError(new Error('Please enter a valid question.'));
+    return controller;
+  }
+
+  const body = { question: cleaned, use_llm: true, language };
   if (history.length > 0) body.history = history;
 
   fetch(`${API_BASE_URL}/api/ask/stream`, {
@@ -178,7 +186,7 @@ export const askQuestionStream = (question, { onToken, onSources, onDone, onErro
  */
 export const search = async (query, useLLM = false) => {
   const response = await api.get('/api/search', {
-    params: { q: query, use_llm: useLLM },
+    params: { q: stripQuotes(query), use_llm: useLLM },
   });
   return response.data;
 };
