@@ -1,15 +1,14 @@
-"""
-Tests for Unicode NFC normalization across the PonniRAG pipeline.
+"""Test Unicode NFC normalization across the PonniRAG pipeline.
 
-Verifies that Tamil text in different Unicode representations (NFC vs NFD)
-produces identical results for hashing, embeddings, fuzzy matching, and caching.
+Verify that Tamil text in different Unicode representations (NFC vs NFD)
+produces identical results for hashing, embeddings, fuzzy matching,
+and caching.
 """
+
 import unicodedata
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-from tamil_text import normalize_unicode, fuzzy_match_score, _edit_distance_one
-
+from tamil_text import _edit_distance_one, fuzzy_match_score, normalize_unicode
 
 # Tamil test strings in NFC (precomposed) form
 TAMIL_NFC = "தமிழ்"  # Standard composed form
@@ -91,7 +90,7 @@ class TestEditDistanceUnicode:
     """Tests that _edit_distance_one handles NFC/NFD consistently."""
 
     def test_identical_nfc_nfd(self):
-        """NFC and NFD forms of the same word are recognized as within edit distance 1."""
+        """NFC and NFD forms of same word are within edit distance 1."""
         # After normalization both forms are identical (distance 0 ≤ 1), so True
         assert _edit_distance_one(TAMIL_NFC, TAMIL_NFD)
 
@@ -138,6 +137,7 @@ class TestEmbeddingUnicode:
         # Both forms should call encode with the same NFC string
         with patch("embeddings.get_embed_model") as mock_model:
             import numpy as np
+
             mock_instance = MagicMock()
             mock_instance.encode.return_value = np.zeros(384)
             mock_model.return_value = mock_instance

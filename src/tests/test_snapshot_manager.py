@@ -1,34 +1,31 @@
-"""
-Tests for src/db/snapshot_manager.py
+"""Test src/db/snapshot_manager.py.
 
-Uses moto for S3 mocking and unittest.mock for Qdrant client mocking.
+Use moto for S3 mocking and unittest.mock for Qdrant client mocking.
 """
 
-import json
-from datetime import datetime, timezone
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock, Mock, patch
 
 import boto3
-import pytest
 from moto import mock_aws
 
 from db.snapshot_manager import (
+    build_index_metadata,
     compute_embedding_fingerprint,
     compute_source_data_hash,
     load_index_metadata,
-    save_index_metadata,
     needs_reindex,
-    save_snapshot_to_s3,
     restore_snapshot_from_s3,
-    build_index_metadata,
+    save_index_metadata,
+    save_snapshot_to_s3,
 )
-
 
 BUCKET = "ponni-dev"
 SNAPSHOT_PREFIX = "qdrant_snapshots/"
 
 
 class TestComputeEmbeddingFingerprint:
+    """Test compute_embedding_fingerprint function."""
+
     def test_deterministic(self):
         """Same config always produces the same fingerprint."""
         fp1 = compute_embedding_fingerprint()
@@ -59,8 +56,11 @@ class TestComputeEmbeddingFingerprint:
 
 
 class TestComputeSourceDataHash:
+    """Test compute_source_data_hash function."""
+
     @mock_aws
     def test_hash_changes_when_files_change(self):
+        """Verify hash changes when S3 files change."""
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket=BUCKET)
 
@@ -74,6 +74,7 @@ class TestComputeSourceDataHash:
 
     @mock_aws
     def test_hash_stable_when_unchanged(self):
+        """Verify hash remains stable when files are unchanged."""
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket=BUCKET)
 
@@ -85,6 +86,7 @@ class TestComputeSourceDataHash:
 
     @mock_aws
     def test_empty_bucket(self):
+        """Verify hash computation works on an empty bucket."""
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket=BUCKET)
 
@@ -94,6 +96,7 @@ class TestComputeSourceDataHash:
 
     @mock_aws
     def test_ignores_non_matching_suffix(self):
+        """Verify hash ignores files with non-matching suffix."""
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket=BUCKET)
 
@@ -110,8 +113,11 @@ class TestComputeSourceDataHash:
 
 
 class TestLoadSaveIndexMetadata:
+    """Test load and save index metadata functions."""
+
     @mock_aws
     def test_load_returns_none_when_missing(self):
+        """Verify load returns None when metadata is missing."""
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket=BUCKET)
 
@@ -120,6 +126,7 @@ class TestLoadSaveIndexMetadata:
 
     @mock_aws
     def test_save_and_load_roundtrip(self):
+        """Verify save and load roundtrip preserves metadata."""
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket=BUCKET)
 
@@ -140,8 +147,11 @@ class TestLoadSaveIndexMetadata:
 
 
 class TestNeedsReindex:
+    """Test needs_reindex function."""
+
     @mock_aws
     def test_returns_true_when_no_metadata(self):
+        """Verify reindex needed when no metadata exists."""
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket=BUCKET)
 
@@ -151,6 +161,7 @@ class TestNeedsReindex:
 
     @mock_aws
     def test_returns_true_when_fingerprint_differs(self):
+        """Verify reindex needed when fingerprint differs."""
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket=BUCKET)
 
@@ -166,6 +177,7 @@ class TestNeedsReindex:
 
     @mock_aws
     def test_returns_true_when_source_hash_differs(self):
+        """Verify reindex needed when source hash differs."""
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket=BUCKET)
 
@@ -186,6 +198,7 @@ class TestNeedsReindex:
 
     @mock_aws
     def test_returns_false_when_everything_matches(self):
+        """Verify no reindex needed when everything matches."""
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket=BUCKET)
 
@@ -207,9 +220,12 @@ class TestNeedsReindex:
 
 
 class TestSaveSnapshotToS3:
+    """Test save_snapshot_to_s3 function."""
+
     @mock_aws
     @patch("db.snapshot_manager.httpx")
     def test_save_snapshot(self, mock_httpx):
+        """Verify snapshot is saved to S3 correctly."""
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket=BUCKET)
 
@@ -228,7 +244,9 @@ class TestSaveSnapshotToS3:
         key = save_snapshot_to_s3(mock_qdrant, s3, BUCKET, "test-collection")
 
         assert key == f"{SNAPSHOT_PREFIX}test-collection-2026-02-27.snapshot"
-        mock_qdrant.create_snapshot.assert_called_once_with(collection_name="test-collection")
+        mock_qdrant.create_snapshot.assert_called_once_with(
+            collection_name="test-collection"
+        )
         mock_httpx.stream.assert_called_once()
 
         # Verify the snapshot was uploaded to S3
@@ -261,8 +279,11 @@ class TestSaveSnapshotToS3:
 
 
 class TestRestoreSnapshotFromS3:
+    """Test restore_snapshot_from_s3 function."""
+
     @mock_aws
     def test_restore_no_metadata(self):
+        """Verify restore returns False when no metadata exists."""
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket=BUCKET)
 
@@ -272,6 +293,7 @@ class TestRestoreSnapshotFromS3:
 
     @mock_aws
     def test_restore_no_snapshot_key_in_metadata(self):
+        """Verify restore returns False when snapshot key is missing."""
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket=BUCKET)
 
@@ -283,12 +305,13 @@ class TestRestoreSnapshotFromS3:
 
     @mock_aws
     def test_restore_snapshot_not_in_s3(self):
+        """Verify restore returns False when snapshot file is missing."""
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket=BUCKET)
 
-        save_index_metadata(s3, BUCKET, {
-            "snapshot_s3_key": "qdrant_snapshots/missing.snapshot"
-        })
+        save_index_metadata(
+            s3, BUCKET, {"snapshot_s3_key": "qdrant_snapshots/missing.snapshot"}
+        )
 
         mock_qdrant = Mock()
         result = restore_snapshot_from_s3(mock_qdrant, s3, BUCKET, "test-collection")
@@ -296,6 +319,7 @@ class TestRestoreSnapshotFromS3:
 
     @mock_aws
     def test_restore_success(self):
+        """Verify successful snapshot restoration."""
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket=BUCKET)
 
@@ -311,6 +335,7 @@ class TestRestoreSnapshotFromS3:
 
     @mock_aws
     def test_restore_qdrant_failure(self):
+        """Verify restore returns False when Qdrant fails."""
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket=BUCKET)
 
@@ -326,7 +351,10 @@ class TestRestoreSnapshotFromS3:
 
 
 class TestBuildIndexMetadata:
+    """Test build_index_metadata function."""
+
     def test_builds_correct_metadata(self):
+        """Verify metadata is built with correct fields."""
         metadata = build_index_metadata(
             snapshot_s3_key="qdrant_snapshots/test.snapshot",
             points_count=5432,

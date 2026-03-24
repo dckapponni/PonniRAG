@@ -1,14 +1,17 @@
+"""Test LLM failure graceful fallback behavior.
+
+Cover health cache poisoning on transient failure,
+cache-before-extractive fallback, fallback_reason in response,
+history-mode cache fallback, and consistent thresholds across
+sync/async paths.
 """
-Tests for LLM failure graceful fallback behavior.
-Covers: health cache poisoning on transient failure, cache-before-extractive
-fallback, fallback_reason in response, history-mode cache fallback,
-and consistent thresholds across sync/async paths.
-"""
-import pytest
+
 import time
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import hybrid_search as hs
+import pytest
+from cache import _response_cache
 from llm import (
     _gemini_health_cache,
     _gemini_health_lock,
@@ -16,11 +19,10 @@ from llm import (
     generate_llm_answer,
     generate_llm_answer_async,
 )
-from cache import _response_cache
 
 
 def _make_merged_doc(content="தமிழ் மொழி பற்றிய விவரம் " * 30, score=0.95):
-    """Helper to create a mock merged document."""
+    """Create a mock merged document."""
     return {
         "content": content,
         "volume": "vol1",
@@ -36,7 +38,7 @@ def _make_merged_doc(content="தமிழ் மொழி பற்றிய �
 
 
 def _mock_search_setup(mock_health, mock_client, mock_search_class, mock_merge):
-    """Common setup for ask_question tests with vector search path."""
+    """Set up ask_question tests with vector search path."""
     mock_health.return_value = {"healthy": True, "points_count": 1000}
     mock_client.return_value = MagicMock()
 
@@ -98,8 +100,8 @@ class TestHealthCachePoisoning:
     @patch("llm._get_gemini_client")
     def test_generate_llm_answer_poisons_cache_on_retryable_error(self, mock_client):
         """generate_llm_answer should poison health cache on retryable errors."""
-        mock_client.return_value.models.generate_content.side_effect = (
-            ConnectionError("refused")
+        mock_client.return_value.models.generate_content.side_effect = ConnectionError(
+            "refused"
         )
 
         with patch("llm.with_gemini_retry", side_effect=ConnectionError("refused")):
@@ -131,7 +133,7 @@ class TestHealthCachePoisoning:
     @pytest.mark.asyncio
     async def test_async_generate_poisons_cache_on_retryable(self):
         """generate_llm_answer_async should poison cache on retryable errors."""
-        with patch("llm._get_gemini_client") as mock_client:
+        with patch("llm._get_gemini_client"):
             with patch(
                 "llm.with_gemini_retry_async",
                 side_effect=TimeoutError("timeout"),
@@ -174,9 +176,9 @@ class TestCacheBeforeExtractiveFallback:
         cached_answer = "இது ஒரு நீண்ட தமிழ் பதில் " * 20
         _response_cache.put("test question", {"answer": cached_answer, "sources": []})
 
-        # Pass history so the top-level cache check is skipped (it only
-        # fires when history is empty).  The LLM call then fails with "",
-        # and _llm_fallback_answer finds the cached response.
+        # Pass history so top-level cache check is skipped (it only
+        # fires when history is empty). The LLM call then fails
+        # with "", and _llm_fallback_answer finds cached response.
         history = [{"role": "user", "content": "previous"}]
         with patch("hybrid_search.check_gemini_health", return_value={"healthy": True}):
             with patch("hybrid_search.generate_llm_answer", return_value=""):
@@ -241,9 +243,7 @@ class TestCacheBeforeExtractiveFallback:
 
         with patch("hybrid_search.check_gemini_health", return_value={"healthy": True}):
             with patch("hybrid_search.generate_llm_answer", return_value=""):
-                result = hs.ask_question(
-                    "test question", use_llm=True, history=history
-                )
+                result = hs.ask_question("test question", use_llm=True, history=history)
 
         # Should use cached response even in history mode
         assert result["answer"] == cached_answer
@@ -259,6 +259,7 @@ class TestAsyncFallback:
     """Test async path uses consistent thresholds and fallback."""
 
     def setup_method(self):
+        """Clear caches before each test."""
         _response_cache.clear()
         with _gemini_health_lock:
             _gemini_health_cache["result"] = None
@@ -278,11 +279,18 @@ class TestAsyncFallback:
         cached_answer = "இது ஒரு நீண்ட தமிழ் பதில் " * 20
         _response_cache.put("test question", {"answer": cached_answer, "sources": []})
 
-        # Pass history to skip top-level cache lookup; LLM fails → _llm_fallback_answer uses cache
+        # Pass history to skip top-level cache lookup;
+        # LLM fails, _llm_fallback_answer uses cache
         history = [{"role": "user", "content": "previous"}]
         with patch("hybrid_search.check_gemini_health", return_value={"healthy": True}):
-            with patch("hybrid_search.generate_llm_answer_async", new_callable=AsyncMock, return_value=""):
-                result = await hs.ask_question_async("test question", use_llm=True, history=history)
+            with patch(
+                "hybrid_search.generate_llm_answer_async",
+                new_callable=AsyncMock,
+                return_value="",
+            ):
+                result = await hs.ask_question_async(
+                    "test question", use_llm=True, history=history
+                )
 
         assert result["answer"] == cached_answer
         assert result.get("fallback_reason") == "cached_response"
@@ -299,7 +307,11 @@ class TestAsyncFallback:
         _mock_search_setup(mock_health, mock_client, mock_search_class, mock_merge)
 
         with patch("hybrid_search.check_gemini_health", return_value={"healthy": True}):
-            with patch("hybrid_search.generate_llm_answer_async", new_callable=AsyncMock, return_value=""):
+            with patch(
+                "hybrid_search.generate_llm_answer_async",
+                new_callable=AsyncMock,
+                return_value="",
+            ):
                 with patch("hybrid_search.extract_key_facts", return_value=[]):
                     result = await hs.ask_question_async(
                         "never asked question", use_llm=True
@@ -318,15 +330,17 @@ class TestAsyncFallback:
         """Async should use same 150-char threshold as sync (was 100 before fix)."""
         _mock_search_setup(mock_health, mock_client, mock_search_class, mock_merge)
 
-        # Answer that's 120 chars — would pass old async threshold (100) but not new (150)
+        # 120 chars: passes old async threshold (100) but not new (150)
         short_answer = "x" * 120
 
         with patch("hybrid_search.check_gemini_health", return_value={"healthy": True}):
-            with patch("hybrid_search.generate_llm_answer_async", new_callable=AsyncMock, return_value=short_answer):
+            with patch(
+                "hybrid_search.generate_llm_answer_async",
+                new_callable=AsyncMock,
+                return_value=short_answer,
+            ):
                 with patch("hybrid_search.extract_key_facts", return_value=[]):
-                    result = await hs.ask_question_async(
-                        "threshold test", use_llm=True
-                    )
+                    result = await hs.ask_question_async("threshold test", use_llm=True)
 
         # Should have fallen back because 120 < 150
         assert result.get("fallback_reason") is not None
@@ -341,6 +355,7 @@ class TestStreamingFallback:
     """Test streaming path fallback behavior."""
 
     def setup_method(self):
+        """Clear caches before each test."""
         _response_cache.clear()
         with _gemini_health_lock:
             _gemini_health_cache["result"] = None
@@ -357,10 +372,13 @@ class TestStreamingFallback:
         _mock_search_setup(mock_health, mock_client, mock_search_class, mock_merge)
 
         def empty_stream(*args, **kwargs):
+            """Return an empty iterator."""
             return iter([])  # No tokens
 
         with patch("hybrid_search.check_gemini_health", return_value={"healthy": True}):
-            with patch("hybrid_search.generate_llm_answer_stream", side_effect=empty_stream):
+            with patch(
+                "hybrid_search.generate_llm_answer_stream", side_effect=empty_stream
+            ):
                 with patch("hybrid_search.extract_key_facts", return_value=[]):
                     events = list(hs.ask_question_stream("stream test"))
 
@@ -384,12 +402,16 @@ class TestStreamingFallback:
         _response_cache.put("stream test", {"answer": cached_answer, "sources": []})
 
         def empty_stream(*args, **kwargs):
+            """Return an empty iterator."""
             return iter([])
 
-        # Pass history to skip top-level cache lookup; empty stream → _llm_fallback_answer uses cache
+        # Pass history to skip top-level cache lookup;
+        # empty stream, _llm_fallback_answer uses cache
         history = [{"role": "user", "content": "previous"}]
         with patch("hybrid_search.check_gemini_health", return_value={"healthy": True}):
-            with patch("hybrid_search.generate_llm_answer_stream", side_effect=empty_stream):
+            with patch(
+                "hybrid_search.generate_llm_answer_stream", side_effect=empty_stream
+            ):
                 events = list(hs.ask_question_stream("stream test", history=history))
 
         # Find the token event with the cached answer
@@ -411,6 +433,7 @@ class TestGeminiUnhealthyShortCircuit:
     """Test that unhealthy Gemini causes immediate fallback without LLM call."""
 
     def setup_method(self):
+        """Clear caches before each test."""
         _response_cache.clear()
         with _gemini_health_lock:
             _gemini_health_cache["result"] = None
