@@ -82,6 +82,19 @@
                                          │
                                          ▼
                                  ┌───────────────┐
+                                 │  Input Guard   │
+                                 │  (guardrails)  │
+                                 │                │
+                                 │ • Strip quotes │
+                                 │ • Sanitize     │
+                                 │   control chars│
+                                 │ • NFC normalize│
+                                 │ • Injection    │
+                                 │   detection    │
+                                 └───────┬───────┘
+                                         │ (blocked if HIGH injection)
+                                         ▼
+                                 ┌───────────────┐
                                  │  Health Check  │
                                  │   (Qdrant)     │
                                  └───────┬───────┘
@@ -214,28 +227,49 @@
 hybrid_search.py   ← Orchestrator (ask_question, embeddings, caching, model loaders)
        │               Re-exports all public names for backward compatibility
        │
+       ├── guardrails.py      Prompt security: injection detection, query sanitization,
+       │                      history validation, output leakage checks
+       │                      (leaf — stdlib only, no project imports)
+       │
        ├── tamil_text.py      Tamil NLP utilities, fuzzy matching, pattern bank
        │                      (leaf — no internal imports)
        │
        ├── csv_queries.py     CSV query pipeline: author/topic/issue queries,
-       │                      EnhancedAuthorQuerySystem, formatting
+       │                      EnhancedAuthorQuerySystem, author display formatting
        │                      (imports tamil_text)
        │
        ├── llm.py             Gemini LLM layer: prompts, sync/async/streaming
        │                      generation, extractive fallback
-       │                      (leaf — reads env vars directly)
+       │                      (imports guardrails for prompt hardening)
        │
-       └── search.py          Vector search document processing: chunk retrieval,
-                              merging, relevance filtering, context building
-                              (leaf — constants defined locally)
+       ├── search.py          Vector search document processing: chunk retrieval,
+       │                      merging, relevance filtering, context building
+       │                      (leaf — constants defined locally)
+       │
+       ├── cache.py           Thread-safe LRU response cache with TTL
+       │                      Auto-invalidates when Qdrant points_count changes
+       │                      (leaf — stdlib only)
+       │
+       └── retry.py           Exponential backoff with jitter for Qdrant/Gemini
+                              Sync + async retry loops, service-specific predicates
+                              (leaf — stdlib only)
 
-article_tagger.py  Hybrid article tagger: rule-based + TF-IDF fallback
-                    TAXONOMY (15 categories), ArticleTagger class
+article_tagger.py   Hybrid article tagger: rule-based + TF-IDF fallback
+                     TAXONOMY (15 categories), ArticleTagger class
+                     Fully offline, deterministic, no LLM
 
-api.py             FastAPI endpoints (imports from hybrid_search)
-                    Includes /api/tags and /api/tags/{id}/articles
-qdrant_indexer.py   Vector indexing with E5 prefixes
-streamlit_app.py    Streamlit UI (Ask AI, Library, Tags/Categories, About)
+embeddings.py       Embedding engine: dense (E5) + sparse (BM25-style) vectors
+                     Thread-safe singleton loading, CSV semantic search
+                     HybridQdrantSearch class with tag filtering
+
+snapshot_manager.py  Qdrant snapshot backup/restore via S3
+                     Reindex detection using embedding fingerprint + source hash
+
+api.py              FastAPI endpoints (imports from hybrid_search)
+                     S3 image proxy for volume/issue covers
+                     Includes /api/tags and /api/tags/{id}/articles
+qdrant_indexer.py    Vector indexing with E5 passage:/query: prefixes
+streamlit_app.py     Legacy Streamlit UI (Ask AI, Library, Tags/Categories, About)
 ```
 
 All external consumers (`api.py`, tests) import from `hybrid_search` — the re-export layer ensures backward compatibility.
@@ -268,6 +302,144 @@ All external consumers (`api.py`, tests) import from `hybrid_search` — the re-
 └──────────────────┘     │  Batch upsert 100 │     └──────────────────────┘
                          └──────────────────┘
 ```
+
+---
+
+## Security — Guardrails Pipeline (`guardrails.py`)
+
+```
+User Input
+    │
+    ├─► Strip control characters (keep \n, \t, space)
+    ├─► Strip quotation marks (ASCII + smart/curly quotes + guillemets)
+    ├─► Neutralize separators (====, ```)
+    ├─► Collapse excessive whitespace
+    ├─► NFC Unicode normalization
+    │
+    ▼
+Injection Detection
+    │
+    ├─► HIGH patterns (block): instruction override, role switching,
+    │   system prompt extraction, delimiter injection
+    ├─► MEDIUM patterns (warn): "from now on", env var requests
+    │
+    ▼
+History Validation (for multi-turn conversations)
+    │
+    ├─► Enforce user/assistant alternating pattern
+    ├─► Truncate content at 5000 chars/turn, max 20 turns
+    ├─► Drop user turns with HIGH injection signals
+    │
+    ▼
+Output Guardrails
+    │
+    ├─► Check for leakage of API keys, bucket names, model names,
+    │   prompt variable names, source file names
+    └─► Replace leaked responses with safe Tamil refusal message
+```
+
+---
+
+## Article Tagging Pipeline
+
+```
+┌─────────────────┐     ┌─────────────────────┐     ┌──────────────────┐
+│  Article Content │     │  article_tagger.py   │     │  15 Categories   │
+│  (title + body)  │────►│                      │────►│  (1–3 tags each) │
+│                  │     │  1. Rule-based:      │     │                  │
+│  From Qdrant     │     │     keyword patterns  │     │  Written to:     │
+│  payload or CSV  │     │     per category      │     │  • Qdrant payload│
+│                  │     │  2. TF-IDF fallback:  │     │  • summary.csv   │
+│                  │     │     trained on labeled │     │    (வகை column)  │
+│                  │     │     articles           │     │                  │
+└─────────────────┘     │  3. Serial detection: │     └──────────────────┘
+                         │     multi-part fiction │
+                         └─────────────────────┘
+
+update_csv_tags.py — Syncs tags from Qdrant back to summary.csv
+                     Matches rows by doc_id + doc_issue + article_no (chunk_id=0)
+```
+
+---
+
+## S3 Image Proxy
+
+```
+Browser                      FastAPI                         AWS S3
+  │                             │                               │
+  │  GET /api/images/          │                               │
+  │  volumes/3/cover           │  _volume_cover_s3_key(3)      │
+  │ ───────────────────────►   │  → "Front_cover_of_volumes/   │
+  │                             │     Volumes/Volume3.png"      │
+  │                             │  ────────────────────────►    │
+  │                             │                  ◄────────    │
+  │  ◄─────────────────────    │  Response(image/png)          │
+  │  Cache-Control: 1hr        │  fallback: .jpg if .png fails │
+  │                             │                               │
+  │  GET /api/images/          │                               │
+  │  volumes/3/issues/7/cover  │  _issue_cover_s3_key(3, 7)   │
+  │ ───────────────────────►   │  → "Front_cover_of_volumes/   │
+  │                             │     volume 3 cover images/    │
+  │                             │     VOL3 - 7 - 1949.jpg"     │
+  │                             │  ────────────────────────►    │
+```
+
+No presigned URLs — proxy endpoints never expire. Browser caches for 1 hour.
+PDF links use Google Drive URLs directly from `magazine_registry.json`.
+
+---
+
+## Magazine Registry (`config/magazine_registry.json`)
+
+Single source of truth for all magazine metadata:
+
+```json
+{
+  "name": "ponni",
+  "s3": { "bucket": "ponni-dev", "region": "ap-south-1", ... },
+  "volumes": [
+    {
+      "id": 1,
+      "issues": [
+        { "num": "6", "year": 1947, "pdf_url": "https://drive.google.com/..." },
+        { "num": "7", "year": 1947, "pdf_url": "..." },
+        { "num": "PONGAL", "year": 1948, "pdf_url": "..." }
+      ]
+    }
+  ]
+}
+```
+
+- Adding new issues only requires editing this file
+- `config.py` loads the registry via `get_magazine_config("ponni")`
+- Issue numbers are strings (supports "PONGAL" special issues)
+- Volumes can span multiple years (year range derived from per-issue years)
+
+---
+
+## Conversation History (Multi-Turn)
+
+```
+Frontend (Home.js)                    Backend (hybrid_search.py)
+
+messages state:                       HistoryMessage validation:
+[                                     • role: "user" | "assistant"
+  {role: "user", content: "Q1"},      • content: min 1, max 5000 chars
+  {role: "assistant", content: "A1"}, • Max 20 turns
+  {role: "user", content: "Q2"},      • Alternating role pattern enforced
+  {role: "assistant", content: "A2"}, • HIGH injection → turn dropped
+]                                     • Content sanitized per turn
+       │
+       ▼
+Last 3 Q&A turns (6 messages)
+sent as `history` in POST body
+       │
+       ▼
+Gemini receives conversation context
+→ enables follow-up questions
+```
+
+Cache is skipped when conversation history is present (each turn is unique).
 
 ---
 
@@ -320,6 +492,8 @@ All external consumers (`api.py`, tests) import from `hybrid_search` — the re-
 | Docker Compose | Multi-container orchestration (3 services) |
 | NVIDIA CUDA 12.1.0 | GPU acceleration for embeddings (optional) |
 | Docker named volumes | Qdrant data persistence |
+| Qdrant snapshots + S3 | Index backup/restore (`snapshot_manager.py`) |
+| Exponential backoff | Retry with jitter for Qdrant/Gemini (`retry.py`) |
 
 ---
 

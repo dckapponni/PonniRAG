@@ -14,6 +14,8 @@ Additionally, the system provides an option to view the original PDF content of 
 For detailed architecture documentation, see [system_architecture.md](system_architecture.md).
 ## Table of Contents
 - [Features](#features)
+- [AI Chat](#ai-chat)
+- [Article Categories](#article-categories)
 - [Project Structure](#project-structure)
   - [Project Index](#project-index)
 - [Getting Started](#getting-started)
@@ -28,6 +30,7 @@ For detailed architecture documentation, see [system_architecture.md](system_arc
 - [React Frontend](#react-frontend)
   - [Frontend Setup](#frontend-setup)
   - [Frontend Features](#frontend-features)
+- [Documentation](#documentation)
 ---
 
 ## Features
@@ -38,6 +41,86 @@ For detailed architecture documentation, see [system_architecture.md](system_arc
 | 🔩 | **Code Quality**  | <ul><li>Modular design with separate modules for extraction (`text_extraction.py`), article separation (`article_seperation.py`), and search split across focused sub-modules (`hybrid_search.py`, `tamil_text.py`, `csv_queries.py`, `llm.py`, `search.py`)</li><li>Centralized configuration settings in `config/config.py` for consistency and easy modification</li><li>Comprehensive test coverage with unit and integration tests</li></ul> |
 | 🔌 | **Integrations**  | <ul><li>Integrates with `AWS S3` for efficient storage and retrieval of documents and processed data</li><li>Utilizes `Qdrant` vector database for semantic search and similarity matching</li><li>Streamlit-based interactive UI for querying and visualization (`streamlit_app.py`)</li></ul> |
 | 🧩 | **Modularity**    | <ul><li>Search backend split into focused modules: orchestration (`hybrid_search.py`), Tamil NLP (`tamil_text.py`), CSV queries (`csv_queries.py`), LLM layer (`llm.py`), document processing (`search.py`)</li><li>Separate modules for text extraction (`text_extraction.py`), content processing (`content_extraction.py`), and text processing (`text_processing.py`)</li><li>Article separation and pattern matching encapsulated in `article_seperation.py` and `article_patterns.py`</li><li>Configuration settings isolated in `config/config.py`</li><li>Comprehensive test suites for quality assessment in `tests/`</li></ul> |
+
+---
+
+## AI Chat
+
+The AI Chat feature provides a conversational interface for querying the Ponni magazine archive (1947–1955). Users can ask questions in Tamil or English and receive LLM-generated answers grounded in the archive data.
+
+### How It Works
+
+1. **Ask a question** — Type a query or click one of the four suggested starter questions (e.g., "பொன்னி இதழ் ஆசிரியர்கள்", "திராவிட இயக்கம்")
+2. **Streaming response** — Answers stream token-by-token from Gemini 2.5 Flash via Server-Sent Events, creating a real-time typewriter effect
+3. **Source evidence** — Relevant source documents appear below each answer in an expandable "Sources" section, showing issue, volume, title, author, and a content preview
+4. **Follow-up questions** — The system maintains conversation context (last 3 Q&A turns), enabling multi-turn queries
+
+### Query Routing
+
+| Query Type | Example | How It Works |
+|-----------|---------|--------------|
+| **Vector search** | "திராவிட இயக்கம் பற்றி என்ன கூறுகிறது?" | Hybrid retrieval (dense + sparse + RRF fusion) pulls relevant documents, builds equal-excerpt context, and passes it to Gemini with the full document prompt |
+| **CSV queries** | "பொன்னி இதழ் ஆசிரியர்கள்", "பாரதிதாசன் எழுதிய கட்டுரைகள்" | Structured data (authors, topics, issues) is retrieved from the article database, summarized by Gemini with a lightweight gist prompt, and displayed with raw data appended below |
+
+### Features
+
+- **Bilingual** — Full Tamil/English support; all UI text, placeholders, and source metadata are localized
+- **Streaming with fallback** — If streaming fails, automatically falls back to non-streaming API
+- **Markdown rendering** — Answers support headings, bold, lists, and code blocks
+- **Input sanitization** — Quotes are stripped from queries; prompt injection is detected and blocked
+- **Source tags** — Each source card displays assigned article category tags
+
+---
+
+## Article Categories
+
+The Categories feature lets users browse all articles in the archive organized by 15 content categories. Categories are assigned automatically using a hybrid NLP tagger (rule-based patterns + TF-IDF fallback) — fully offline, no LLM required.
+
+### The 15 Categories
+
+| ID | Tamil | English |
+|----|-------|---------|
+| FICTION | புனைவு | Fiction/Serial |
+| EDITORIAL | தலையங்கம் | Editorial/Opinion |
+| LITERARY_REVIEW | இலக்கிய விமர்சனம் | Literary Review |
+| POETRY | கவிதை | Poetry |
+| QA_COLUMN | கேள்வி பதில் | Q&A Column |
+| ARTS_CULTURE | கலை கலாச்சாரம் | Arts & Culture |
+| SATIRE_HUMOR | நகைச்சுவை | Satire/Humor |
+| CLASSICAL_LIT | செந்தமிழ் இலக்கியம் | Classical Literature |
+| PUBLIC_FORUM | பொது மேடை | Public Forum |
+| WOMENS_ISSUES | பெண்கள் நலன் | Women's Issues |
+| RELIGIOUS_DEBATE | மத விவாதம் | Religious Debate |
+| CHILDRENS | சிறுவர் பகுதி | Children's Section |
+| POLITICAL | அரசியல் | Political Commentary |
+| BIOGRAPHY | வரலாறு | Biography/History |
+| GENERAL | பொது | General/Uncategorized |
+
+Each article is assigned 1–3 tags. Tags are deterministic and reproducible.
+
+### Browsing Flow
+
+1. **Browse by volume** — The left sidebar shows all 8 volumes as expandable accordions (volume ID, year range, issue count). Click to expand and see issues with cover thumbnails.
+2. **Select an issue** — Click an issue to load its articles on the right pane. Each article card shows title, author(s), and category tags as colored badges.
+3. **Filter by category** — Use the category dropdown at the top to filter articles by tag. A search box also enables real-time filtering by title or author name.
+4. **Read an article** — Click an article to view its full content, metadata (author, issue, year, word count), and assigned tags.
+5. **Read the PDF** — A "Read PDF" button links to the original magazine issue PDF on Google Drive.
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/tags` | List all 15 categories with article counts |
+| `GET` | `/api/tags/{tag_id}/articles` | Get all articles for a category |
+| `GET` | `/api/library/volumes/{id}/issues/{issue}/articles` | Get articles for an issue (includes tags) |
+| `GET` | `/api/articles/content` | Get full article content with tags |
+
+### How Tagging Works
+
+- **Rule-based patterns** — Keywords in the title and content are matched against category-specific pattern lists (e.g., "கவிதை" → POETRY, "தலையங்கம்" → EDITORIAL)
+- **TF-IDF fallback** — When no rule matches, a trained TF-IDF classifier assigns the most likely category
+- **Serial detection** — Multi-part fiction articles are detected via numbering patterns
+- **Maintenance** — `update_csv_tags.py` syncs tags from Qdrant back to `summary.csv`
 
 ---
 
@@ -55,7 +138,10 @@ For detailed architecture documentation, see [system_architecture.md](system_arc
 │   └── package.json
 ├── src/
 │   ├── config/
-│   │   └── config.py
+│   │   ├── config.py            # Registry loader, S3 config, embedding model
+│   │   └── magazine_registry.json # Single source of truth for volumes/issues/PDFs
+│   ├── data/
+│   │   └── summary.csv          # Article metadata catalog
 │   ├── data_extraction/
 │   │   ├── article_patterns.py
 │   │   ├── article_seperation.py
@@ -71,25 +157,27 @@ For detailed architecture documentation, see [system_architecture.md](system_arc
 │   │   ├── api.py               # FastAPI REST API
 │   │   ├── article_tagger.py    # Hybrid article tagger (rule-based + TF-IDF)
 │   │   ├── cache.py             # LRU response cache with TTL
-│   │   ├── embeddings.py        # Embedding generation, Qdrant client, sparse/dense
-│   │   ├── hybrid_search.py     # Orchestrator (search, caching, model loaders)
-│   │   ├── tamil_text.py        # Tamil NLP utilities, fuzzy matching, pattern bank
 │   │   ├── csv_queries.py       # CSV query pipeline (authors, topics, issues)
+│   │   ├── embeddings.py        # Embedding generation, Qdrant client, sparse/dense
+│   │   ├── guardrails.py        # Prompt security: injection detection, sanitization
+│   │   ├── hybrid_search.py     # Orchestrator (search, caching, model loaders)
 │   │   ├── llm.py               # Gemini LLM layer (prompts, generation)
+│   │   ├── qdrant_indexer.py    # Vector indexing with E5 passage/query prefixes
+│   │   ├── retry.py             # Exponential backoff retry for Qdrant/Gemini
 │   │   ├── search.py            # Vector search document processing
-│   │   ├── pdf_links.py
-│   │   ├── qdrant_indexer.py
-│   │   ├── streamlit_app.py
-│   │   ├── update_csv_tags.py   # Maintenance: update CSV with Qdrant tags
-│   │   └── summary.csv
-│   ├── tests/
+│   │   ├── snapshot_manager.py  # Qdrant snapshot backup/restore via S3
+│   │   ├── streamlit_app.py     # Legacy Streamlit UI
+│   │   ├── tamil_text.py        # Tamil NLP utilities, fuzzy matching, pattern bank
+│   │   └── update_csv_tags.py   # Maintenance: update CSV with Qdrant tags
+│   ├── tests/                   # Unit and integration tests
 │   └── evaluation/
 │       ├── evaluate.py          # Evaluation pipeline & CLI
 │       ├── metrics.py           # Semantic, BLEU, ROUGE, BERTScore
 │       ├── dataset.py           # Dataset loading (JSON/CSV)
-│       └── ground_truth_template.csv #Template for the ground truth data 
-│       └── ground_truth_data.csv #actual ground truth data to evaluate 
-│       └── ground_truth_report.xlsx #The evaluated results 
+│       ├── ground_truth_template.csv  # Template for ground truth data
+│       ├── ground_truth_data.csv      # Ground truth data to evaluate
+│       └── ground_truth_report.xlsx   # Evaluated results report
+├── docs/                        # Project documentation (DOCX)
 ├── docker-compose.yml           # Multi-service orchestration
 ├── Dockerfile                   # Streamlit container
 ├── Dockerfile.api               # FastAPI container
@@ -98,18 +186,22 @@ For detailed architecture documentation, see [system_architecture.md](system_arc
 ###  Project Index
 <details open>
     <summary><b><code>/</code></b></summary>
-    <details> 
+    <details>
         <summary><b>config</b></summary>
         <blockquote>
             <table>
             <tr>
                 <td><b><a href='config/config.py'>config.py</a></b></td>
-                <td>- Defines configuration settings and parameters for the Ponni RAG system<br>- Specifies S3 storage locations, Qdrant connection details, embedding model configurations, and API credentials<br>- Centralizes key variables to ensure consistency across the codebase and enables easy modification of project-wide settings.</td>
+                <td>- Loads magazine registry and derives all constants (S3 paths, Qdrant config, embedding model)<br>- Centralizes key variables to ensure consistency across the codebase.</td>
+            </tr>
+            <tr>
+                <td><b><a href='config/magazine_registry.json'>magazine_registry.json</a></b></td>
+                <td>- Single source of truth for all magazine metadata: volumes, issues, PDF links, S3 paths<br>- Adding new issues only requires editing this file.</td>
             </tr>
             </table>
         </blockquote>
     </details>
-    <details> 
+    <details>
         <summary><b>data_extraction</b></summary>
         <blockquote>
             <table>
@@ -139,7 +231,11 @@ For detailed architecture documentation, see [system_architecture.md](system_arc
             </tr>
             <tr>
                 <td><b><a href='data_extraction/shared_author.py'>shared_author.py</a></b></td>
-                <td>- Author extraction and metadata enrichment module for literary documents<br>- Identifies and extracts author information from documents with multi-author support<br>- Handles author name normalization and associates authors with respective articles<br>- Enables author-based search, filtering, and metadata organization.</td>
+                <td>- Author extraction and metadata enrichment module for literary documents<br>- Identifies and extracts author information from documents with multi-author support<br>- Handles author name normalization and associates authors with respective articles.</td>
+            </tr>
+            <tr>
+                <td><b><a href='data_extraction/shared_author_local.py'>shared_author_local.py</a></b></td>
+                <td>- Local version of shared author checking for pre-commit validation<br>- Verifies author consistency between CSV and extracted data without S3 access.</td>
             </tr>
             <tr>
                 <td><b><a href='data_extraction/text_extraction.py'>text_extraction.py</a></b></td>
@@ -157,13 +253,13 @@ For detailed architecture documentation, see [system_architecture.md](system_arc
         <blockquote>
             <table>
             <tr>
-                <td><b><a href='db/summary.csv'>summary.csv</a></b></td>
+                <td><b><a href='data/summary.csv'>summary.csv</a></b></td>
                 <td>- Document catalog storing metadata, processing statistics, and indexing status<br>- Contains indexed document information, extraction metrics, and quality scores<br>- Enables quick lookups, reporting, and audit trails for the document collection<br>- Supports data governance and collection management.</td>
             </tr>
             </table>
         </blockquote>
     </details>
-    <details> 
+    <details>
         <summary><b>db</b></summary>
         <blockquote>
             <table>
@@ -261,7 +357,7 @@ For detailed architecture documentation, see [system_architecture.md](system_arc
             </table>
         </blockquote>
     </details>
-    <details> 
+    <details>
         <summary><b>tests</b></summary>
         <blockquote>
             <table>
@@ -275,7 +371,15 @@ For detailed architecture documentation, see [system_architecture.md](system_arc
             </tr>
             <tr>
                 <td><b><a href='tests/test_article_seperation.py'>test_article_seperation.py</a></b></td>
-                <td>- Unit tests for document segmentation and article separation functionality<br>- Validates article boundary detection and metadata preservation<br>- Tests multi-article document processing.</td>
+                <td>- Unit tests for document segmentation and article separation functionality<br>- Validates article boundary detection and metadata preservation.</td>
+            </tr>
+            <tr>
+                <td><b><a href='tests/test_article_tagger.py'>test_article_tagger.py</a></b></td>
+                <td>- Unit tests for hybrid article tagger (rule-based + TF-IDF)<br>- Validates tag assignment, determinism, and taxonomy compliance.</td>
+            </tr>
+            <tr>
+                <td><b><a href='tests/test_cache.py'>test_cache.py</a></b></td>
+                <td>- Unit tests for LRU response cache with TTL and version invalidation.</td>
             </tr>
             <tr>
                 <td><b><a href='tests/test_content_extraction.py'>test_content_extraction.py</a></b></td>
@@ -291,7 +395,23 @@ For detailed architecture documentation, see [system_architecture.md](system_arc
             </tr>
             <tr>
                 <td><b><a href='tests/test_doc_utils_integration.py'>test_doc_utils_integration.py</a></b></td>
-                <td>- Integration tests for document processing workflows<br>- Validates end-to-end document handling from loading to extraction<br>- Tests batch processing and streaming operations.</td>
+                <td>- Integration tests for document processing workflows<br>- Validates end-to-end document handling from loading to extraction.</td>
+            </tr>
+            <tr>
+                <td><b><a href='tests/test_csv_fuzzy_matcher.py'>test_csv_fuzzy_matcher.py</a></b></td>
+                <td>- Unit tests for CSV loading, fuzzy title matching, and multi-author parsing.</td>
+            </tr>
+            <tr>
+                <td><b><a href='tests/test_csv_queries_author_display.py'>test_csv_queries_author_display.py</a></b></td>
+                <td>- Unit tests for author display formatting (no brackets, NA fallback).</td>
+            </tr>
+            <tr>
+                <td><b><a href='tests/test_evaluation.py'>test_evaluation.py</a></b></td>
+                <td>- Unit tests for evaluation pipeline, metrics computation, and report generation.</td>
+            </tr>
+            <tr>
+                <td><b><a href='tests/test_guardrails.py'>test_guardrails.py</a></b></td>
+                <td>- Unit tests for prompt injection detection, query sanitization, and output leakage checks.</td>
             </tr>
             <tr>
                 <td><b><a href='tests/test_hybrid_search.py'>test_hybrid_search.py</a></b></td>
@@ -299,7 +419,11 @@ For detailed architecture documentation, see [system_architecture.md](system_arc
             </tr>
             <tr>
                 <td><b><a href='tests/test_qdrant_indexer.py'>test_qdrant_indexer.py</a></b></td>
-                <td>- Unit tests for vector database operations and indexing logic<br>- Validates collection creation, vector insertion, and similarity search<br>- Tests batch operations and error recovery.</td>
+                <td>- Unit tests for vector database operations and indexing logic<br>- Validates collection creation, vector insertion, and similarity search.</td>
+            </tr>
+            <tr>
+                <td><b><a href='tests/test_retry.py'>test_retry.py</a></b></td>
+                <td>- Unit tests for exponential backoff retry utilities (sync and async).</td>
             </tr>
             <tr>
                 <td><b><a href='tests/test_s3_utils.py'>test_s3_utils.py</a></b></td>
@@ -311,7 +435,15 @@ For detailed architecture documentation, see [system_architecture.md](system_arc
             </tr>
             <tr>
                 <td><b><a href='tests/test_shared_author_integration.py'>test_shared_author_integration.py</a></b></td>
-                <td>- Integration tests for author extraction pipeline<br>- Validates end-to-end author processing workflow<br>- Tests integration with document metadata and search.</td>
+                <td>- Integration tests for author extraction pipeline.</td>
+            </tr>
+            <tr>
+                <td><b><a href='tests/test_shared_author_local.py'>test_shared_author_local.py</a></b></td>
+                <td>- Unit tests for local shared author validation.</td>
+            </tr>
+            <tr>
+                <td><b><a href='tests/test_snapshot_manager.py'>test_snapshot_manager.py</a></b></td>
+                <td>- Unit tests for Qdrant snapshot backup/restore and reindex detection.</td>
             </tr>
             <tr>
                 <td><b><a href='tests/test_streamlit_app.py'>test_streamlit_app.py</a></b></td>
@@ -327,7 +459,15 @@ For detailed architecture documentation, see [system_architecture.md](system_arc
             </tr>
             <tr>
                 <td><b><a href='tests/test_text_processing_integration.py'>test_text_processing_integration.py</a></b></td>
-                <td>- Integration tests for complete text processing workflows<br>- Validates end-to-end preprocessing pipeline<br>- Tests integration with embedding generation and search.</td>
+                <td>- Integration tests for complete text processing workflows.</td>
+            </tr>
+            <tr>
+                <td><b><a href='tests/test_unicode_normalization.py'>test_unicode_normalization.py</a></b></td>
+                <td>- Unit tests for Tamil Unicode NFC normalization consistency.</td>
+            </tr>
+            <tr>
+                <td><b><a href='tests/test_llm_fallback.py'>test_llm_fallback.py</a></b></td>
+                <td>- Unit tests for LLM fallback behavior (sync, async, streaming).</td>
             </tr>
             </table>
         </blockquote>
@@ -615,4 +755,26 @@ frontend/
 | Qdrant | http://localhost:6333 | Vector database |
 | Streamlit | http://localhost:8501 | Legacy Streamlit UI |
 
+---
 
+## Documentation
+
+### Technical Reference
+
+| Document | Description |
+|----------|-------------|
+| [System Architecture](system_architecture.md) | Full system architecture — query pipeline, module structure, data indexing, guardrails, tagging, tech stack, configuration |
+
+### Project Documents (`docs/`)
+
+| Document | Description |
+|----------|-------------|
+| [Architecture Decision Record (ADR)](docs/PonniRAG%20—%20Architecture%20Decision%20Record%20(ADR).docx) | Key architectural decisions and their rationale |
+| [Cost Analysis](docs/PonniRAG%20—%20Cost%20Analysis.docx) | Infrastructure and API cost breakdown |
+| [Data Preprocessing Module](docs/PonniRAG%20—%20Data%20Preprocessing%20Module.docx) | Data extraction and preprocessing pipeline details |
+| [Embedding Model Analysis Report](docs/PonniRAG%20—%20Embedding%20Model%20Analysis%20Report.docx) | Evaluation and selection of the embedding model |
+| [Gemini 2.5 Flash API Setup Guide](docs/PonniRAG%20—%20Gemini%202.5%20Flash%20API%20Setup%20Guide.docx) | Guide for configuring the Gemini LLM API |
+| [LLM Migration to Gemini API](docs/PonniRAG%20–%20LLM%20Migration%20to%20Gemini%20API.docx) | Migration process from previous LLM to Gemini |
+| [LLM Analysis Report](docs/PonniRAG%20—%20LLM-Anaylsis%20Report.docx) | LLM performance analysis and comparison |
+| [OCR Framework Analysis](docs/PonniRAG%20—%20OCR%20Framework%20Analysis.docx) | OCR framework evaluation for Tamil document processing |
+| [Project Status Report](docs/PonniRAG%20—%20Project%20Status%20Report.docx) | Current project status and milestones |
