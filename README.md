@@ -16,6 +16,7 @@ For detailed architecture documentation, see [system_architecture.md](system_arc
 - [Features](#features)
 - [AI Chat](#ai-chat)
 - [Article Categories](#article-categories)
+- [Evaluation](#evaluation)
 - [Project Structure](#project-structure)
   - [Project Index](#project-index)
 - [Getting Started](#getting-started)
@@ -121,6 +122,54 @@ Each article is assigned 1–3 tags. Tags are deterministic and reproducible.
 - **TF-IDF fallback** — When no rule matches, a trained TF-IDF classifier assigns the most likely category
 - **Serial detection** — Multi-part fiction articles are detected via numbering patterns
 - **Maintenance** — `update_csv_tags.py` syncs tags from Qdrant back to `summary.csv`
+
+---
+
+## Evaluation
+
+The evaluation module measures the quality of LLM-generated answers against human reference answers for Tamil literary queries. It uses a composite metric weighted for Tamil's agglutinative morphology.
+
+For full documentation, see [Evaluation Module README](src/evaluation/README.md).
+
+### Composite Score
+
+| Metric | Weight | Method |
+|--------|--------|--------|
+| Semantic Similarity | 50% | Cosine similarity of E5 embeddings (1024-dim) |
+| BERTScore F1 | 25% | Token-level similarity via multilingual-e5-large |
+| ROUGE-L | 15% | Character-level longest common subsequence |
+| BLEU-1 | 10% | Character-level unigram precision |
+
+All lexical metrics (BLEU, ROUGE) operate at the **character level** — each Unicode code-point is a token. This handles Tamil morphology where word-level metrics undercount overlap (e.g., "வந்தான்", "வருகிறான்", "வரவேண்டும்" share the root "வ" but no complete word tokens).
+
+| Score | Quality | Description |
+|-------|---------|-------------|
+| >= 0.75 | Excellent | Semantically equivalent to reference |
+| 0.55–0.75 | Good | Captures main facts; phrasing differs |
+| 0.35–0.55 | Fair | Partial answer; key details may be missing |
+| < 0.35 | Poor | Diverges significantly from reference |
+
+### Quick Start
+
+```sh
+# Offline evaluation (pre-filled LLM answers)
+cd src
+python -m evaluation.evaluate --dataset evaluation/ground_truth_data.csv
+
+# Live evaluation (calls running RAG stack)
+python -m evaluation.evaluate --dataset evaluation/ground_truth_data.csv --live
+
+# Save report to Excel
+python -m evaluation.evaluate --dataset evaluation/ground_truth_data.csv --output evaluation/report.xlsx
+```
+
+### Dataset
+
+| File | Description |
+|------|-------------|
+| `evaluation/ground_truth_data.csv` | 50 Tamil Q&A pairs for evaluation |
+| `evaluation/ground_truth_template.csv` | Template for adding new questions |
+| `evaluation/ground_truth_report.xlsx` | Latest evaluation results with per-question breakdown |
 
 ---
 
