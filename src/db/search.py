@@ -1,23 +1,24 @@
-"""
-Vector search and document processing for Tamil document retrieval.
+"""Vector search and document processing for Tamil document retrieval.
+
 Handles document chunk retrieval, merging, context building,
 relevance filtering, and output formatting.
 """
-import re
-import logging
-import hashlib
-from typing import List, Dict, Tuple
 
-from qdrant_client import QdrantClient
-from qdrant_client import models
+import hashlib
+import logging
+import re
+from typing import Dict, List, Tuple
 
 from embeddings import COLLECTION_NAME
+from qdrant_client import QdrantClient, models
 from retry import with_qdrant_retry
 
 logger = logging.getLogger(__name__)
 
 
-def retrieve_all_chunks_for_document(client: QdrantClient, doc_id: str, doc_issue: str, volume: str) -> List[Dict]:
+def retrieve_all_chunks_for_document(
+    client: QdrantClient, doc_id: str, doc_issue: str, volume: str
+) -> List[Dict]:
     """Retrieve all chunks for a specific document."""
     all_chunks = []
     offset = None
@@ -27,10 +28,19 @@ def retrieve_all_chunks_for_document(client: QdrantClient, doc_id: str, doc_issu
             collection_name=COLLECTION_NAME,
             scroll_filter=models.Filter(
                 must=[
-                    models.FieldCondition(key="type", match=models.MatchValue(value="article")),
-                    models.FieldCondition(key="metadata.doc_id", match=models.MatchValue(value=doc_id)),
-                    models.FieldCondition(key="metadata.doc_issue", match=models.MatchValue(value=doc_issue)),
-                    models.FieldCondition(key="metadata.volume", match=models.MatchValue(value=volume)),
+                    models.FieldCondition(
+                        key="type", match=models.MatchValue(value="article")
+                    ),
+                    models.FieldCondition(
+                        key="metadata.doc_id", match=models.MatchValue(value=doc_id)
+                    ),
+                    models.FieldCondition(
+                        key="metadata.doc_issue",
+                        match=models.MatchValue(value=doc_issue),
+                    ),
+                    models.FieldCondition(
+                        key="metadata.volume", match=models.MatchValue(value=volume)
+                    ),
                 ]
             ),
             limit=100,
@@ -54,7 +64,11 @@ def merge_consecutive_chunks(client: QdrantClient, points) -> List[Dict]:
             continue
 
         metadata = payload.get("metadata", {})
-        doc_key = (metadata.get("volume"), metadata.get("doc_id"), metadata.get("doc_issue"))
+        doc_key = (
+            metadata.get("volume"),
+            metadata.get("doc_id"),
+            metadata.get("doc_issue"),
+        )
 
         if doc_key in seen_docs:
             continue
@@ -64,7 +78,7 @@ def merge_consecutive_chunks(client: QdrantClient, points) -> List[Dict]:
             client,
             doc_id=metadata.get("doc_id"),
             doc_issue=metadata.get("doc_issue"),
-            volume=metadata.get("volume")
+            volume=metadata.get("volume"),
         )
 
         if not all_chunks:
@@ -73,32 +87,36 @@ def merge_consecutive_chunks(client: QdrantClient, points) -> List[Dict]:
         chunk_data = []
         for chunk_point in all_chunks:
             chunk_payload = chunk_point.payload or {}
-            chunk_data.append({
-                "chunk_id": chunk_payload.get("chunk_id", 0),
-                "content": chunk_payload.get("content", "").strip()
-            })
+            chunk_data.append(
+                {
+                    "chunk_id": chunk_payload.get("chunk_id", 0),
+                    "content": chunk_payload.get("content", "").strip(),
+                }
+            )
 
         chunk_data.sort(key=lambda x: x["chunk_id"])
         full_content = " ".join(chunk["content"] for chunk in chunk_data)
-        full_content = re.sub(r'\s+', ' ', full_content).strip()
+        full_content = re.sub(r"\s+", " ", full_content).strip()
 
-        word_count = len(re.findall(r'[\u0B80-\u0BFF]+|\w+', full_content))
+        word_count = len(re.findall(r"[\u0B80-\u0BFF]+|\w+", full_content))
 
         if word_count < 50:
             continue
 
-        merged_docs.append({
-            "volume": metadata.get("doc_id", "unknown"),
-            "doc_id": metadata.get("doc_id", "unknown"),
-            "doc_issue": metadata.get("doc_issue", "unknown"),
-            "heading": metadata.get("title", ""),
-            "author_name": metadata.get("author_name", ""),
-            "content": full_content,
-            "word_count": word_count,
-            "chunk_count": len(chunk_data),
-            "score": p.score,
-            "tags": metadata.get("tags", []),
-        })
+        merged_docs.append(
+            {
+                "volume": metadata.get("doc_id", "unknown"),
+                "doc_id": metadata.get("doc_id", "unknown"),
+                "doc_issue": metadata.get("doc_issue", "unknown"),
+                "heading": metadata.get("title", ""),
+                "author_name": metadata.get("author_name", ""),
+                "content": full_content,
+                "word_count": word_count,
+                "chunk_count": len(chunk_data),
+                "score": p.score,
+                "tags": metadata.get("tags", []),
+            }
+        )
 
     merged_docs.sort(key=lambda x: x["score"], reverse=True)
     return merged_docs
@@ -107,11 +125,11 @@ def merge_consecutive_chunks(client: QdrantClient, points) -> List[Dict]:
 def extract_key_facts(docs: List[Dict], question: str) -> List[Dict]:
     """Extract key facts from documents relevant to question."""
     facts = []
-    q_keywords = set(re.findall(r'[\u0B80-\u0BFF]{2,}', question.lower()))
+    q_keywords = set(re.findall(r"[\u0B80-\u0BFF]{2,}", question.lower()))
 
     for doc in docs[:15]:
         content = doc["content"]
-        sentences = re.split(r'[.।!?]+', content)
+        sentences = re.split(r"[.।!?]+", content)
 
         for sent in sentences:
             sent = sent.strip()
@@ -126,20 +144,21 @@ def extract_key_facts(docs: List[Dict], question: str) -> List[Dict]:
                     relevance += 3
 
             if relevance >= 5:
-                facts.append({
-                    'sentence': sent,
-                    'score': relevance,
-                    'source_issue': doc.get('doc_issue', 'NA'),
-                    'source_volume': doc.get('volume', 'NA')
-                })
+                facts.append(
+                    {
+                        "sentence": sent,
+                        "score": relevance,
+                        "source_issue": doc.get("doc_issue", "NA"),
+                        "source_volume": doc.get("volume", "NA"),
+                    }
+                )
 
-    facts.sort(key=lambda x: x['score'], reverse=True)
+    facts.sort(key=lambda x: x["score"], reverse=True)
     return facts[:20]
 
 
 def _select_relevant_docs(merged_docs: List[Dict]) -> List[Dict]:
-    """
-    Select relevant documents from merged results using score-gap filtering.
+    """Select relevant documents using score-gap filtering.
 
     Three-layer relevance filtering:
     1. **Absolute floor**: score >= 35% of the top document's score
@@ -153,10 +172,10 @@ def _select_relevant_docs(merged_docs: List[Dict]) -> List[Dict]:
     """
     MIN_SOURCES = 1
     MAX_SOURCES = 100
-    FLOOR_RATIO = 0.35       # must score >= 35% of top doc
-    GAP_RATIO = 0.4          # stop if doc scores < 40% of previous doc
-    TIGHT_GAP_RATIO = 0.5    # tighter gap after TIGHT_GAP_AFTER docs
-    TIGHT_GAP_AFTER = 20     # tighten gap ratio after this many docs
+    FLOOR_RATIO = 0.35  # must score >= 35% of top doc
+    GAP_RATIO = 0.4  # stop if doc scores < 40% of previous doc
+    TIGHT_GAP_RATIO = 0.5  # tighter gap after TIGHT_GAP_AFTER docs
+    TIGHT_GAP_AFTER = 20  # tighten gap ratio after this many docs
 
     if not merged_docs:
         return []
@@ -215,11 +234,21 @@ def _extract_relevant_excerpt(content: str, question: str, max_chars: int) -> st
         return content
 
     # Extract meaningful Tamil keywords (3+ chars) from the question
-    keywords = set(re.findall(r'[\u0B80-\u0BFF]{3,}', question.lower()))
+    keywords = set(re.findall(r"[\u0B80-\u0BFF]{3,}", question.lower()))
     # Remove common stop-ish words that appear everywhere
     keywords -= {
-        'இதழில்', 'இதழ்', 'பொன்னி', 'பொன்னியில்', 'என்ன', 'யாவை',
-        'எனும்', 'பற்றி', 'பற்றிய', 'என்று', 'உள்ள', 'உள்ளது',
+        "இதழில்",
+        "இதழ்",
+        "பொன்னி",
+        "பொன்னியில்",
+        "என்ன",
+        "யாவை",
+        "எனும்",
+        "பற்றி",
+        "பற்றிய",
+        "என்று",
+        "உள்ள",
+        "உள்ளது",
     }
 
     if not keywords:
@@ -233,7 +262,7 @@ def _extract_relevant_excerpt(content: str, question: str, max_chars: int) -> st
     best_pos, best_score = 0, 0
 
     for pos in range(0, max(1, len(content) - max_chars + 1), step):
-        window = content_lower[pos:pos + max_chars]
+        window = content_lower[pos : pos + max_chars]
         score = sum(window.count(kw) for kw in keywords)
         if score > best_score:
             best_score = score
@@ -242,7 +271,7 @@ def _extract_relevant_excerpt(content: str, question: str, max_chars: int) -> st
     if best_score == 0:
         return content[:max_chars]
 
-    return content[best_pos:best_pos + max_chars]
+    return content[best_pos : best_pos + max_chars]
 
 
 def build_context_from_docs(
@@ -251,20 +280,16 @@ def build_context_from_docs(
     max_context_chars: int = 15000,
     max_context_docs: int = 15,
 ) -> Tuple[str, int]:
-    """
-    Build LLM context using excerpts from the top relevant documents.
+    """Build LLM context using excerpts from the top relevant documents.
 
-    The evidence set (for user display) can contain up to 100 docs, but the
-    LLM context is capped at max_context_docs (default 15) to ensure each
-    document gets enough characters (~1000 each) for meaningful analysis.
-    Documents are already sorted by score, so the top N are the most relevant.
-
-    Each document's excerpt is chosen by keyword relevance to the question,
-    not simply the first N characters.
+    The evidence set (for user display) can contain up to 100 docs,
+    but the LLM context is capped at max_context_docs (default 15)
+    to ensure each document gets enough characters (~1000 each) for
+    meaningful analysis. Documents are already sorted by score, so
+    the top N are the most relevant.
 
     Returns:
-        (context_string, doc_count) — the formatted context and the number of
-        documents included, so callers can embed the count in the user prompt.
+        Tuple of (context_string, doc_count).
     """
     if not relevant_docs:
         return "", 0
@@ -274,9 +299,7 @@ def build_context_from_docs(
     n = len(context_docs)
     per_doc_limit = max(500, max_context_chars // n)
 
-    context_parts = [
-        f"[{n} ஆவணங்கள் — ஒவ்வொன்றின் தகவலையும் பயன்படுத்தவும்]\n"
-    ]
+    context_parts = [f"[{n} ஆவணங்கள் — ஒவ்வொன்றின் தகவலையும் பயன்படுத்தவும்]\n"]
     for idx, doc in enumerate(context_docs, 1):
         excerpt = _extract_relevant_excerpt(doc["content"], question, per_doc_limit)
         title = doc.get("heading", "")
@@ -289,12 +312,7 @@ def build_context_from_docs(
 
 
 def format_sources(merged_docs: List[Dict]) -> List[Dict]:
-    """
-    Format source documents for display.
-
-    Uses _select_relevant_docs() to dynamically determine which documents
-    are relevant enough to show as evidence.
-    """
+    """Format source documents for display."""
     relevant = _select_relevant_docs(merged_docs)
 
     logger = logging.getLogger(__name__)
@@ -306,17 +324,19 @@ def format_sources(merged_docs: List[Dict]) -> List[Dict]:
             f"volume={doc['volume']} issue={doc['doc_issue']} | "
             f"heading={doc['heading'][:60]}"
         )
-        sources.append({
-            "volume":        doc["volume"],
-            "heading":       doc["heading"],
-            "doc_issue":     doc["doc_issue"],
-            "author_name":   doc.get("author_name", ""),
-            "content":       doc["content"],
-            "word_count":    doc["word_count"],
-            "chunks_merged": doc["chunk_count"],
-            "score":         doc["score"],
-            "tags":          doc.get("tags", []),
-        })
+        sources.append(
+            {
+                "volume": doc["volume"],
+                "heading": doc["heading"],
+                "doc_issue": doc["doc_issue"],
+                "author_name": doc.get("author_name", ""),
+                "content": doc["content"],
+                "word_count": doc["word_count"],
+                "chunks_merged": doc["chunk_count"],
+                "score": doc["score"],
+                "tags": doc.get("tags", []),
+            }
+        )
 
     return sources
 
@@ -337,13 +357,15 @@ def format_answer_output(answer: str, sources: List[Dict]) -> str:
             lines.append(f"ஆதாரம் {idx}")
 
             header_parts = [f"இதழ்: {source['doc_issue']}", f"மலர்: {source['volume']}"]
-            if source['heading']:
+            if source["heading"]:
                 header_parts.append(f"தலைப்பு: {source['heading']}")
             lines.append(" • ".join(header_parts))
 
-            lines.append(f"சொற்கள்: {source['word_count']} | பொருத்தம்: {source['score']:.3f}")
+            lines.append(
+                f"சொற்கள்: {source['word_count']} | பொருத்தம்: {source['score']:.3f}"
+            )
             lines.append("")
-            lines.append(source['content'])
+            lines.append(source["content"])
             lines.append("")
 
-    return '\n'.join(lines)
+    return "\n".join(lines)

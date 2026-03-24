@@ -1,10 +1,10 @@
-"""
-Article Tagger for Ponni Magazine articles.
+"""Article Tagger for Ponni Magazine articles.
+
 Hybrid NLP approach: rule-based patterns + TF-IDF fallback.
 Assigns 1-3 tags per article from 15 predefined categories.
-No LLM calls — fully offline and deterministic.
+No LLM calls -- fully offline and deterministic.
 """
-import re
+
 import logging
 from typing import Dict, List
 
@@ -22,7 +22,10 @@ TAXONOMY = {
     "QA_COLUMN": {"tamil": "கேள்வி பதில்", "english": "Q&A Column"},
     "ARTS_CULTURE": {"tamil": "கலை கலாச்சாரம்", "english": "Arts & Culture"},
     "SATIRE_HUMOR": {"tamil": "நகைச்சுவை", "english": "Satire/Humor"},
-    "CLASSICAL_LIT": {"tamil": "செந்தமிழ் இலக்கியம்", "english": "Classical Literature"},
+    "CLASSICAL_LIT": {
+        "tamil": "செந்தமிழ் இலக்கியம்",
+        "english": "Classical Literature",
+    },
     "PUBLIC_FORUM": {"tamil": "பொது மேடை", "english": "Public Forum"},
     "WOMENS_ISSUES": {"tamil": "பெண்கள் நலன்", "english": "Women's Issues"},
     "RELIGIOUS_DEBATE": {"tamil": "மத விவாதம்", "english": "Religious Debate"},
@@ -39,20 +42,36 @@ TAXONOMY = {
 RULE_PATTERNS = {
     "FICTION": {
         "title_exact": [
-            "சரசா", "அவா", "பொட்டை", "துரோகி", "வேண்டாத ஆசை",
-            "மண்ணின் குரல்", "காதல் கடிதம்", "அன்பின் அழுகை",
-            "நிழல்", "தீ", "புயல்", "புதிய வழி",
+            "சரசா",
+            "அவா",
+            "பொட்டை",
+            "துரோகி",
+            "வேண்டாத ஆசை",
+            "மண்ணின் குரல்",
+            "காதல் கடிதம்",
+            "அன்பின் அழுகை",
+            "நிழல்",
+            "தீ",
+            "புயல்",
+            "புதிய வழி",
         ],
         "title_contains": [
-            "கதை", "நாவல்", "சிறுகதை", "தொடர்கதை", "நீள்கதை",
+            "கதை",
+            "நாவல்",
+            "சிறுகதை",
+            "தொடர்கதை",
+            "நீள்கதை",
         ],
     },
     "EDITORIAL": {
         "title_exact": [
-            "காலமும் கருத்தும்", "எங்கள் எண்ணம்", "ஆசிரியர் குறிப்பு",
+            "காலமும் கருத்தும்",
+            "எங்கள் எண்ணம்",
+            "ஆசிரியர் குறிப்பு",
         ],
         "title_contains": [
-            "தலையங்கம்", "ஆசிரியர்",
+            "தலையங்கம்",
+            "ஆசிரியர்",
         ],
     },
     "LITERARY_REVIEW": {
@@ -60,7 +79,9 @@ RULE_PATTERNS = {
             "வளரும் இலக்கியம்",
         ],
         "title_contains": [
-            "இலக்கிய விமர்சனம்", "புத்தக விமர்சனம்", "நூல் விமர்சனம்",
+            "இலக்கிய விமர்சனம்",
+            "புத்தக விமர்சனம்",
+            "நூல் விமர்சனம்",
             "இலக்கியம்",
         ],
     },
@@ -69,15 +90,20 @@ RULE_PATTERNS = {
             "பாரதிதாசன் பரம்பரை",
         ],
         "title_contains": [
-            "கவிதை", "பாட்டு", "பாடல்", "கவிஞர்",
+            "கவிதை",
+            "பாட்டு",
+            "பாடல்",
+            "கவிஞர்",
         ],
     },
     "QA_COLUMN": {
         "title_exact": [
-            "கண் திறக்குமா?", "உங்களுக்குத் தெரியுமா?",
+            "கண் திறக்குமா?",
+            "உங்களுக்குத் தெரியுமா?",
         ],
         "title_contains": [
-            "கேள்வி பதில்", "வினா விடை",
+            "கேள்வி பதில்",
+            "வினா விடை",
         ],
     },
     "ARTS_CULTURE": {
@@ -85,15 +111,23 @@ RULE_PATTERNS = {
             "கலையுலகம்",
         ],
         "title_contains": [
-            "கலை", "சினிமா", "நாடகம்", "இசை", "நடனம்",
+            "கலை",
+            "சினிமா",
+            "நாடகம்",
+            "இசை",
+            "நடனம்",
         ],
     },
     "SATIRE_HUMOR": {
         "title_exact": [
-            "வம்பு மடம்", "ஆடும் மாடும்",
+            "வம்பு மடம்",
+            "ஆடும் மாடும்",
         ],
         "title_contains": [
-            "நகைச்சுவை", "வம்பு", "சிரிப்பு", "கேலி",
+            "நகைச்சுவை",
+            "வம்பு",
+            "சிரிப்பு",
+            "கேலி",
         ],
     },
     "CLASSICAL_LIT": {
@@ -101,24 +135,33 @@ RULE_PATTERNS = {
             "சிலப்பதிகாரக் காட்சிகள்",
         ],
         "title_contains": [
-            "சிலப்பதிகாரம்", "திருக்குறள்", "சங்க இலக்கியம்",
-            "தொல்காப்பியம்", "செந்தமிழ்",
+            "சிலப்பதிகாரம்",
+            "திருக்குறள்",
+            "சங்க இலக்கியம்",
+            "தொல்காப்பியம்",
+            "செந்தமிழ்",
         ],
     },
     "PUBLIC_FORUM": {
         "title_exact": [
-            "பொது மேடை", "நமக்குள்ளே",
+            "பொது மேடை",
+            "நமக்குள்ளே",
         ],
         "title_contains": [
-            "மேடை", "கடிதம்", "வாசகர்",
+            "மேடை",
+            "கடிதம்",
+            "வாசகர்",
         ],
     },
     "WOMENS_ISSUES": {
         "title_exact": [
-            "பெண்கள் முன்னேற்றம்", "மகளிர் அழகுக் குறிப்புகள்",
+            "பெண்கள் முன்னேற்றம்",
+            "மகளிர் அழகுக் குறிப்புகள்",
         ],
         "title_contains": [
-            "பெண்கள்", "மகளிர்", "பெண்",
+            "பெண்கள்",
+            "மகளிர்",
+            "பெண்",
         ],
     },
     "RELIGIOUS_DEBATE": {
@@ -126,7 +169,9 @@ RULE_PATTERNS = {
             "மதம் அவசியமா?",
         ],
         "title_contains": [
-            "மதம்", "சமயம்", "கடவுள்",
+            "மதம்",
+            "சமயம்",
+            "கடவுள்",
         ],
     },
     "CHILDRENS": {
@@ -134,26 +179,34 @@ RULE_PATTERNS = {
             "சிறுவர் அரங்கம்",
         ],
         "title_contains": [
-            "சிறுவர்", "குழந்தை",
+            "சிறுவர்",
+            "குழந்தை",
         ],
     },
     "POLITICAL": {
         "title_contains": [
-            "அரசியல்", "தேர்தல்", "காங்கிரஸ்", "சுதந்திரம்",
-            "ஆட்சி", "திராவிட",
+            "அரசியல்",
+            "தேர்தல்",
+            "காங்கிரஸ்",
+            "சுதந்திரம்",
+            "ஆட்சி",
+            "திராவிட",
         ],
     },
     "BIOGRAPHY": {
         "title_contains": [
-            "வரலாறு", "சரித்திரம்", "வாழ்க்கை வரலாறு",
-            "நினைவு", "சுயசரிதை",
+            "வரலாறு",
+            "சரித்திரம்",
+            "வாழ்க்கை வரலாறு",
+            "நினைவு",
+            "சுயசரிதை",
         ],
     },
 }
 
 # TF-IDF category keywords for fallback classification
 _CATEGORY_KEYWORDS = {
-    "FICTION": "கதை நாவல் சிறுகதை தொடர்கதை கதாபாத்திரம் காதல் வாழ்க்கை சரசா அவா பொட்டை துரோகி",
+    "FICTION": "கதை நாவல் சிறுகதை தொடர்கதை கதாபாத்திரம் காதல் வாழ்க்கை சரசா அவா பொட்டை துரோகி",  # noqa: E501
     "EDITORIAL": "தலையங்கம் ஆசிரியர் கருத்து எண்ணம் காலம் சமூகம் நாடு முன்னேற்றம்",
     "LITERARY_REVIEW": "இலக்கியம் விமர்சனம் புத்தகம் நூல் படைப்பு எழுத்தாளர் இலக்கிய",
     "POETRY": "கவிதை பாட்டு பாடல் கவிஞர் பாரதிதாசன் வெண்பா செய்யுள்",
@@ -172,18 +225,24 @@ _CATEGORY_KEYWORDS = {
 
 # Known serial titles (appear 10+ times with named author) -> FICTION
 _SERIAL_TITLES = {
-    "சரசா", "அவா", "பொட்டை", "துரோகி", "வேண்டாத ஆசை",
-    "மண்ணின் குரல்", "காதல் கடிதம்",
+    "சரசா",
+    "அவா",
+    "பொட்டை",
+    "துரோகி",
+    "வேண்டாத ஆசை",
+    "மண்ணின் குரல்",
+    "காதல் கடிதம்",
 }
 
 TFIDF_THRESHOLD = 0.15
-TAMIL_TOKEN_PATTERN = r'[\u0B80-\u0BFF]+|\w+'
+TAMIL_TOKEN_PATTERN = r"[\u0B80-\u0BFF]+|\w+"
 
 
 class ArticleTagger:
     """Hybrid article tagger: rule-based patterns + TF-IDF fallback."""
 
     def __init__(self):
+        """Initialize tagger with taxonomy, rules, and empty TF-IDF state."""
         self.taxonomy = TAXONOMY
         self.rules = RULE_PATTERNS
         self.tfidf = None
@@ -214,7 +273,12 @@ class ArticleTagger:
         category_texts = [_CATEGORY_KEYWORDS[cat_id] for cat_id in self.category_ids]
         self.category_vectors = self.tfidf.transform(category_texts)
 
-        logger.info(f"TF-IDF trained on {len(corpus)} articles, vocab size={len(self.tfidf.vocabulary_)}")
+        vocab_size = len(self.tfidf.vocabulary_)
+        logger.info(
+            "TF-IDF trained on %d articles, vocab size=%d",
+            len(corpus),
+            vocab_size,
+        )
 
     def tag_article(self, article: Dict) -> List[str]:
         """Assign 1-3 category IDs. Rules first, TF-IDF fallback."""
@@ -233,8 +297,7 @@ class ArticleTagger:
         return [self.taxonomy[tid]["tamil"] for tid in tag_ids if tid in self.taxonomy]
 
     def _apply_rules(self, article: Dict) -> List[str]:
-        """Apply rule-based classification. Returns list of matching category IDs."""
-
+        """Apply rule-based classification. Return matching category IDs."""
         title = (article.get("title") or "").strip()
 
         # ✅ FIX: handle author as list safely
@@ -254,7 +317,6 @@ class ArticleTagger:
 
         # ✅ MAIN RULE LOOP (you accidentally removed this earlier)
         for cat_id, patterns in self.rules.items():
-
             if cat_id in tags:
                 continue
 
@@ -274,8 +336,9 @@ class ArticleTagger:
                     break
 
         return tags
+
     def _tfidf_classify(self, article: Dict) -> List[str]:
-        """TF-IDF based classification for articles not matched by rules."""
+        """Classify articles using TF-IDF when rules do not match."""
         if self.tfidf is None or self.category_vectors is None:
             return ["GENERAL"]
 

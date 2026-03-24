@@ -2,3 +2,12 @@
 max-line-length = 88
 extend-ignore = E203
 exclude = .git,__pycache__,docs/source/conf.py,old,build,dist,venv
+per-file-ignores =
+    # Regex string literals in guardrails/leakage patterns are unavoidably long
+    */guardrails.py:E501
+    # Tamil LLM prompt strings are prose — cannot be split at 88 chars
+    */llm.py:E501
+    # Tamil pattern strings and query-builder strings exceed 88 chars by design
+    */csv_queries.py:E501
+    # Inline CSS/HTML template strings in Streamlit UI are unavoidably long
+    */streamlit_app.py:E501

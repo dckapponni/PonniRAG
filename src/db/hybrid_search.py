@@ -1,34 +1,53 @@
-"""
-Hybrid Search Orchestrator for Tamil Document Processing.
+"""Hybrid Search Orchestrator for Tamil Document Processing.
+
 Coordinates health checks, caching, CSV queries, vector search,
 and LLM answer generation. Delegates model loading, embeddings,
 and search to sub-modules (cache, embeddings, search, llm, etc.).
 """
-from typing import List, Dict, Optional
-import logging
+
 import asyncio
+import logging
+import re as _re
 import time
+from typing import Dict, List
+
+from cache import ResponseCache  # noqa: F401
+from cache import _response_cache
+from embeddings import (  # noqa: F401
+    BASE_DIR,
+    COLLECTION_NAME,
+    CSV_PATH,
+    DEVICE,
+    EMBEDDING_MODEL,
+    SCORE_THRESHOLD,
+    USE_CUDA,
+    HybridQdrantSearch,
+    _clear_singletons,
+    _deterministic_token_hash,
+    _embed_lock,
+    check_qdrant_health,
+    dense_embed_query,
+    get_csv_dataframe,
+    get_csv_embeddings,
+    get_embed_model,
+    get_qdrant_client,
+    search_csv_semantic,
+    sparse_embed,
+)
+from guardrails import (  # noqa: F401
+    SAFE_ERROR_MESSAGE,
+    detect_injection,
+    safe_error_message,
+    safe_error_response,
+    sanitize_output,
+    sanitize_query,
+    validate_history,
+)
 
 from config.config import MAX_QUERY_LENGTH
 
-from guardrails import (
-    sanitize_query, detect_injection, validate_history,
-    safe_error_response, safe_error_message, sanitize_output,
-    SAFE_ERROR_MESSAGE,
-)
-from cache import ResponseCache, _response_cache
-from embeddings import (
-    USE_CUDA, DEVICE, COLLECTION_NAME,
-    EMBEDDING_MODEL, SCORE_THRESHOLD, BASE_DIR, CSV_PATH,
-    _embed_lock, _clear_singletons,
-    get_embed_model, get_qdrant_client, get_csv_dataframe, get_csv_embeddings,
-    dense_embed_query, _deterministic_token_hash, sparse_embed, search_csv_semantic,
-    check_qdrant_health, HybridQdrantSearch,
-)
-
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -68,7 +87,11 @@ def _llm_fallback_answer(question: str, merged_docs, history, language: str = "t
     """
     # Try cache — this helps in history mode where cache was skipped at the top
     cached = _response_cache.get(question)
-    if cached and cached.get("answer") and len(cached["answer"]) >= _LLM_MIN_ANSWER_LENGTH:
+    if (
+        cached
+        and cached.get("answer")
+        and len(cached["answer"]) >= _LLM_MIN_ANSWER_LENGTH
+    ):
         logger.info("[FALLBACK] Using cached response (LLM unavailable)")
         return cached["answer"], "cached_response"
 
@@ -78,14 +101,14 @@ def _llm_fallback_answer(question: str, merged_docs, history, language: str = "t
     answer = generate_extractive_answer(facts, question)
 
     if not answer or len(answer) < 50:
-        answer = _msg(language,
-                      "கேள்விக்கான தகவல்கள் ஆதாரங்களில் உள்ளன.",
-                      "The information for this question is available in the sources.")
+        answer = _msg(
+            language,
+            "கேள்விக்கான தகவல்கள் ஆதாரங்களில் உள்ளன.",
+            "The information for this question is available in the sources.",
+        )
 
     return answer, "extractive"
 
-
-import re as _re
 
 # Patterns indicating the LLM answer says "data not available / not indexed".
 # When detected, sources should be suppressed because they are partial keyword
@@ -101,7 +124,9 @@ _NO_DATA_PATTERNS = [
     _re.compile(r"குறிப்பிட்ட\s*(இதழ்|தொகுதி|கட்டுரை).*இல்லை"),
     _re.compile(r"(இந்த|குறிப்பிட்ட).*தரவு.*இல்லை"),
     # Tamil — broader "not found / unavailable" phrases
-    _re.compile(r"தற்போது\s*(இந்த|இதற்கான)?\s*தகவல்"),  # "currently this information..."
+    _re.compile(
+        r"தற்போது\s*(இந்த|இதற்கான)?\s*தகவல்"
+    ),  # "currently this information..."
     _re.compile(r"கிடைக்கவில்லை"),  # "not available" (standalone)
     _re.compile(r"இடம்\s*பெற(வில்லை|ற்று\s*இல்லை)"),  # "not included / not featured"
     _re.compile(r"காணப்படவில்லை"),  # "not found"
@@ -114,29 +139,54 @@ _NO_DATA_PATTERNS = [
     _re.compile(r"not\s+(yet\s+)?(been\s+)?indexed", _re.I),
     _re.compile(r"data\s+is\s+not\s+(currently\s+)?available", _re.I),
     _re.compile(r"no\s+(relevant\s+)?information\s+(is\s+)?(available|found)", _re.I),
-    _re.compile(r"not\s+(currently\s+)?(available|present)\s+in\s+(the\s+)?(database|archive|collection)", _re.I),
-    _re.compile(r"has\s+not\s+(yet\s+)?been\s+(digitized|processed|extracted|added)", _re.I),
-    _re.compile(r"(this|the)\s+(specific\s+)?(issue|volume|article|data)\s+(is\s+)?not\s+(available|found|indexed)", _re.I),
+    _re.compile(
+        r"not\s+(currently\s+)?(available|present)"
+        r"\s+in\s+(the\s+)?(database|archive|collection)",
+        _re.I,
+    ),
+    _re.compile(
+        r"has\s+not\s+(yet\s+)?been\s+(digitized|processed|extracted|added)", _re.I
+    ),
+    _re.compile(
+        r"(this|the)\s+(specific\s+)?(issue|volume|article|data)"
+        r"\s+(is\s+)?not\s+(available|found|indexed)",
+        _re.I,
+    ),
     _re.compile(r"no\s+data\s+(is\s+)?(available|found)", _re.I),
     _re.compile(r"do(es)?\s+not\s+(currently\s+)?contain", _re.I),
     # English — broader patterns
     _re.compile(r"not\s+(currently\s+)?available\s+in\s+(the\s+)?database", _re.I),
-    _re.compile(r"(could|cannot|can'?t)\s+(not\s+)?find\s+(any\s+)?(relevant|specific|direct)", _re.I),
-    _re.compile(r"no\s+(specific|direct|relevant)\s+(information|data|content|mention)", _re.I),
-    _re.compile(r"do(es)?\s+not\s+(directly\s+)?(address|answer|contain|cover|mention)", _re.I),
-    _re.compile(r"(context|documents?)\s+(provided\s+)?do(es)?\s+not\s+(directly\s+)?(relate|pertain|answer)", _re.I),
+    _re.compile(
+        r"(could|cannot|can'?t)\s+(not\s+)?find\s+(any\s+)?(relevant|specific|direct)",
+        _re.I,
+    ),
+    _re.compile(
+        r"no\s+(specific|direct|relevant)\s+(information|data|content|mention)", _re.I
+    ),
+    _re.compile(
+        r"do(es)?\s+not\s+(directly\s+)?(address|answer|contain|cover|mention)", _re.I
+    ),
+    _re.compile(
+        r"(context|documents?)\s+(provided\s+)?do(es)?"
+        r"\s+not\s+(directly\s+)?(relate|pertain|answer)",
+        _re.I,
+    ),
     _re.compile(r"not\s+directly\s+related\s+to", _re.I),
     _re.compile(r"unable\s+to\s+(find|locate|identify)", _re.I),
-    _re.compile(r"(don'?t|do\s+not)\s+have\s+(any\s+)?(information|data)\s+(about|on|regarding)", _re.I),
+    _re.compile(
+        r"(don'?t|do\s+not)\s+have\s+(any\s+)?"
+        r"(information|data)\s+(about|on|regarding)",
+        _re.I,
+    ),
 ]
 
 
 # Regex: at least one alphanumeric, Tamil, or CJK character
-_HAS_MEANINGFUL_CONTENT = _re.compile(r'[\w\u0B80-\u0BFF]')
+_HAS_MEANINGFUL_CONTENT = _re.compile(r"[\w\u0B80-\u0BFF]")
 
 
 def _query_has_meaningful_content(question: str) -> bool:
-    """Check if the query contains at least one meaningful character (letter/digit/Tamil)."""
+    """Check if the query has a meaningful character."""
     return bool(_HAS_MEANINGFUL_CONTENT.search(question))
 
 
@@ -154,22 +204,98 @@ def _answer_indicates_no_data(answer: str) -> bool:
 # Stop words excluded from relevance checks — these are too generic to be
 # useful for deciding whether a document is truly relevant to a query.
 _TAMIL_STOP_WORDS = {
-    'இதழில்', 'இதழ்', 'பொன்னி', 'பொன்னியில்', 'என்ன', 'யாவை', 'யார்',
-    'எனும்', 'பற்றி', 'பற்றிய', 'என்று', 'உள்ள', 'உள்ளது', 'இருக்கு',
-    'முக்கிய', 'முக்கியமான', 'கருத்துக்கள்', 'கருத்து', 'தகவல்',
-    'கட்டுரை', 'கட்டுரைகள்', 'எழுதிய', 'எழுதியவர்', 'ஆசிரியர்',
-    'தொகுதி', 'இருக்கிறது', 'இருந்தது', 'செய்த', 'செய்யும்',
-    'எப்படி', 'எங்கே', 'எப்போது', 'ஏன்', 'எவ்வாறு', 'எத்தனை',
-    'கூறுக', 'விளக்குக', 'விவரி', 'பட்டியலிடுக', 'சுருக்கமாக',
-    'இருக்கிறார்', 'இருக்கின்றன', 'வெளிவந்தது', 'வெளியான',
+    "இதழில்",
+    "இதழ்",
+    "பொன்னி",
+    "பொன்னியில்",
+    "என்ன",
+    "யாவை",
+    "யார்",
+    "எனும்",
+    "பற்றி",
+    "பற்றிய",
+    "என்று",
+    "உள்ள",
+    "உள்ளது",
+    "இருக்கு",
+    "முக்கிய",
+    "முக்கியமான",
+    "கருத்துக்கள்",
+    "கருத்து",
+    "தகவல்",
+    "கட்டுரை",
+    "கட்டுரைகள்",
+    "எழுதிய",
+    "எழுதியவர்",
+    "ஆசிரியர்",
+    "தொகுதி",
+    "இருக்கிறது",
+    "இருந்தது",
+    "செய்த",
+    "செய்யும்",
+    "எப்படி",
+    "எங்கே",
+    "எப்போது",
+    "ஏன்",
+    "எவ்வாறு",
+    "எத்தனை",
+    "கூறுக",
+    "விளக்குக",
+    "விவரி",
+    "பட்டியலிடுக",
+    "சுருக்கமாக",
+    "இருக்கிறார்",
+    "இருக்கின்றன",
+    "வெளிவந்தது",
+    "வெளியான",
 }
 _ENGLISH_STOP_WORDS = {
-    'what', 'who', 'when', 'where', 'why', 'how', 'which', 'that', 'this',
-    'the', 'and', 'for', 'are', 'was', 'were', 'been', 'being', 'have',
-    'has', 'had', 'does', 'did', 'will', 'would', 'could', 'should',
-    'about', 'from', 'with', 'into', 'ponni', 'magazine', 'issue',
-    'volume', 'article', 'written', 'author', 'list', 'tell', 'explain',
-    'describe', 'main', 'key', 'important', 'topics', 'content',
+    "what",
+    "who",
+    "when",
+    "where",
+    "why",
+    "how",
+    "which",
+    "that",
+    "this",
+    "the",
+    "and",
+    "for",
+    "are",
+    "was",
+    "were",
+    "been",
+    "being",
+    "have",
+    "has",
+    "had",
+    "does",
+    "did",
+    "will",
+    "would",
+    "could",
+    "should",
+    "about",
+    "from",
+    "with",
+    "into",
+    "ponni",
+    "magazine",
+    "issue",
+    "volume",
+    "article",
+    "written",
+    "author",
+    "list",
+    "tell",
+    "explain",
+    "describe",
+    "main",
+    "key",
+    "important",
+    "topics",
+    "content",
 }
 
 
@@ -188,10 +314,10 @@ def _check_context_relevance(question: str, relevant_docs: list) -> bool:
         return False
 
     # --- Extract distinguishing terms from the query ---
-    years = set(_re.findall(r'\b(19\d{2}|20\d{2})\b', question))
-    tamil_terms = set(_re.findall(r'[\u0B80-\u0BFF]{3,}', question))
+    years = set(_re.findall(r"\b(19\d{2}|20\d{2})\b", question))
+    tamil_terms = set(_re.findall(r"[\u0B80-\u0BFF]{3,}", question))
     tamil_terms -= _TAMIL_STOP_WORDS
-    english_terms = {w.lower() for w in _re.findall(r'[a-zA-Z]{3,}', question)}
+    english_terms = {w.lower() for w in _re.findall(r"[a-zA-Z]{3,}", question)}
     english_terms -= _ENGLISH_STOP_WORDS
 
     # If the query has no distinguishing terms (generic questions like
@@ -232,7 +358,7 @@ def _check_context_relevance(question: str, relevant_docs: list) -> bool:
     # prefix that is ≥60% of the shorter word (min 3 chars).
     key_terms = tamil_terms | english_terms
     if key_terms:
-        doc_tamil_words = set(_re.findall(r'[\u0B80-\u0BFF]{3,}', all_text))
+        doc_tamil_words = set(_re.findall(r"[\u0B80-\u0BFF]{3,}", all_text))
 
         def _common_prefix_len(a, b):
             n = min(len(a), len(b))
@@ -259,8 +385,7 @@ def _check_context_relevance(question: str, relevant_docs: list) -> bool:
         matched = sum(1 for t in key_terms if _term_found(t))
         if matched == 0:
             logger.info(
-                f"[RELEVANCE] No key terms matched. "
-                f"Query terms: {key_terms}"
+                f"[RELEVANCE] No key terms matched. " f"Query terms: {key_terms}"
             )
             return False
 
@@ -276,6 +401,7 @@ def truncate_query(question: str, max_length: int = MAX_QUERY_LENGTH) -> str:
     wasted LLM prompt budget (question is injected twice).
     """
     from tamil_text import normalize_unicode
+
     question = normalize_unicode(question)
     question = sanitize_query(question)
 
@@ -299,48 +425,58 @@ def truncate_query(question: str, max_length: int = MAX_QUERY_LENGTH) -> str:
 # ORCHESTRATOR FUNCTIONS
 # ============================================================================
 
-def ask_question(question: str, return_formatted: bool = False, use_llm: bool = True, filter_tags: List[str] = None, history: List[Dict] = None, language: str = "ta") -> Dict:
-    """
-    Main question answering function with database health check and hybrid search.
 
-    Primary entry point for processing user queries. Handles database health checks,
-    author queries, vector search, document merging, LLM generation, and source formatting.
-    Results are filtered by score threshold rather than a fixed top_k count.
-    CSV queries are checked BEFORE vector search to return direct data without LLM.
+def ask_question(
+    question: str,
+    return_formatted: bool = False,
+    use_llm: bool = True,
+    filter_tags: List[str] = None,
+    history: List[Dict] = None,
+    language: str = "ta",
+) -> Dict:
+    """Answer a question using hybrid search and LLM generation.
+
+    Primary entry point for processing user queries. Handles
+    database health checks, author queries, vector search,
+    document merging, LLM generation, and source formatting.
+    Results are filtered by score threshold rather than a fixed
+    top_k count. CSV queries are checked BEFORE vector search
+    to return direct data without LLM.
 
     Args:
-        question (str): User's question in Tamil or English.
-        return_formatted (bool, optional): If True, return formatted string; if False,
-                                        return dict. Defaults to False.
-        use_llm (bool, optional): If True, use LLM for answer generation; if False,
-                                use extractive fallback only. Defaults to True.
+        question: User's question in Tamil or English.
+        return_formatted: If True, return formatted string;
+            if False, return dict. Defaults to False.
+        use_llm: If True, use LLM for answer generation;
+            if False, use extractive fallback. Defaults True.
+        filter_tags: Optional tag filter list.
+        history: Conversation history.
+        language: Response language code.
 
     Returns:
-        dict or str: Depending on return_formatted:
-            - If False (default): Dict with keys:
-                - answer (str): Generated answer text
-                - sources (list): List of source document dicts
-                - query_type (str): Type of query handled (optional)
-                - error (str/dict): Error details if failed (optional)
-            - If True: Formatted string with answer and sources
+        dict or str depending on return_formatted.
     """
     question = truncate_query(question)
     history = validate_history(history)
 
     # Reject queries with no meaningful content (only special characters / punctuation)
     if not _query_has_meaningful_content(question):
-        msg = _msg(language,
-                   "சரியான கேள்வியை உள்ளிடவும். எழுத்துக்கள் அல்லது எண்கள் தேவை.",
-                   "Please enter a valid question with letters or numbers.")
+        msg = _msg(
+            language,
+            "சரியான கேள்வியை உள்ளிடவும். எழுத்துக்கள் அல்லது எண்கள் தேவை.",
+            "Please enter a valid question with letters or numbers.",
+        )
         if return_formatted:
             return msg
         return {"answer": msg, "sources": []}
 
     is_injection, severity = detect_injection(question)
     if is_injection and severity == "high":
-        refusal = _msg(language,
-                       "மன்னிக்கவும், இந்தக் கேள்விக்கு பதிலளிக்க இயலவில்லை. பொன்னி இதழ் தொடர்பான கேள்விகளை கேளுங்கள்.",
-                       "Sorry, this query cannot be processed. Please ask questions related to Ponni magazine.")
+        refusal = _msg(
+            language,
+            "மன்னிக்கவும், இந்தக் கேள்விக்கு பதிலளிக்க இயலவில்லை. பொன்னி இதழ் தொடர்பான கேள்விகளை கேளுங்கள்.",  # noqa: E501
+            "Sorry, this query cannot be processed. Please ask questions related to Ponni magazine.",  # noqa: E501
+        )
         if return_formatted:
             return refusal
         return {"answer": refusal, "sources": []}
@@ -354,11 +490,7 @@ def ask_question(question: str, return_formatted: bool = False, use_llm: bool = 
         error_message = _msg(language, SAFE_ERROR_MESSAGE, safe_error_message("en"))
         if return_formatted:
             return error_message
-        return {
-            "answer": error_message,
-            "sources": [],
-            "error": "database_unavailable"
-        }
+        return {"answer": error_message, "sources": [], "error": "database_unavailable"}
 
     logger.info("Database is healthy - proceeding with query")
     _response_cache.check_version(health_status.get("points_count"))
@@ -367,7 +499,9 @@ def ask_question(question: str, return_formatted: bool = False, use_llm: bool = 
     if not history:
         cached = _response_cache.get(question)
         if cached is not None:
-            logger.info(f"[TIMING] TOTAL ask_question (CACHED): {time.time() - t_start:.2f}s")
+            logger.info(
+                f"[TIMING] TOTAL ask_question (CACHED): {time.time() - t_start:.2f}s"
+            )
             if return_formatted:
                 return format_answer_output(cached["answer"], cached["sources"])
             return cached
@@ -387,11 +521,17 @@ def ask_question(question: str, return_formatted: bool = False, use_llm: bool = 
                     llm_summary = ""
                 else:
                     t0 = time.time()
-                    csv_content = _build_csv_user_content(question, csv_response, language=language)
+                    csv_content = _build_csv_user_content(
+                        question, csv_response, language=language
+                    )
                     llm_summary = generate_llm_answer(
-                        question, context="", csv_context="",
-                        user_content=csv_content, system_prompt=_get_csv_system_prompt(language),
-                        disable_thinking=True, language=language,
+                        question,
+                        context="",
+                        csv_context="",
+                        user_content=csv_content,
+                        system_prompt=_get_csv_system_prompt(language),
+                        disable_thinking=True,
+                        language=language,
                     )
                     logger.info(f"[TIMING] gemini_llm (csv): {time.time() - t0:.2f}s")
                     logger.info(f"CSV LLM gist length: {len(llm_summary or '')} chars")
@@ -424,21 +564,35 @@ def ask_question(question: str, return_formatted: bool = False, use_llm: bool = 
 
         t0 = time.time()
         searcher = HybridQdrantSearch(client)
-        results = searcher.search(question, limit=200, score_threshold=SCORE_THRESHOLD, tags=filter_tags)
-        logger.info(f"[TIMING] hybrid_search: {time.time() - t0:.2f}s ({len(results)} results)")
+        results = searcher.search(
+            question, limit=200, score_threshold=SCORE_THRESHOLD, tags=filter_tags
+        )
+        logger.info(
+            f"[TIMING] hybrid_search: {time.time() - t0:.2f}s ({len(results)} results)"
+        )
 
         if not results:
-            answer = _msg(language, "மன்னிக்கவும், தகவல்கள் கிடைக்கவில்லை.", "Sorry, no information found.")
+            answer = _msg(
+                language,
+                "மன்னிக்கவும், தகவல்கள் கிடைக்கவில்லை.",
+                "Sorry, no information found.",
+            )
             if return_formatted:
                 return format_answer_output(answer, [])
             return {"answer": answer, "sources": []}
 
         t0 = time.time()
         merged_docs = merge_consecutive_chunks(client, results)
-        logger.info(f"[TIMING] merge_chunks: {time.time() - t0:.2f}s ({len(merged_docs)} docs)")
+        logger.info(
+            f"[TIMING] merge_chunks: {time.time() - t0:.2f}s ({len(merged_docs)} docs)"
+        )
 
         if not merged_docs:
-            answer = _msg(language, "போதுமான தகவல்கள் இல்லை.", "Insufficient information available.")
+            answer = _msg(
+                language,
+                "போதுமான தகவல்கள் இல்லை.",
+                "Insufficient information available.",
+            )
             if return_formatted:
                 return format_answer_output(answer, [])
             return {"answer": answer, "sources": []}
@@ -461,7 +615,9 @@ def ask_question(question: str, return_formatted: bool = False, use_llm: bool = 
 
         csv_context = ""
         if csv_results:
-            csv_context = "\n".join([f"{idx}. {row}" for idx, row in enumerate(csv_results, 1)])
+            csv_context = "\n".join(
+                [f"{idx}. {row}" for idx, row in enumerate(csv_results, 1)]
+            )
 
         answer = ""
         fallback_reason = None
@@ -472,29 +628,41 @@ def ask_question(question: str, return_formatted: bool = False, use_llm: bool = 
             else:
                 t0 = time.time()
                 answer = generate_llm_answer(
-                    question, context, csv_context,
+                    question,
+                    context,
+                    csv_context,
                     context_doc_count=context_doc_count,
-                    history=history, language=language,
+                    history=history,
+                    language=language,
                 )
                 logger.info(f"[TIMING] gemini_llm: {time.time() - t0:.2f}s")
 
         if not answer or len(answer) < _LLM_MIN_ANSWER_LENGTH:
             logger.warning("LLM answer insufficient, trying fallback")
-            answer, fallback_reason = _llm_fallback_answer(question, merged_docs, history, language)
+            answer, fallback_reason = _llm_fallback_answer(
+                question, merged_docs, history, language
+            )
 
         sources = format_sources(merged_docs)
 
         # Suppress sources when the answer indicates the data is not available
         if _answer_indicates_no_data(answer):
-            logger.info("[NO_DATA] Suppressing sources — answer indicates data not available")
+            logger.info(
+                "[NO_DATA] Suppressing sources — answer indicates data not available"
+            )
             sources = []
 
         # Suppress sources when retrieved docs don't match query's key entities
         if sources and not _check_context_relevance(question, relevant_docs):
-            logger.info("[RELEVANCE] Suppressing sources — documents not relevant to query")
+            logger.info(
+                "[RELEVANCE] Suppressing sources — documents not relevant to query"
+            )
             sources = []
 
-        logger.info(f"[TIMING] TOTAL ask_question: {time.time() - t_start:.2f}s | {len(sources)} sources")
+        elapsed = time.time() - t_start
+        logger.info(
+            f"[TIMING] TOTAL ask_question: {elapsed:.2f}s" f" | {len(sources)} sources"
+        )
 
         result = {"answer": answer, "sources": sources}
         if fallback_reason:
@@ -514,31 +682,42 @@ def ask_question(question: str, return_formatted: bool = False, use_llm: bool = 
         return safe_error_response()
 
 
-async def ask_question_async(question: str, return_formatted: bool = False, use_llm: bool = True, filter_tags: List[str] = None, history: List[Dict] = None, language: str = "ta") -> Dict:
-    """
-    Async version of ask_question for FastAPI concurrent request handling.
+async def ask_question_async(
+    question: str,
+    return_formatted: bool = False,
+    use_llm: bool = True,
+    filter_tags: List[str] = None,
+    history: List[Dict] = None,
+    language: str = "ta",
+) -> Dict:
+    """Answer a question asynchronously for FastAPI.
 
-    Uses asyncio.to_thread for sync I/O operations (Qdrant, embeddings) and
-    Gemini async LLM calls. This allows multiple user requests
-    to be processed concurrently without blocking the event loop.
+    Uses asyncio.to_thread for sync I/O operations (Qdrant,
+    embeddings) and Gemini async LLM calls. This allows multiple
+    user requests to be processed concurrently without blocking
+    the event loop.
     """
     question = truncate_query(question)
     history = validate_history(history)
 
     # Reject queries with no meaningful content (only special characters / punctuation)
     if not _query_has_meaningful_content(question):
-        msg = _msg(language,
-                   "சரியான கேள்வியை உள்ளிடவும். எழுத்துக்கள் அல்லது எண்கள் தேவை.",
-                   "Please enter a valid question with letters or numbers.")
+        msg = _msg(
+            language,
+            "சரியான கேள்வியை உள்ளிடவும். எழுத்துக்கள் அல்லது எண்கள் தேவை.",
+            "Please enter a valid question with letters or numbers.",
+        )
         if return_formatted:
             return msg
         return {"answer": msg, "sources": []}
 
     is_injection, severity = detect_injection(question)
     if is_injection and severity == "high":
-        refusal = _msg(language,
-                       "மன்னிக்கவும், இந்தக் கேள்விக்கு பதிலளிக்க இயலவில்லை. பொன்னி இதழ் தொடர்பான கேள்விகளை கேளுங்கள்.",
-                       "Sorry, this query cannot be processed. Please ask questions related to Ponni magazine.")
+        refusal = _msg(
+            language,
+            "மன்னிக்கவும், இந்தக் கேள்விக்கு பதிலளிக்க இயலவில்லை. பொன்னி இதழ் தொடர்பான கேள்விகளை கேளுங்கள்.",  # noqa: E501
+            "Sorry, this query cannot be processed. Please ask questions related to Ponni magazine.",  # noqa: E501
+        )
         if return_formatted:
             return refusal
         return {"answer": refusal, "sources": []}
@@ -552,11 +731,7 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
         error_message = _msg(language, SAFE_ERROR_MESSAGE, safe_error_message("en"))
         if return_formatted:
             return error_message
-        return {
-            "answer": error_message,
-            "sources": [],
-            "error": "database_unavailable"
-        }
+        return {"answer": error_message, "sources": [], "error": "database_unavailable"}
 
     logger.info("Database is healthy - proceeding with async query")
     _response_cache.check_version(health_status.get("points_count"))
@@ -565,7 +740,10 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
     if not history:
         cached = _response_cache.get(question)
         if cached is not None:
-            logger.info(f"[TIMING] TOTAL ask_question_async (CACHED): {time.time() - t_start:.2f}s")
+            elapsed = time.time() - t_start
+            logger.info(
+                "[TIMING] TOTAL ask_question_async" f" (CACHED): {elapsed:.2f}s"
+            )
             if return_formatted:
                 return format_answer_output(cached["answer"], cached["sources"])
             return cached
@@ -586,13 +764,21 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
                     llm_summary = ""
                 else:
                     t0 = time.time()
-                    csv_content = _build_csv_user_content(question, csv_response, language=language)
-                    llm_summary = await generate_llm_answer_async(
-                        question, context="", csv_context="",
-                        user_content=csv_content, system_prompt=_get_csv_system_prompt(language),
-                        disable_thinking=True, language=language,
+                    csv_content = _build_csv_user_content(
+                        question, csv_response, language=language
                     )
-                    logger.info(f"[TIMING] async gemini_llm (csv): {time.time() - t0:.2f}s")
+                    llm_summary = await generate_llm_answer_async(
+                        question,
+                        context="",
+                        csv_context="",
+                        user_content=csv_content,
+                        system_prompt=_get_csv_system_prompt(language),
+                        disable_thinking=True,
+                        language=language,
+                    )
+                    logger.info(
+                        f"[TIMING] async gemini_llm (csv): {time.time() - t0:.2f}s"
+                    )
                     logger.info(f"CSV LLM gist length: {len(llm_summary or '')} chars")
 
                 if not llm_summary or len(llm_summary) < 5:
@@ -625,22 +811,34 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
         results = await asyncio.to_thread(
             searcher.search, question, 200, SCORE_THRESHOLD, filter_tags
         )
-        logger.info(f"[TIMING] async hybrid_search: {time.time() - t0:.2f}s ({len(results)} results)")
+        logger.info(
+            f"[TIMING] async hybrid_search: "
+            f"{time.time() - t0:.2f}s ({len(results)} results)"
+        )
 
         if not results:
-            answer = _msg(language, "மன்னிக்கவும், தகவல்கள் கிடைக்கவில்லை.", "Sorry, no information found.")
+            answer = _msg(
+                language,
+                "மன்னிக்கவும், தகவல்கள் கிடைக்கவில்லை.",
+                "Sorry, no information found.",
+            )
             if return_formatted:
                 return format_answer_output(answer, [])
             return {"answer": answer, "sources": []}
 
         t0 = time.time()
-        merged_docs = await asyncio.to_thread(
-            merge_consecutive_chunks, client, results
+        merged_docs = await asyncio.to_thread(merge_consecutive_chunks, client, results)
+        logger.info(
+            f"[TIMING] async merge_chunks: "
+            f"{time.time() - t0:.2f}s ({len(merged_docs)} docs)"
         )
-        logger.info(f"[TIMING] async merge_chunks: {time.time() - t0:.2f}s ({len(merged_docs)} docs)")
 
         if not merged_docs:
-            answer = _msg(language, "போதுமான தகவல்கள் இல்லை.", "Insufficient information available.")
+            answer = _msg(
+                language,
+                "போதுமான தகவல்கள் இல்லை.",
+                "Insufficient information available.",
+            )
             if return_formatted:
                 return format_answer_output(answer, [])
             return {"answer": answer, "sources": []}
@@ -661,7 +859,9 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
 
         csv_context = ""
         if csv_results:
-            csv_context = "\n".join([f"{idx}. {row}" for idx, row in enumerate(csv_results, 1)])
+            csv_context = "\n".join(
+                [f"{idx}. {row}" for idx, row in enumerate(csv_results, 1)]
+            )
 
         answer = ""
         fallback_reason = None
@@ -672,29 +872,44 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
             else:
                 t0 = time.time()
                 answer = await generate_llm_answer_async(
-                    question, context, csv_context,
+                    question,
+                    context,
+                    csv_context,
                     context_doc_count=context_doc_count,
-                    history=history, language=language,
+                    history=history,
+                    language=language,
                 )
                 logger.info(f"[TIMING] async gemini_llm: {time.time() - t0:.2f}s")
 
         if not answer or len(answer) < _LLM_MIN_ANSWER_LENGTH:
             logger.warning("LLM answer insufficient (async), trying fallback")
-            answer, fallback_reason = _llm_fallback_answer(question, merged_docs, history, language)
+            answer, fallback_reason = _llm_fallback_answer(
+                question, merged_docs, history, language
+            )
 
         sources = format_sources(merged_docs)
 
         # Suppress sources when the answer indicates the data is not available
         if _answer_indicates_no_data(answer):
-            logger.info("[NO_DATA] Suppressing sources — answer indicates data not available (async)")
+            logger.info(
+                "[NO_DATA] Suppressing sources — answer "
+                "indicates data not available (async)"
+            )
             sources = []
 
         # Suppress sources when retrieved docs don't match query's key entities
         if sources and not _check_context_relevance(question, relevant_docs):
-            logger.info("[RELEVANCE] Suppressing sources — documents not relevant to query (async)")
+            logger.info(
+                "[RELEVANCE] Suppressing sources — "
+                "documents not relevant to query (async)"
+            )
             sources = []
 
-        logger.info(f"[TIMING] TOTAL ask_question_async: {time.time() - t_start:.2f}s | {len(sources)} sources")
+        elapsed = time.time() - t_start
+        logger.info(
+            f"[TIMING] TOTAL ask_question_async: "
+            f"{elapsed:.2f}s | {len(sources)} sources"
+        )
 
         result = {"answer": answer, "sources": sources}
         if fallback_reason:
@@ -714,29 +929,45 @@ async def ask_question_async(question: str, return_formatted: bool = False, use_
         return safe_error_response()
 
 
-def ask_question_stream(question: str, filter_tags: List[str] = None, history: List[Dict] = None, language: str = "ta"):
-    """
-    Streaming version of ask_question.
-    Yields dicts: {"type": "token", "content": str} for answer tokens,
-    and {"type": "sources", "sources": list} at the end.
-    For non-streamable responses (CSV queries, errors), yields complete answer as single token.
+def ask_question_stream(
+    question: str,
+    filter_tags: List[str] = None,
+    history: List[Dict] = None,
+    language: str = "ta",
+):
+    """Stream answer tokens for a question.
+
+    Yields dicts: {"type": "token", "content": str} for answer
+    tokens, and {"type": "sources", "sources": list} at the end.
+    For non-streamable responses (CSV queries, errors), yields
+    complete answer as single token.
     """
     question = truncate_query(question)
     history = validate_history(history)
 
     # Reject queries with no meaningful content (only special characters / punctuation)
     if not _query_has_meaningful_content(question):
-        yield {"type": "token", "content": _msg(language,
-            "சரியான கேள்வியை உள்ளிடவும். எழுத்துக்கள் அல்லது எண்கள் தேவை.",
-            "Please enter a valid question with letters or numbers.")}
+        yield {
+            "type": "token",
+            "content": _msg(
+                language,
+                "சரியான கேள்வியை உள்ளிடவும். எழுத்துக்கள் அல்லது எண்கள் தேவை.",
+                "Please enter a valid question with letters or numbers.",
+            ),
+        }
         yield {"type": "sources", "sources": []}
         return
 
     is_injection, severity = detect_injection(question)
     if is_injection and severity == "high":
-        yield {"type": "token", "content": _msg(language,
-            "மன்னிக்கவும், இந்தக் கேள்விக்கு பதிலளிக்க இயலவில்லை. பொன்னி இதழ் தொடர்பான கேள்விகளை கேளுங்கள்.",
-            "Sorry, this query cannot be processed. Please ask questions related to Ponni magazine.")}
+        yield {
+            "type": "token",
+            "content": _msg(
+                language,
+                "மன்னிக்கவும், இந்தக் கேள்விக்கு பதிலளிக்க இயலவில்லை. பொன்னி இதழ் தொடர்பான கேள்விகளை கேளுங்கள்.",  # noqa: E501
+                "Sorry, this query cannot be processed. Please ask questions related to Ponni magazine.",  # noqa: E501
+            ),
+        }
         yield {"type": "sources", "sources": []}
         return
 
@@ -744,7 +975,10 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
     health_status = check_qdrant_health()
     if not health_status["healthy"]:
         logger.error(f"Database unhealthy: {health_status}")
-        yield {"type": "token", "content": _msg(language, SAFE_ERROR_MESSAGE, safe_error_message("en"))}
+        yield {
+            "type": "token",
+            "content": _msg(language, SAFE_ERROR_MESSAGE, safe_error_message("en")),
+        }
         yield {"type": "sources", "sources": []}
         return
 
@@ -769,21 +1003,29 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
                 gemini_health = check_gemini_health()
                 if not gemini_health["healthy"]:
                     logger.error(f"Gemini unhealthy (stream csv path): {gemini_health}")
-                    fallback = _msg(language,
-                                    "கட்டுரை தரவுத்தளத்திலிருந்து பெறப்பட்ட தகவல்கள்:",
-                                    "Information retrieved from article database:")
+                    fallback = _msg(
+                        language,
+                        "கட்டுரை தரவுத்தளத்திலிருந்து பெறப்பட்ட தகவல்கள்:",
+                        "Information retrieved from article database:",
+                    )
                     yield {"type": "token", "content": fallback}
                     csv_suffix = _csv_data_suffix(csv_response)
                     yield {"type": "token", "content": csv_suffix}
                     yield {"type": "sources", "sources": []}
                     return
-                csv_content = _build_csv_user_content(question, csv_response, language=language)
+                csv_content = _build_csv_user_content(
+                    question, csv_response, language=language
+                )
                 csv_sys_prompt = _get_csv_system_prompt(language)
                 accumulated = []
                 for token in generate_llm_answer_stream(
-                    question, context="", csv_context="",
-                    user_content=csv_content, system_prompt=csv_sys_prompt,
-                    disable_thinking=True, language=language,
+                    question,
+                    context="",
+                    csv_context="",
+                    user_content=csv_content,
+                    system_prompt=csv_sys_prompt,
+                    disable_thinking=True,
+                    language=language,
                 ):
                     accumulated.append(token)
                     yield {"type": "token", "content": token}
@@ -794,16 +1036,22 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
                     # Streaming failed — try sync fallback
                     logger.warning("CSV streaming gist too short, trying sync fallback")
                     llm_summary = generate_llm_answer(
-                        question, context="", csv_context="",
-                        user_content=csv_content, system_prompt=csv_sys_prompt,
-                        disable_thinking=True, language=language,
+                        question,
+                        context="",
+                        csv_context="",
+                        user_content=csv_content,
+                        system_prompt=csv_sys_prompt,
+                        disable_thinking=True,
+                        language=language,
                     )
                     if llm_summary and len(llm_summary) >= 5:
                         yield {"type": "token", "content": llm_summary}
                     else:
-                        fallback = _msg(language,
-                                        "கட்டுரை தரவுத்தளத்திலிருந்து பெறப்பட்ட தகவல்கள்:",
-                                        "Information retrieved from article database:")
+                        fallback = _msg(
+                            language,
+                            "கட்டுரை தரவுத்தளத்திலிருந்து பெறப்பட்ட தகவல்கள்:",
+                            "Information retrieved from article database:",
+                        )
                         yield {"type": "token", "content": fallback}
                         llm_summary = ""
 
@@ -813,7 +1061,9 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
 
                 combined_answer = _combine_csv_answer(llm_summary, csv_response)
                 if not history:
-                    _response_cache.put(question, {"answer": combined_answer, "sources": []})
+                    _response_cache.put(
+                        question, {"answer": combined_answer, "sources": []}
+                    )
                 yield {"type": "sources", "sources": []}
                 return
         except Exception as e:
@@ -825,16 +1075,32 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
 
         logger.info(f"Streaming search: {question[:60]}...")
         searcher = HybridQdrantSearch(client)
-        results = searcher.search(question, limit=200, score_threshold=SCORE_THRESHOLD, tags=filter_tags)
+        results = searcher.search(
+            question, limit=200, score_threshold=SCORE_THRESHOLD, tags=filter_tags
+        )
 
         if not results:
-            yield {"type": "token", "content": _msg(language, "மன்னிக்கவும், தகவல்கள் கிடைக்கவில்லை.", "Sorry, no information found.")}
+            yield {
+                "type": "token",
+                "content": _msg(
+                    language,
+                    "மன்னிக்கவும், தகவல்கள் கிடைக்கவில்லை.",
+                    "Sorry, no information found.",
+                ),
+            }
             yield {"type": "sources", "sources": []}
             return
 
         merged_docs = merge_consecutive_chunks(client, results)
         if not merged_docs:
-            yield {"type": "token", "content": _msg(language, "போதுமான தகவல்கள் இல்லை.", "Insufficient information available.")}
+            yield {
+                "type": "token",
+                "content": _msg(
+                    language,
+                    "போதுமான தகவல்கள் இல்லை.",
+                    "Insufficient information available.",
+                ),
+            }
             yield {"type": "sources", "sources": []}
             return
 
@@ -850,7 +1116,9 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
         csv_results = search_csv_semantic(question, top_k=3)
         csv_context = ""
         if csv_results:
-            csv_context = "\n".join([f"{idx}. {row}" for idx, row in enumerate(csv_results, 1)])
+            csv_context = "\n".join(
+                [f"{idx}. {row}" for idx, row in enumerate(csv_results, 1)]
+            )
 
         # Pre-check Gemini health before streaming LLM
         gemini_health = check_gemini_health()
@@ -861,9 +1129,14 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
             if answer:
                 yield {"type": "token", "content": answer}
             else:
-                yield {"type": "token", "content": _msg(language,
-                    "மன்னிக்கவும், LLM சேவை தற்போது கிடைக்கவில்லை.",
-                    "Sorry, the LLM service is currently unavailable.")}
+                yield {
+                    "type": "token",
+                    "content": _msg(
+                        language,
+                        "மன்னிக்கவும், LLM சேவை தற்போது கிடைக்கவில்லை.",
+                        "Sorry, the LLM service is currently unavailable.",
+                    ),
+                }
             yield {"type": "sources", "sources": format_sources(merged_docs)}
             return
 
@@ -871,9 +1144,12 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
         token_count = 0
         accumulated_tokens = []
         for token in generate_llm_answer_stream(
-            question, context, csv_context,
+            question,
+            context,
+            csv_context,
             context_doc_count=context_doc_count,
-            history=history, language=language,
+            history=history,
+            language=language,
         ):
             token_count += 1
             accumulated_tokens.append(token)
@@ -883,7 +1159,9 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
         fallback_reason = None
         if token_count < 10:
             logger.warning("Streaming produced too few tokens, trying fallback")
-            answer, fallback_reason = _llm_fallback_answer(question, merged_docs, history, language)
+            answer, fallback_reason = _llm_fallback_answer(
+                question, merged_docs, history, language
+            )
             accumulated_tokens = [answer]
             yield {"type": "token", "content": answer}
 
@@ -898,12 +1176,18 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
 
         # Suppress sources when the answer indicates the data is not available
         if _answer_indicates_no_data(full_answer):
-            logger.info("[NO_DATA] Suppressing sources — answer indicates data not available (stream)")
+            logger.info(
+                "[NO_DATA] Suppressing sources — answer "
+                "indicates data not available (stream)"
+            )
             sources = []
 
         # Suppress sources when retrieved docs don't match query's key entities
         if sources and not _check_context_relevance(question, relevant_docs):
-            logger.info("[RELEVANCE] Suppressing sources — documents not relevant to query (stream)")
+            logger.info(
+                "[RELEVANCE] Suppressing sources — "
+                "documents not relevant to query (stream)"
+            )
             sources = []
 
         if not history and full_answer and len(full_answer) >= 50:
@@ -914,7 +1198,10 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
 
     except Exception as e:
         logger.error(f"Streaming query error: {e}", exc_info=True)
-        yield {"type": "token", "content": _msg(language, SAFE_ERROR_MESSAGE, safe_error_message("en"))}
+        yield {
+            "type": "token",
+            "content": _msg(language, SAFE_ERROR_MESSAGE, safe_error_message("en")),
+        }
         yield {"type": "sources", "sources": []}
 
 
@@ -926,75 +1213,72 @@ def ask_question_stream(question: str, filter_tags: List[str] = None, history: L
 # names. Do not add new names here.
 # ============================================================================
 
-from tamil_text import (  # noqa: E402, F401
-    FUZZY_THRESHOLD,
-    TYPO_DISTANCE,
-    fuzzy_match_score,
-    _edit_distance_one,
-    _strip_tamil_possessive_suffixes,
-    _strip_tamil_possessive_suffix_word,
-    _PatternBank,
-    _RE_INITIALS_NAME,
-    _RE_TAMIL_WORD,
-)
-
+from csv_queries import EnhancedAuthorQuerySystem  # noqa: E402, F401
 from csv_queries import (  # noqa: E402, F401
-    normalize_author_name,
-    flexible_author_match,
-    _find_closest_author,
-    _find_closest_title,
-    EnhancedAuthorQuerySystem,
-    format_author_list,
-    format_author_topics,
-    format_topic_authors,
-    detect_issue_count_query,
-    get_issue_count,
-    format_issue_count,
-    detect_start_year_query,
-    get_start_year,
-    handle_author_query,
-    _csv_source,
-    _csv_data_suffix,
-    _combine_csv_answer,
     _author_system_cache,
     _author_system_lock,
+    _combine_csv_answer,
+    _csv_data_suffix,
+    _csv_source,
+    _find_closest_author,
+    _find_closest_title,
+    detect_issue_count_query,
+    detect_start_year_query,
+    flexible_author_match,
+    format_author_list,
+    format_author_topics,
+    format_issue_count,
+    format_topic_authors,
+    get_issue_count,
+    get_start_year,
+    handle_author_query,
+    normalize_author_name,
 )
-
+from llm import _CSV_SYSTEM_PROMPT_EN  # noqa: E402, F401
 from llm import (  # noqa: E402, F401
+    _CSV_SYSTEM_PROMPT,
+    _WH_PATTERNS,
+    _YES_NO_PATTERNS,
+    ENGLISH_ANSWER_SYSTEM_PROMPT,
+    GEMINI_API_KEY,
+    GEMINI_MODEL,
     PONNI_ABOUT_CONTEXT,
     TAMIL_ANSWER_SYSTEM_PROMPT,
-    ENGLISH_ANSWER_SYSTEM_PROMPT,
-    _CSV_SYSTEM_PROMPT,
-    _CSV_SYSTEM_PROMPT_EN,
-    _get_system_prompt,
-    _get_csv_system_prompt,
-    _get_gemini_client,
-    _gemini_generation_config,
-    _build_user_content,
     _build_csv_user_content,
     _build_multi_turn_contents,
-    _WH_PATTERNS,
+    _build_user_content,
+    _gemini_generation_config,
+    _get_csv_system_prompt,
+    _get_gemini_client,
+    _get_system_prompt,
     _is_wh_question,
-    _YES_NO_PATTERNS,
     _is_yes_no_question,
+    _truncate_at_sentence_boundary,
+    check_gemini_health,
+    generate_extractive_answer,
     generate_llm_answer,
     generate_llm_answer_async,
     generate_llm_answer_stream,
-    generate_extractive_answer,
-    _truncate_at_sentence_boundary,
     validate_gemini_api,
-    check_gemini_health,
-    GEMINI_API_KEY,
-    GEMINI_MODEL,
 )
-
+from search import _extract_relevant_excerpt  # noqa: E402, F401
 from search import (  # noqa: E402, F401
-    retrieve_all_chunks_for_document,
-    merge_consecutive_chunks,
-    extract_key_facts,
     _select_relevant_docs,
-    _extract_relevant_excerpt,
     build_context_from_docs,
-    format_sources,
+    extract_key_facts,
     format_answer_output,
+    format_sources,
+    merge_consecutive_chunks,
+    retrieve_all_chunks_for_document,
+)
+from tamil_text import _RE_TAMIL_WORD  # noqa: E402, F401
+from tamil_text import (  # noqa: E402, F401
+    _RE_INITIALS_NAME,
+    FUZZY_THRESHOLD,
+    TYPO_DISTANCE,
+    _edit_distance_one,
+    _PatternBank,
+    _strip_tamil_possessive_suffix_word,
+    _strip_tamil_possessive_suffixes,
+    fuzzy_match_score,
 )

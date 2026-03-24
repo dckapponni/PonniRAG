@@ -1,14 +1,13 @@
-"""
-Thread-safe TTL + LRU response cache for ask_question results.
-"""
-import re
+"""Thread-safe TTL + LRU response cache for ask_question results."""
+
 import hashlib
-import time
-import threading
 import logging
+import re
+import threading
+import time
 import unicodedata
 from collections import OrderedDict
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +16,7 @@ class ResponseCache:
     """Thread-safe TTL + LRU cache for ask_question results."""
 
     def __init__(self, max_size: int = 100, ttl_seconds: int = 3600):
+        """Initialize cache with given max size and TTL."""
         self._cache: OrderedDict = OrderedDict()
         self._timestamps: dict = {}
         self._lock = threading.Lock()
@@ -28,11 +28,13 @@ class ResponseCache:
 
     @staticmethod
     def _make_key(question: str) -> str:
+        """Compute a deterministic cache key from a question string."""
         normalized = unicodedata.normalize("NFC", question)
-        normalized = re.sub(r'\s+', ' ', normalized.strip().lower())
-        return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+        normalized = re.sub(r"\s+", " ", normalized.strip().lower())
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
     def get(self, question: str) -> Optional[Dict]:
+        """Retrieve a cached result by question, or None if missing/expired."""
         key = self._make_key(question)
         with self._lock:
             if key not in self._cache:
@@ -47,10 +49,17 @@ class ResponseCache:
             self._cache.move_to_end(key)
             self._hits += 1
             total = self._hits + self._misses
-            logger.info(f"[CACHE] HIT (hits={self._hits}, misses={self._misses}, rate={self._hits / total:.0%})")
+            rate = f"{self._hits / total:.0%}"
+            logger.info(
+                "[CACHE] HIT (hits=%d, misses=%d," " rate=%s)",
+                self._hits,
+                self._misses,
+                rate,
+            )
             return self._cache[key]
 
     def put(self, question: str, result: Dict) -> None:
+        """Store a result in the cache, evicting oldest if full."""
         key = self._make_key(question)
         with self._lock:
             if key in self._cache:
@@ -65,6 +74,7 @@ class ResponseCache:
             self._timestamps[key] = time.time()
 
     def clear(self) -> None:
+        """Clear all cached entries and reset version."""
         with self._lock:
             self._cache.clear()
             self._timestamps.clear()
@@ -72,15 +82,15 @@ class ResponseCache:
             logger.info("[CACHE] Cache cleared")
 
     def check_version(self, points_count: Any) -> None:
-        """Auto-clear cache when Qdrant index changes (detected via points_count).
+        """Clear cache when Qdrant index changes.
 
-        Called after each health check. If points_count differs from the stored
-        baseline, all cached entries are invalidated because the underlying
-        documents/embeddings may have changed.
+        Called after each health check. If points_count differs from
+        the stored baseline, all cached entries are invalidated because
+        the underlying documents/embeddings may have changed.
 
         Args:
-            points_count: Current points_count from Qdrant health check.
-                          None means Qdrant is unreachable — cache is preserved.
+            points_count: Current points_count from Qdrant health
+                check. None means Qdrant is unreachable.
         """
         if points_count is None:
             return
@@ -95,13 +105,16 @@ class ResponseCache:
                 return
             if points_count != self._version:
                 logger.info(
-                    f"[CACHE] Index version changed: {self._version} → {points_count}. Clearing cache."
+                    "[CACHE] Index version changed:" " %s → %s. Clearing cache.",
+                    self._version,
+                    points_count,
                 )
                 self._cache.clear()
                 self._timestamps.clear()
                 self._version = points_count
 
     def stats(self) -> Dict:
+        """Return cache statistics including hit rate and version."""
         with self._lock:
             total = max(1, self._hits + self._misses)
             return {

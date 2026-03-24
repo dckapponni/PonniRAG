@@ -1,38 +1,44 @@
-"""
-FastAPI REST API for Ponni RAG System.
+"""FastAPI REST API for Ponni RAG System.
+
 Provides endpoints for search, question answering, and library access.
 """
 
 import asyncio
 import json
 import logging
-import os
 import sys
-from pathlib import Path
-from typing import Dict, List, Optional, Any, Union
 from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
 
 import boto3
-from botocore.exceptions import ClientError, NoCredentialsError, BotoCoreError
+from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-# Import real hybrid_search module
-from qdrant_client import models
+from article_tagger import TAXONOMY  # noqa: E402
+from cache import _response_cache  # noqa: E402
+from csv_queries import (  # noqa: E402
+    EnhancedAuthorQuerySystem,
+    _author_system_cache,
+    _author_system_lock,
+    get_issue_count,
+)
+from embeddings import (  # noqa: E402
+    COLLECTION_NAME,
+    CSV_PATH,
+    check_qdrant_health,
+    get_qdrant_client,
+)
+from hybrid_search import ask_question_async, ask_question_stream  # noqa: E402
+from llm import check_gemini_health  # noqa: E402
+from qdrant_client import models  # noqa: E402
 
-from hybrid_search import ask_question_async, ask_question_stream
-from embeddings import check_qdrant_health, get_qdrant_client, COLLECTION_NAME, CSV_PATH
-from csv_queries import EnhancedAuthorQuerySystem, get_issue_count, _author_system_cache, _author_system_lock
-from llm import validate_gemini_api, check_gemini_health
-from cache import _response_cache
-
-from article_tagger import TAXONOMY
-
-from config.config import get_magazine_config
+from config.config import get_magazine_config  # noqa: E402
 
 # Load magazine registry (single source of truth for volumes/issues/PDFs)
 _magazine = get_magazine_config("ponni")
@@ -67,19 +73,23 @@ def _issue_cover_s3_key(volume_id: int, issue_name: str) -> Optional[str]:
     vol_data = next((v for v in _magazine["volumes"] if v["id"] == volume_id), None)
     if not vol_data:
         return None
-    iss_data = next((i for i in vol_data["issues"] if str(i["num"]) == str(issue_name)), None)
+    iss_data = next(
+        (i for i in vol_data["issues"] if str(i["num"]) == str(issue_name)), None
+    )
     if not iss_data:
         return None
     year = iss_data.get("year", vol_data["year"])
     folder = _s3_conf["cover_folder_pattern"].format(vol_id=volume_id)
     filename = _s3_conf["cover_file_pattern"].format(
-        vol_id=volume_id, issue_num=issue_name, year=year,
+        vol_id=volume_id,
+        issue_num=issue_name,
+        year=year,
     )
     return f"{_s3_conf['covers_prefix']}{folder}{filename}"
 
 
 def _s3_key_with_fallback(key: str) -> list:
-    """Return list of S3 keys to try: original + alternate extensions (.jpg/.png/.jpeg)."""
+    """Return S3 keys to try: original plus alternate extensions."""
     if "." not in key:
         return [key]
     base, ext = key.rsplit(".", 1)
@@ -109,30 +119,39 @@ def _fetch_s3_image(key: str) -> Optional[dict]:
     logger.warning(f"S3 image not found with any extension: {key}")
     return None
 
+
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
 
 class HistoryMessage(BaseModel):
     """A single conversation turn (user or assistant)."""
-    role: str = Field(..., pattern=r'^(user|assistant)$')
+
+    role: str = Field(..., pattern=r"^(user|assistant)$")
     content: str = Field(..., min_length=1, max_length=5000)
 
 
 class QuestionRequest(BaseModel):
     """Request model for asking questions."""
+
     question: str = Field(..., min_length=1, description="The question to ask")
     use_llm: bool = Field(default=True, description="Use LLM for answer generation")
     tags: Optional[List[str]] = Field(default=None, description="Filter by tag IDs")
-    history: Optional[List[HistoryMessage]] = Field(default=None, description="Previous Q&A turns for context")
-    language: str = Field(default="ta", pattern=r'^(ta|en)$', description="Response language: 'ta' for Tamil, 'en' for English")
+    history: Optional[List[HistoryMessage]] = Field(
+        default=None, description="Previous Q&A turns for context"
+    )
+    language: str = Field(
+        default="ta",
+        pattern=r"^(ta|en)$",
+        description="Response language: 'ta' for Tamil, 'en' for English",
+    )
 
 
 class SourceDocument(BaseModel):
     """Response model for source documents."""
+
     volume: Optional[str] = None
     heading: Optional[str] = None
     doc_issue: Optional[str] = None
@@ -145,6 +164,7 @@ class SourceDocument(BaseModel):
 
 class QuestionResponse(BaseModel):
     """Response model for question answering."""
+
     answer: str
     sources: List[Dict[str, Any]] = []
     query_type: Optional[str] = None
@@ -154,6 +174,7 @@ class QuestionResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     """Response model for health check."""
+
     status: str
     database: Dict[str, Any]
     llm: Dict[str, Any]
@@ -162,12 +183,14 @@ class HealthResponse(BaseModel):
 
 class AuthorInfo(BaseModel):
     """Response model for author information."""
+
     name: str
     count: int
 
 
 class AuthorsListResponse(BaseModel):
     """Response model for list of all authors."""
+
     success: bool
     total_authors: int
     total_articles: int
@@ -176,17 +199,21 @@ class AuthorsListResponse(BaseModel):
 
 class ArticleInfo(BaseModel):
     """Response model for article information."""
+
     title: str
     author: str
     year: Optional[int] = Field(None, alias="ஆண்டு")
     issue: Optional[str] = Field(None, alias="இதழ்")
 
     class Config:
+        """Pydantic model configuration."""
+
         populate_by_name = True
 
 
 class AuthorArticlesResponse(BaseModel):
     """Response model for articles by author."""
+
     success: bool
     author: str
     matched_author: Optional[str] = None
@@ -197,6 +224,7 @@ class AuthorArticlesResponse(BaseModel):
 
 class TopicSearchResponse(BaseModel):
     """Response model for topic search."""
+
     success: bool
     topic: str
     count: int
@@ -206,12 +234,14 @@ class TopicSearchResponse(BaseModel):
 
 class IssueInfo(BaseModel):
     """Response model for issue information."""
+
     issue_number: str
     article_count: int
 
 
 class IssueStatsResponse(BaseModel):
     """Response model for issue statistics."""
+
     success: bool
     count: int
     total_articles: int
@@ -221,6 +251,7 @@ class IssueStatsResponse(BaseModel):
 
 class VolumeInfo(BaseModel):
     """Response model for volume information."""
+
     id: int
     year: str
     issue_count: int
@@ -229,6 +260,7 @@ class VolumeInfo(BaseModel):
 
 class VolumeIssue(BaseModel):
     """Response model for volume issue."""
+
     issue_number: str
     year: str
     has_pdf: bool
@@ -238,6 +270,7 @@ class VolumeIssue(BaseModel):
 
 class PDFLinkResponse(BaseModel):
     """Response model for PDF link."""
+
     volume_id: int
     issue_id: str
     pdf_url: Optional[str] = None
@@ -247,6 +280,7 @@ class PDFLinkResponse(BaseModel):
 
 class TagInfo(BaseModel):
     """Response model for a tag/category."""
+
     id: str
     tamil: str
     english: str
@@ -255,21 +289,25 @@ class TagInfo(BaseModel):
 
 class TagsResponse(BaseModel):
     """Response model for listing all tags."""
+
     success: bool
     tags: List[TagInfo]
 
 
 class TagArticleInfo(BaseModel):
+    """Response model for an article associated with a tag."""
+
     doc_id: Optional[str] = None
     doc_issue: Optional[str] = None
     title: Optional[str] = None
-    author_name: Optional[Union[str, List[str]]] = None   # ← list or str
+    author_name: Optional[Union[str, List[str]]] = None
     year: Optional[str] = None
     tags: Optional[List[str]] = None
 
 
 class TagArticlesResponse(BaseModel):
     """Response model for articles under a tag."""
+
     success: bool
     tag_id: str
     tag_tamil: str
@@ -278,17 +316,20 @@ class TagArticlesResponse(BaseModel):
 
 
 class IssueArticleInfo(BaseModel):
+    """Response model for an article within a specific issue."""
+
     doc_id: Optional[str] = None
     doc_issue: Optional[str] = None
     article_no: Optional[str] = None
     title: Optional[str] = None
-    author_name: Optional[Union[str, List[str]]] = None   # ← list or str
+    author_name: Optional[Union[str, List[str]]] = None
     year: Optional[str] = None
     tags: Optional[List[str]] = None
 
 
 class IssueArticlesResponse(BaseModel):
     """Response model for articles in a volume/issue."""
+
     success: bool
     volume_id: int
     issue_id: int
@@ -297,9 +338,11 @@ class IssueArticlesResponse(BaseModel):
 
 
 class ArticleContentResponse(BaseModel):
+    """Response model for full article content."""
+
     success: bool
     title: Optional[str] = None
-    author_name: Optional[Union[str, List[str]]] = None   # ← list or str
+    author_name: Optional[Union[str, List[str]]] = None
     year: Optional[str] = None
     doc_issue: Optional[str] = None
     tags: Optional[List[str]] = None
@@ -318,7 +361,9 @@ async def lifespan(app: FastAPI):
     if health["healthy"]:
         logger.info(f"Qdrant connected: {health.get('points_count', 0)} points")
     else:
-        logger.warning(f"Qdrant not available: {health.get('message', 'Unknown error')}")
+        logger.warning(
+            f"Qdrant not available: {health.get('message', 'Unknown error')}"
+        )
 
     # Pre-cache the author query system at startup
     csv_path = str(CSV_PATH)
@@ -331,7 +376,9 @@ async def lifespan(app: FastAPI):
     # Validate Gemini API key (also primes the health check cache)
     gemini_health = check_gemini_health()
     if gemini_health["healthy"]:
-        logger.info(f"Gemini API validated (model: {gemini_health['model']}, latency: {gemini_health['latency_ms']}ms)")
+        model = gemini_health["model"]
+        latency = gemini_health["latency_ms"]
+        logger.info(f"Gemini API validated (model: {model}," f" latency: {latency}ms)")
     else:
         logger.warning(f"Gemini API not available: {gemini_health['message']}")
 
@@ -398,7 +445,9 @@ async def debug_s3(request: Request):
 
         result["sample_volume_url"] = f"{base}/api/images/volumes/{vol['id']}/cover"
         iss = vol["issues"][0]
-        result["sample_issue_url"] = f"{base}/api/images/volumes/{vol['id']}/issues/{iss['num']}/cover"
+        result["sample_issue_url"] = (
+            f"{base}/api/images/volumes/{vol['id']}/issues/{iss['num']}/cover"
+        )
     except Exception as e:
         result["error"] = str(e)
     return result
@@ -406,14 +455,15 @@ async def debug_s3(request: Request):
 
 @app.get("/", tags=["Health"])
 async def root():
-    """Root endpoint with API information."""
+    """Return root endpoint with API information."""
     return {
         "name": "Ponni RAG API",
         "version": "1.0.0",
         "description": "REST API for Tamil Literary Archive",
         "docs": "/docs",
-        "health": "/health"
+        "health": "/health",
     }
+
 
 @app.get("/api/images/volumes/{volume_id}/cover", tags=["Images"])
 async def get_volume_cover(volume_id: int):
@@ -445,6 +495,7 @@ async def get_issue_cover(volume_id: int, issue_name: str):
         media_type=img["content_type"],
         headers={"Cache-Control": f"public, max-age={_IMAGE_CACHE_SECONDS}"},
     )
+
 
 @app.api_route("/api/images/about/{filename}", methods=["GET", "HEAD"], tags=["Images"])
 async def get_about_image(filename: str):
@@ -499,7 +550,9 @@ async def ask_question_endpoint(request: QuestionRequest):
 
     except Exception as e:
         logger.error(f"Error processing question: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="An internal error occurred. Please try again.")
+        raise HTTPException(
+            status_code=500, detail="An internal error occurred. Please try again."
+        )
 
 
 @app.post("/api/ask/stream", tags=["Search"])
@@ -515,6 +568,7 @@ async def ask_question_stream_endpoint(request: QuestionRequest):
     history = [h.model_dump() for h in request.history] if request.history else None
 
     def event_generator():
+        """Yield SSE events for streaming response."""
         try:
             for event in ask_question_stream(
                 question=request.question,
@@ -523,15 +577,19 @@ async def ask_question_stream_endpoint(request: QuestionRequest):
                 language=request.language,
             ):
                 if event["type"] == "token":
-                    yield f"event: token\ndata: {json.dumps({'content': event['content']})}\n\n"
+                    data = json.dumps({"content": event["content"]})
+                    yield f"event: token\ndata: {data}\n\n"
                 elif event["type"] == "fallback":
-                    yield f"event: fallback\ndata: {json.dumps({'reason': event['reason']})}\n\n"
+                    data = json.dumps({"reason": event["reason"]})
+                    yield f"event: fallback\ndata: {data}\n\n"
                 elif event["type"] == "sources":
-                    yield f"event: sources\ndata: {json.dumps({'sources': event['sources']})}\n\n"
+                    data = json.dumps({"sources": event["sources"]})
+                    yield f"event: sources\ndata: {data}\n\n"
             yield "event: done\ndata: {}\n\n"
         except Exception as e:
             logger.error(f"Streaming error: {e}", exc_info=True)
-            yield f"event: error\ndata: {json.dumps({'error': 'An internal error occurred. Please try again.'})}\n\n"
+            err = json.dumps({"error": "An internal error occurred."})
+            yield f"event: error\ndata: {err}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -540,7 +598,7 @@ async def ask_question_stream_endpoint(request: QuestionRequest):
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
-        }
+        },
     )
 
 
@@ -561,7 +619,9 @@ async def cache_clear():
 async def search_endpoint(
     q: str = Query(..., min_length=1, max_length=2000, description="Search query"),
     use_llm: bool = Query(default=False, description="Use LLM for answer"),
-    tags: Optional[str] = Query(default=None, description="Comma-separated tag IDs to filter by"),
+    tags: Optional[str] = Query(
+        default=None, description="Comma-separated tag IDs to filter by"
+    ),
 ):
     """
     Search the archive with a query string.
@@ -589,7 +649,9 @@ async def search_endpoint(
 
     except Exception as e:
         logger.error(f"Error in search: {e}")
-        raise HTTPException(status_code=500, detail="An internal error occurred. Please try again.")
+        raise HTTPException(
+            status_code=500, detail="An internal error occurred. Please try again."
+        )
 
 
 @app.get("/api/tags", response_model=TagsResponse, tags=["Tags"])
@@ -610,10 +672,16 @@ async def list_tags():
             points, offset = await asyncio.to_thread(
                 client.scroll,
                 collection_name=COLLECTION_NAME,
-                scroll_filter=models.Filter(must=[
-                    models.FieldCondition(key="type", match=models.MatchValue(value="article")),
-                    models.FieldCondition(key="metadata.chunk_id", match=models.MatchValue(value=0)),
-                ]),
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="type", match=models.MatchValue(value="article")
+                        ),
+                        models.FieldCondition(
+                            key="metadata.chunk_id", match=models.MatchValue(value=0)
+                        ),
+                    ]
+                ),
                 limit=500,
                 offset=offset,
                 with_payload=True,
@@ -627,12 +695,14 @@ async def list_tags():
 
         tags_list = []
         for cat_id, cat_info in TAXONOMY.items():
-            tags_list.append(TagInfo(
-                id=cat_id,
-                tamil=cat_info["tamil"],
-                english=cat_info["english"],
-                count=tag_counts.get(cat_id, 0),
-            ))
+            tags_list.append(
+                TagInfo(
+                    id=cat_id,
+                    tamil=cat_info["tamil"],
+                    english=cat_info["english"],
+                    count=tag_counts.get(cat_id, 0),
+                )
+            )
 
         # Sort by count descending
         tags_list.sort(key=lambda t: t.count, reverse=True)
@@ -644,13 +714,17 @@ async def list_tags():
         # Return taxonomy with zero counts instead of 500 error —
         # lets the dropdown populate even if Qdrant is unavailable.
         tags_list = [
-            TagInfo(id=cat_id, tamil=cat_info["tamil"], english=cat_info["english"], count=0)
+            TagInfo(
+                id=cat_id, tamil=cat_info["tamil"], english=cat_info["english"], count=0
+            )
             for cat_id, cat_info in TAXONOMY.items()
         ]
         return TagsResponse(success=True, tags=tags_list)
 
 
-@app.get("/api/tags/{tag_id}/articles", response_model=TagArticlesResponse, tags=["Tags"])
+@app.get(
+    "/api/tags/{tag_id}/articles", response_model=TagArticlesResponse, tags=["Tags"]
+)
 async def get_tag_articles(tag_id: str):
     """
     Get all articles for a specific tag/category.
@@ -670,11 +744,19 @@ async def get_tag_articles(tag_id: str):
             points, offset = await asyncio.to_thread(
                 client.scroll,
                 collection_name=COLLECTION_NAME,
-                scroll_filter=models.Filter(must=[
-                    models.FieldCondition(key="type", match=models.MatchValue(value="article")),
-                    models.FieldCondition(key="metadata.tags", match=models.MatchAny(any=[tag_id])),
-                    models.FieldCondition(key="metadata.chunk_id", match=models.MatchValue(value=0)),
-                ]),
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="type", match=models.MatchValue(value="article")
+                        ),
+                        models.FieldCondition(
+                            key="metadata.tags", match=models.MatchAny(any=[tag_id])
+                        ),
+                        models.FieldCondition(
+                            key="metadata.chunk_id", match=models.MatchValue(value=0)
+                        ),
+                    ]
+                ),
                 limit=500,
                 offset=offset,
                 with_payload=True,
@@ -685,14 +767,16 @@ async def get_tag_articles(tag_id: str):
                 if dedup_key in seen:
                     continue
                 seen.add(dedup_key)
-                articles.append(TagArticleInfo(
-                    doc_id=metadata.get("doc_id"),
-                    doc_issue=metadata.get("doc_issue"),
-                    title=metadata.get("title"),
-                    author_name=metadata.get("author_name"),
-                    year=metadata.get("year"),
-                    tags=metadata.get("tags", []),
-                ))
+                articles.append(
+                    TagArticleInfo(
+                        doc_id=metadata.get("doc_id"),
+                        doc_issue=metadata.get("doc_issue"),
+                        title=metadata.get("title"),
+                        author_name=metadata.get("author_name"),
+                        year=metadata.get("year"),
+                        tags=metadata.get("tags", []),
+                    )
+                )
             if offset is None:
                 break
 
@@ -706,7 +790,9 @@ async def get_tag_articles(tag_id: str):
 
     except Exception as e:
         logger.error(f"Error getting tag articles: {e}")
-        raise HTTPException(status_code=500, detail="An internal error occurred. Please try again.")
+        raise HTTPException(
+            status_code=500, detail="An internal error occurred. Please try again."
+        )
 
 
 @app.get("/api/authors", response_model=AuthorsListResponse, tags=["Authors"])
@@ -730,23 +816,33 @@ async def list_authors():
         result = await asyncio.to_thread(system.list_all_authors)
 
         if not result["success"]:
-            raise HTTPException(status_code=500, detail=result.get("message", "Failed to load authors"))
+            raise HTTPException(
+                status_code=500, detail=result.get("message", "Failed to load authors")
+            )
 
         return AuthorsListResponse(
             success=True,
             total_authors=result["total_authors"],
             total_articles=result["total_articles"],
-            authors=[AuthorInfo(name=a["name"], count=a["count"]) for a in result["authors"]]
+            authors=[
+                AuthorInfo(name=a["name"], count=a["count"]) for a in result["authors"]
+            ],
         )
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error listing authors: {e}")
-        raise HTTPException(status_code=500, detail="An internal error occurred. Please try again.")
+        raise HTTPException(
+            status_code=500, detail="An internal error occurred. Please try again."
+        )
 
 
-@app.get("/api/authors/{author_name}/articles", response_model=AuthorArticlesResponse, tags=["Authors"])
+@app.get(
+    "/api/authors/{author_name}/articles",
+    response_model=AuthorArticlesResponse,
+    tags=["Authors"],
+)
 async def get_author_articles(author_name: str):
     """
     Get all articles written by a specific author.
@@ -773,12 +869,14 @@ async def get_author_articles(author_name: str):
             matched_author=result.get("matched_author"),
             count=result.get("count", 0),
             articles=result.get("articles", []),
-            message=result.get("message")
+            message=result.get("message"),
         )
 
     except Exception as e:
         logger.error(f"Error getting author articles: {e}")
-        raise HTTPException(status_code=500, detail="An internal error occurred. Please try again.")
+        raise HTTPException(
+            status_code=500, detail="An internal error occurred. Please try again."
+        )
 
 
 @app.get("/api/topics/search", response_model=TopicSearchResponse, tags=["Topics"])
@@ -809,13 +907,14 @@ async def search_by_topic(
             topic=result.get("topic", topic),
             count=result.get("count", 0),
             articles=result.get("articles", []),
-            message=result.get("message")
+            message=result.get("message"),
         )
 
     except Exception as e:
         logger.error(f"Error searching topic: {e}")
-        raise HTTPException(status_code=500, detail="An internal error occurred. Please try again.")
-
+        raise HTTPException(
+            status_code=500, detail="An internal error occurred. Please try again."
+        )
 
 
 @app.get("/api/issues/stats", response_model=IssueStatsResponse, tags=["Issues"])
@@ -837,12 +936,14 @@ async def get_issue_statistics():
             count=result.get("count", 0),
             total_articles=result.get("total_articles", 0),
             issues=[IssueInfo(**i) for i in result.get("issues", [])],
-            message=result.get("message")
+            message=result.get("message"),
         )
 
     except Exception as e:
         logger.error(f"Error getting issue stats: {e}")
-        raise HTTPException(status_code=500, detail="An internal error occurred. Please try again.")
+        raise HTTPException(
+            status_code=500, detail="An internal error occurred. Please try again."
+        )
 
 
 @app.get("/api/library/volumes", response_model=List[VolumeInfo], tags=["Library"])
@@ -857,24 +958,28 @@ async def list_volumes(request: Request):
     result = []
     for vol in _magazine["volumes"]:
         # Derive year range from per-issue years
-        issue_years = sorted(set(
-            iss.get("year", vol["year"]) for iss in vol["issues"]
-        ))
+        issue_years = sorted(set(iss.get("year", vol["year"]) for iss in vol["issues"]))
         if len(issue_years) > 1:
             year_display = f"{issue_years[0]}-{issue_years[-1]}"
         else:
             year_display = issue_years[0] if issue_years else vol["year"]
 
-        result.append(VolumeInfo(
-            id=vol["id"],
-            year=year_display,
-            issue_count=len(vol["issues"]),
-            cover_image_url=f"{base}/api/images/volumes/{vol['id']}/cover",
-        ))
+        result.append(
+            VolumeInfo(
+                id=vol["id"],
+                year=year_display,
+                issue_count=len(vol["issues"]),
+                cover_image_url=f"{base}/api/images/volumes/{vol['id']}/cover",
+            )
+        )
     return result
 
 
-@app.get("/api/library/volumes/{volume_id}/issues", response_model=List[VolumeIssue], tags=["Library"])
+@app.get(
+    "/api/library/volumes/{volume_id}/issues",
+    response_model=List[VolumeIssue],
+    tags=["Library"],
+)
 async def get_volume_issues(volume_id: int, request: Request):
     """
     Get all issues for a specific volume.
@@ -892,13 +997,18 @@ async def get_volume_issues(volume_id: int, request: Request):
     for issue in vol_data["issues"]:
         issue_year = issue.get("year", vol_data["year"])
         issue_name = str(issue["num"])
-        issues.append(VolumeIssue(
-            issue_number=issue_name,
-            year=issue_year,
-            has_pdf=bool(issue.get("pdf_url")),
-            pdf_url=issue.get("pdf_url"),
-            cover_image_url=f"{base}/api/images/volumes/{volume_id}/issues/{issue_name}/cover",
-        ))
+        issues.append(
+            VolumeIssue(
+                issue_number=issue_name,
+                year=issue_year,
+                has_pdf=bool(issue.get("pdf_url")),
+                pdf_url=issue.get("pdf_url"),
+                cover_image_url=(
+                    f"{base}/api/images/volumes/"
+                    f"{volume_id}/issues/{issue_name}/cover"
+                ),
+            )
+        )
 
     if not issues:
         raise HTTPException(status_code=404, detail="No issues found for this volume")
@@ -906,7 +1016,11 @@ async def get_volume_issues(volume_id: int, request: Request):
     return issues
 
 
-@app.get("/api/library/volumes/{volume_id}/issues/{issue_id}/pdf", response_model=PDFLinkResponse, tags=["Library"])
+@app.get(
+    "/api/library/volumes/{volume_id}/issues/{issue_id}/pdf",
+    response_model=PDFLinkResponse,
+    tags=["Library"],
+)
 async def get_pdf_link(volume_id: int, issue_id: str):
     """
     Get PDF link for a specific issue.
@@ -920,11 +1034,7 @@ async def get_pdf_link(volume_id: int, issue_id: str):
     pdf_url = PDF_LINKS.get(key)
 
     if not pdf_url:
-        return PDFLinkResponse(
-            volume_id=volume_id,
-            issue_id=issue_id,
-            found=False
-        )
+        return PDFLinkResponse(volume_id=volume_id, issue_id=issue_id, found=False)
 
     # Extract file ID for embed URL
     embed_url = None
@@ -937,8 +1047,9 @@ async def get_pdf_link(volume_id: int, issue_id: str):
         issue_id=issue_id,
         pdf_url=pdf_url,
         embed_url=embed_url,
-        found=True
+        found=True,
     )
+
 
 @app.get(
     "/api/library/volumes/{volume_id}/issues/{issue_id}/articles",
@@ -967,11 +1078,20 @@ async def get_issue_articles(volume_id: int, issue_id: int):
             points, scroll_offset = await asyncio.to_thread(
                 client.scroll,
                 collection_name=COLLECTION_NAME,
-                scroll_filter=models.Filter(must=[
-                    models.FieldCondition(key="type", match=models.MatchValue(value="article")),
-                    models.FieldCondition(key="metadata.chunk_id", match=models.MatchValue(value=0)),
-                    models.FieldCondition(key="metadata.doc_id", match=models.MatchValue(value=vol_str)),
-                ]),
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="type", match=models.MatchValue(value="article")
+                        ),
+                        models.FieldCondition(
+                            key="metadata.chunk_id", match=models.MatchValue(value=0)
+                        ),
+                        models.FieldCondition(
+                            key="metadata.doc_id",
+                            match=models.MatchValue(value=vol_str),
+                        ),
+                    ]
+                ),
                 limit=500,
                 offset=scroll_offset,
                 with_payload=True,
@@ -980,9 +1100,14 @@ async def get_issue_articles(volume_id: int, issue_id: int):
             if scroll_offset is None:
                 break
 
-        logger.info(f"get_issue_articles: vol={volume_id}, doc_id filter → {len(all_points)} points")
+        logger.info(
+            "get_issue_articles: vol=%s, doc_id filter" " → %d points",
+            volume_id,
+            len(all_points),
+        )
 
-        # Fallback: if doc_id filter found nothing, fetch all chunk_0 and filter client-side
+        # Fallback: if doc_id filter found nothing,
+        # fetch all chunk_0 and filter client-side
         if not all_points:
             logger.info("No points with doc_id filter — fetching all chunk_0 articles")
             scroll_offset = None
@@ -990,10 +1115,17 @@ async def get_issue_articles(volume_id: int, issue_id: int):
                 points, scroll_offset = await asyncio.to_thread(
                     client.scroll,
                     collection_name=COLLECTION_NAME,
-                    scroll_filter=models.Filter(must=[
-                        models.FieldCondition(key="type", match=models.MatchValue(value="article")),
-                        models.FieldCondition(key="metadata.chunk_id", match=models.MatchValue(value=0)),
-                    ]),
+                    scroll_filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="type", match=models.MatchValue(value="article")
+                            ),
+                            models.FieldCondition(
+                                key="metadata.chunk_id",
+                                match=models.MatchValue(value=0),
+                            ),
+                        ]
+                    ),
                     limit=500,
                     offset=scroll_offset,
                     with_payload=True,
@@ -1002,12 +1134,15 @@ async def get_issue_articles(volume_id: int, issue_id: int):
                 if scroll_offset is None:
                     break
             all_points = [
-                p for p in all_points
-                if str((p.payload or {}).get("metadata", {}).get("doc_id", "")) == vol_str
+                p
+                for p in all_points
+                if str((p.payload or {}).get("metadata", {}).get("doc_id", ""))
+                == vol_str
             ]
             logger.info(f"After client-side doc_id filter: {len(all_points)}")
 
-        # Use issue_id directly as the doc_issue value (actual issue number, not position)
+        # Use issue_id directly as the doc_issue value
+        # (actual issue number, not position)
         target_issue = str(issue_id)
         logger.info(f"Filtering by doc_issue='{target_issue}'")
 
@@ -1025,15 +1160,17 @@ async def get_issue_articles(volume_id: int, issue_id: int):
             if unique_key in seen:
                 continue
             seen.add(unique_key)
-            articles.append(IssueArticleInfo(
-                doc_id=doc_id,
-                doc_issue=doc_issue_str,
-                article_no=article_no,
-                title=metadata.get("title"),
-                author_name=metadata.get("author_name"),
-                year=metadata.get("year"),
-                tags=metadata.get("tags", []),
-            ))
+            articles.append(
+                IssueArticleInfo(
+                    doc_id=doc_id,
+                    doc_issue=doc_issue_str,
+                    article_no=article_no,
+                    title=metadata.get("title"),
+                    author_name=metadata.get("author_name"),
+                    year=metadata.get("year"),
+                    tags=metadata.get("tags", []),
+                )
+            )
 
         return IssueArticlesResponse(
             success=True,
@@ -1045,14 +1182,20 @@ async def get_issue_articles(volume_id: int, issue_id: int):
 
     except Exception as e:
         logger.error(f"Error fetching issue articles: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="An internal error occurred. Please try again.")
+        raise HTTPException(
+            status_code=500, detail="An internal error occurred. Please try again."
+        )
 
 
-@app.get("/api/articles/content", response_model=ArticleContentResponse, tags=["Library"])
+@app.get(
+    "/api/articles/content", response_model=ArticleContentResponse, tags=["Library"]
+)
 async def get_article_content(
     doc_id: str = Query(..., description="Document/volume ID"),
     doc_issue: str = Query(..., description="Issue number"),
-    article_no: Optional[str] = Query(default=None, description="Article number within the issue"),
+    article_no: Optional[str] = Query(
+        default=None, description="Article number within the issue"
+    ),
 ):
     """
     Get the full content of a specific article by concatenating all its chunks.
@@ -1064,8 +1207,12 @@ async def get_article_content(
 
         filter_conditions = [
             models.FieldCondition(key="type", match=models.MatchValue(value="article")),
-            models.FieldCondition(key="metadata.doc_id", match=models.MatchValue(value=str(doc_id))),
-            models.FieldCondition(key="metadata.doc_issue", match=models.MatchValue(value=str(doc_issue))),
+            models.FieldCondition(
+                key="metadata.doc_id", match=models.MatchValue(value=str(doc_id))
+            ),
+            models.FieldCondition(
+                key="metadata.doc_issue", match=models.MatchValue(value=str(doc_issue))
+            ),
         ]
         if article_no:
             match_val = int(article_no) if str(article_no).isdigit() else article_no
@@ -1090,16 +1237,20 @@ async def get_article_content(
             for p in points:
                 payload = p.payload or {}
                 metadata = payload.get("metadata", {})
-                chunks.append({
-                    "chunk_id": metadata.get("chunk_id", 0),
-                    "content": payload.get("content", ""),
-                    "metadata": metadata,
-                })
+                chunks.append(
+                    {
+                        "chunk_id": metadata.get("chunk_id", 0),
+                        "content": payload.get("content", ""),
+                        "metadata": metadata,
+                    }
+                )
             if scroll_offset is None:
                 break
 
-        logger.info(f"get_article_content: doc_id={doc_id}, doc_issue={doc_issue}, "
-                     f"article_no={article_no}, chunks={len(chunks)}")
+        logger.info(
+            f"get_article_content: doc_id={doc_id}, doc_issue={doc_issue}, "
+            f"article_no={article_no}, chunks={len(chunks)}"
+        )
 
         if not chunks:
             return ArticleContentResponse(success=True)
@@ -1122,15 +1273,12 @@ async def get_article_content(
 
     except Exception as e:
         logger.error(f"Error fetching article content: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="An internal error occurred. Please try again.")
+        raise HTTPException(
+            status_code=500, detail="An internal error occurred. Please try again."
+        )
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        "api:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
-    )
+
+    uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True, log_level="info")

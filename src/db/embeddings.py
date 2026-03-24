@@ -1,24 +1,28 @@
+"""Embedding, model loading, and hybrid search for Tamil documents.
+
+Provides dense/sparse embeddings, Qdrant client management,
+CSV semantic search, health checks, and hybrid vector search.
 """
-Embedding, model loading, and hybrid search for Tamil document processing.
-Provides dense/sparse embeddings, Qdrant client management, CSV semantic search,
-health checks, and hybrid vector search combining dense + sparse vectors.
-"""
-from typing import List, Dict
+
+import hashlib
+import logging
+import os
+import re
+import unicodedata
+from collections import defaultdict
+from pathlib import Path
+from typing import Dict, List
+
+import torch
 from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
-from collections import defaultdict
-import re
-import os
-import logging
-import hashlib
-import unicodedata
-from pathlib import Path
-import torch
+
 torch.set_grad_enabled(False)
-from qdrant_client import models
-import pandas as pd
-import threading
-from retry import with_qdrant_retry
+import threading  # noqa: E402
+
+import pandas as pd  # noqa: E402
+from qdrant_client import models  # noqa: E402
+from retry import with_qdrant_retry  # noqa: E402
 
 USE_CUDA = torch.cuda.is_available()
 DEVICE = "cuda" if USE_CUDA else "cpu"
@@ -52,18 +56,17 @@ logger = logging.getLogger(__name__)
 # HELPER — flatten author_name for embedding text
 # ============================================================================
 
+
 def _flatten_author(author_val) -> str:
-    """
-    Safely convert author_name to a plain string for embedding.
+    """Safely convert author_name to a plain string for embedding.
 
     author_name is now stored as a list in Qdrant metadata
-    (e.g. ["கோவை இளஞ்சேரன்", "சாமி பழனியப்பன்"]) but the CSV ஆசிரியர்
-    column still holds the raw bracket string "[கோவை இளஞ்சேரன், சாமி பழனியப்பன்]".
+    but the CSV column still holds the raw bracket string.
 
     Handles:
-      list   → join with ", "
-      str    → strip brackets and return
-      other  → str()
+      list   -> join with ", "
+      str    -> strip brackets and return
+      other  -> str()
     """
     if isinstance(author_val, list):
         return ", ".join(str(a) for a in author_val if a and str(a).upper() != "NA")
@@ -82,10 +85,10 @@ def _flatten_author(author_val) -> str:
 
 _singletons = {}
 _singleton_locks = {
-    'embed_model':    threading.Lock(),
-    'qdrant_client':  threading.Lock(),
-    'csv_dataframe':  threading.Lock(),
-    'csv_embeddings': threading.Lock(),
+    "embed_model": threading.Lock(),
+    "qdrant_client": threading.Lock(),
+    "csv_dataframe": threading.Lock(),
+    "csv_embeddings": threading.Lock(),
 }
 
 
@@ -96,43 +99,42 @@ def _clear_singletons():
 
 def get_embed_model():
     """Load and cache embedding model (thread-safe singleton)."""
-    if 'embed_model' not in _singletons:
-        with _singleton_locks['embed_model']:
-            if 'embed_model' not in _singletons:
-                logger.info(f"Loading embedding model on {DEVICE} (this happens only once)...")
+    if "embed_model" not in _singletons:
+        with _singleton_locks["embed_model"]:
+            if "embed_model" not in _singletons:
+                logger.info(
+                    f"Loading embedding model on {DEVICE} (this happens only once)..."
+                )
                 model = SentenceTransformer(EMBEDDING_MODEL, device=DEVICE)
                 logger.info(f"Embedding model loaded on {DEVICE} and cached")
-                _singletons['embed_model'] = model
-    return _singletons['embed_model']
+                _singletons["embed_model"] = model
+    return _singletons["embed_model"]
 
 
 def get_qdrant_client() -> QdrantClient:
     """Qdrant server mode (thread-safe singleton)."""
-    if 'qdrant_client' not in _singletons:
-        with _singleton_locks['qdrant_client']:
-            if 'qdrant_client' not in _singletons:
+    if "qdrant_client" not in _singletons:
+        with _singleton_locks["qdrant_client"]:
+            if "qdrant_client" not in _singletons:
                 logger.info(f"Using Qdrant server at {QDRANT_HOST}:{QDRANT_PORT}")
                 client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, timeout=30)
                 collection_info = client.get_collection(COLLECTION_NAME)
                 logger.info(f"Connected: {collection_info.points_count} points")
-                _singletons['qdrant_client'] = client
-    return _singletons['qdrant_client']
+                _singletons["qdrant_client"] = client
+    return _singletons["qdrant_client"]
+
 
 def get_csv_dataframe():
-    """
-    Load CSV once and cache it (thread-safe singleton).
+    """Load CSV once and cache it (thread-safe singleton).
 
-    FIX:
-    - Remove dependency on csv_fuzzy_matcher
-    - Use robust pandas parsing (no row loss)
-    - Still supports multi-author fields like:
-      "[பாண்டியன், நா. வேத்தரசன், வணங்காமுடி]"
+    Uses robust pandas parsing with no row loss.
+    Supports multi-author fields with bracket-wrapped names.
     """
-    if 'csv_dataframe' not in _singletons:
-        with _singleton_locks['csv_dataframe']:
-            if 'csv_dataframe' not in _singletons:
+    if "csv_dataframe" not in _singletons:
+        with _singleton_locks["csv_dataframe"]:
+            if "csv_dataframe" not in _singletons:
                 if not CSV_PATH.exists():
-                    _singletons['csv_dataframe'] = pd.DataFrame()
+                    _singletons["csv_dataframe"] = pd.DataFrame()
                 else:
                     try:
                         df = pd.read_csv(
@@ -141,7 +143,7 @@ def get_csv_dataframe():
                             engine="python",
                             quotechar='"',
                             skipinitialspace=True,
-                            on_bad_lines="warn"
+                            on_bad_lines="warn",
                         )
                         df.columns = df.columns.str.strip()
                         logger.info(f"CSV loaded safely: {len(df)} rows")
@@ -149,35 +151,27 @@ def get_csv_dataframe():
                         logger.error(f"CSV loading failed: {e}")
                         df = pd.DataFrame()
 
-                    _singletons['csv_dataframe'] = df
-    return _singletons['csv_dataframe']
+                    _singletons["csv_dataframe"] = df
+    return _singletons["csv_dataframe"]
+
 
 def get_csv_embeddings():
-    """
-    Precompute embeddings for CSV rows (thread-safe singleton).
+    """Precompute embeddings for CSV rows (thread-safe singleton).
 
-    CHANGE: the ஆசிரியர் column now holds bracket-wrapped author strings
-    like "[கோவை இளஞ்சேரன், சாமி பழனியப்பன்]". We use _flatten_author()
-    to strip brackets and join names before building the embedding text,
-    so the semantic search sees clean author names instead of raw brackets.
-
-    Row text format:
-      "வ.எ. | ஆண்டு | மலர் | இதழ் | தலைப்பு | author1, author2"
+    Uses _flatten_author() to strip brackets and join author names
+    before building embedding text for semantic search.
     """
-    if 'csv_embeddings' not in _singletons:
-        with _singleton_locks['csv_embeddings']:
-            if 'csv_embeddings' not in _singletons:
+    if "csv_embeddings" not in _singletons:
+        with _singleton_locks["csv_embeddings"]:
+            if "csv_embeddings" not in _singletons:
                 df = get_csv_dataframe()
                 model = get_embed_model()
 
                 if df.empty:
-                    _singletons['csv_embeddings'] = []
+                    _singletons["csv_embeddings"] = []
                 else:
                     # Identify the author column (Tamil header)
-                    author_col = next(
-                        (c for c in df.columns if "ஆசிரியர்" in c),
-                        None
-                    )
+                    author_col = next((c for c in df.columns if "ஆசிரியர்" in c), None)
 
                     texts = []
                     for _, row in df.iterrows():
@@ -200,13 +194,14 @@ def get_csv_embeddings():
                         show_progress_bar=False,
                         normalize_embeddings=True,
                     )
-                    _singletons['csv_embeddings'] = list(zip(texts, embeddings))
+                    _singletons["csv_embeddings"] = list(zip(texts, embeddings))
                     logger.info(f"CSV embeddings computed: {len(texts)} rows")
 
-    return _singletons['csv_embeddings']
+    return _singletons["csv_embeddings"]
 
 
 def dense_embed_query(text: str):
+    """Encode a query string into a dense embedding vector."""
     model = get_embed_model()
     text = unicodedata.normalize("NFC", text)
     with _embed_lock:
@@ -217,12 +212,11 @@ def dense_embed_query(text: str):
 
 
 def _deterministic_token_hash(token: str) -> int:
-    """
-    Deterministic token hash using MD5, consistent across processes.
+    """Compute deterministic token hash using MD5.
 
-    Python's built-in hash() is randomized per process (PYTHONHASHSEED),
-    which causes sparse vectors at query time to mismatch those created
-    at indexing time. MD5 is deterministic and fast for this use case.
+    Python's built-in hash() is randomized per process
+    (PYTHONHASHSEED), which causes sparse vectors at query
+    time to mismatch those created at indexing time.
     """
     return int(hashlib.md5(token.encode("utf-8")).hexdigest(), 16) % (2**31)
 
@@ -271,6 +265,7 @@ def search_csv_semantic(question: str, top_k: int = 5):
 # QDRANT HEALTH & HYBRID SEARCH
 # ============================================================================
 
+
 def check_qdrant_health() -> Dict:
     """Check Qdrant database health and connectivity."""
     try:
@@ -305,6 +300,7 @@ class HybridQdrantSearch:
     """Hybrid search combining dense and sparse vectors for optimal results."""
 
     def __init__(self, client: QdrantClient):
+        """Initialize with a Qdrant client instance."""
         self.client = client
 
     def search(

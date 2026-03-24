@@ -1,40 +1,46 @@
+"""Qdrant vector indexer for PonniRAG Tamil documents.
+
+Loads articles and authors from S3, generates dense and sparse
+embeddings, and upserts them into a Qdrant collection with
+snapshot-based change detection.
+"""
+
 import argparse
 import hashlib
 import json
 import logging
 import os
+import re
 import unicodedata
 import uuid
-from pathlib import Path
-from typing import Dict, List
-import re
 from collections import Counter
+from typing import Dict, List
 
-import torch
 import boto3
-from sentence_transformers import SentenceTransformer
+import torch
 from qdrant_client import QdrantClient, models
+from sentence_transformers import SentenceTransformer
 
 from src.config.config import (
+    BATCH_SIZE,
+    CHUNK_SIZE,
+    EMBEDDING_DIM,
+    EMBEDDING_MODEL,
+    QDRANT_HOST,
+    QDRANT_PORT,
     S3_BUCKET,
     S3_PREFIX,
     S3_SUFFIX,
-    EMBEDDING_MODEL,
-    EMBEDDING_DIM,
-    CHUNK_SIZE,
-    BATCH_SIZE,
-    QDRANT_HOST,
-    QDRANT_PORT,
 )
-from src.db.retry import with_qdrant_retry
 from src.db.article_tagger import ArticleTagger
+from src.db.retry import with_qdrant_retry
 from src.db.snapshot_manager import (
-    needs_reindex,
-    save_snapshot_to_s3,
-    restore_snapshot_from_s3,
-    save_index_metadata,
     build_index_metadata,
     compute_source_data_hash,
+    needs_reindex,
+    restore_snapshot_from_s3,
+    save_index_metadata,
+    save_snapshot_to_s3,
 )
 
 COLLECTION_NAME = "qdrant_indexer"
@@ -64,29 +70,13 @@ dense_model = SentenceTransformer(EMBEDDING_MODEL, device=DEVICE)
 
 
 def dense_embed_doc(text: str) -> List[float]:
-    """
-    Generate dense embedding for documents during indexing.
-    
-    Args:
-        text (str): Document text to embed
-        
-    Returns:
-        list: Normalized dense embedding vector
-    """
+    """Generate dense embedding for documents during indexing."""
     text = unicodedata.normalize("NFC", text)
     return dense_model.encode(f"passage: {text}", normalize_embeddings=True).tolist()
 
 
 def dense_embed_query(text: str) -> List[float]:
-    """
-    Generate dense embedding for search queries.
-
-    Args:
-        text (str): Query text to embed
-
-    Returns:
-        list: Normalized dense embedding vector
-    """
+    """Generate dense embedding for search queries."""
     text = unicodedata.normalize("NFC", text)
     return dense_model.encode(f"query: {text}", normalize_embeddings=True).tolist()
 
@@ -102,15 +92,7 @@ def _deterministic_token_hash(token: str) -> int:
 
 
 def sparse_embed(text: str) -> models.SparseVector:
-    """
-    Generate BM25-style sparse embedding for text.
-
-    Args:
-        text (str): Text to embed
-
-    Returns:
-        models.SparseVector: Sparse vector with token indices and frequencies
-    """
+    """Generate BM25-style sparse embedding for text."""
     text = unicodedata.normalize("NFC", text)
     tokens = re.findall(r"\b\w+\b", text.lower())
     counts = Counter(tokens)
@@ -127,148 +109,101 @@ def sparse_embed(text: str) -> models.SparseVector:
 
 
 def split_into_sentences(text: str) -> List[str]:
-    """
-    Split text into sentences respecting Tamil and English punctuation.
-    
-    Handles Tamil (।) and English (.!?) sentence terminators.
-    Only returns substantial sentences (minimum 10 characters).
-    
-    Args:
-        text (str): Text to split into sentences
-        
-    Returns:
-        list: List of sentences with punctuation
-    """
-    sentences = re.split(r'([।.!?]+)', text)
-    
+    """Split text into sentences respecting Tamil and English punctuation."""
+    sentences = re.split(r"([।.!?]+)", text)
+
     result = []
     i = 0
     while i < len(sentences):
         sentence = sentences[i].strip()
-        
+
         if not sentence:
             i += 1
             continue
-        
-        if i + 1 < len(sentences) and re.match(r'^[।.!?]+$', sentences[i + 1]):
+
+        if i + 1 < len(sentences) and re.match(r"^[।.!?]+$", sentences[i + 1]):
             sentence += sentences[i + 1]
             i += 2
         else:
             i += 1
-        
+
         if len(sentence) > 10:
             result.append(sentence.strip())
-    
+
     return result
 
 
 def chunk_text(text: str, size: int) -> List[str]:
-    """
-    Chunk text by sentences to ensure complete sentences in each chunk.
-    
-    Uses word-based chunking with target and maximum word counts.
-    Ensures chunks start and end on sentence boundaries.
-    
-    Args:
-        text (str): Text to chunk
-        size (int): Target character size (converted to words internally)
-        
-    Returns:
-        list: List of text chunks with complete sentences
-    """
+    """Chunk text by sentences to ensure complete sentences in each chunk."""
     if not text or not text.strip():
         return []
-    
+
     target_words = size // 6
     max_words = int(target_words * 1.5)
-    
+
     sentences = split_into_sentences(text)
-    
+
     if not sentences:
         return []
-    
+
     chunks = []
     current_chunk = []
     current_word_count = 0
-    
+
     for sentence in sentences:
-        words = len(re.findall(r'[\u0B80-\u0BFF]+|\w+', sentence))
-        
+        words = len(re.findall(r"[\u0B80-\u0BFF]+|\w+", sentence))
+
         if words > max_words:
             if current_chunk:
-                chunks.append(' '.join(current_chunk))
+                chunks.append(" ".join(current_chunk))
                 current_chunk = []
                 current_word_count = 0
             chunks.append(sentence)
             continue
-        
+
         if current_word_count + words > max_words and current_chunk:
-            chunks.append(' '.join(current_chunk))
+            chunks.append(" ".join(current_chunk))
             current_chunk = []
             current_word_count = 0
-        
+
         current_chunk.append(sentence)
         current_word_count += words
-        
+
         if current_word_count >= target_words:
-            chunks.append(' '.join(current_chunk))
+            chunks.append(" ".join(current_chunk))
             current_chunk = []
             current_word_count = 0
-    
+
     if current_chunk:
-        chunk_text = ' '.join(current_chunk)
-        words_in_chunk = len(re.findall(r'[\u0B80-\u0BFF]+|\w+', chunk_text))
+        last_chunk = " ".join(current_chunk)
+        words_in_chunk = len(re.findall(r"[\u0B80-\u0BFF]+|\w+", last_chunk))
         if words_in_chunk >= 30:
-            chunks.append(chunk_text)
-    
+            chunks.append(last_chunk)
+
     return chunks
 
 
 def validate_chunk(chunk: str) -> bool:
-    """
-    Validate chunk quality before indexing.
-    
-    Checks:
-    - Minimum length (50 characters)
-    - Starts with letter (not punctuation)
-    - Minimum 30 words
-    - Contains Tamil characters (minimum 20)
-    
-    Args:
-        chunk (str): Text chunk to validate
-        
-    Returns:
-        bool: True if chunk meets quality standards
-    """
+    """Validate chunk quality before indexing."""
     if not chunk or len(chunk) < 50:
         return False
-    
-    if not re.match(r'^[a-zA-Zஅ-ஹ]', chunk.strip()):
+
+    if not re.match(r"^[a-zA-Zஅ-ஹ]", chunk.strip()):
         return False
-    
-    words = len(re.findall(r'[\u0B80-\u0BFF]+|\w+', chunk))
+
+    words = len(re.findall(r"[\u0B80-\u0BFF]+|\w+", chunk))
     if words < 30:
         return False
-    
-    tamil_chars = len(re.findall(r'[\u0B80-\u0BFF]', chunk))
+
+    tamil_chars = len(re.findall(r"[\u0B80-\u0BFF]", chunk))
     if tamil_chars < 20:
         return False
-    
+
     return True
 
 
 def list_s3_json_files(bucket: str, prefix: str, suffix: str) -> List[str]:
-    """
-    List all JSON files in S3 bucket with given prefix and suffix.
-    
-    Args:
-        bucket (str): S3 bucket name
-        prefix (str): S3 key prefix to filter
-        suffix (str): File suffix to filter (e.g., '.json')
-        
-    Returns:
-        list: List of S3 keys matching criteria
-    """
+    """List all JSON files in S3 bucket with given prefix and suffix."""
     keys = []
     paginator = s3.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
@@ -276,22 +211,12 @@ def list_s3_json_files(bucket: str, prefix: str, suffix: str) -> List[str]:
             key = obj["Key"]
             if key.endswith(suffix):
                 keys.append(key)
-                logger.debug(f"Found: {key}") 
+                logger.debug(f"Found: {key}")
     return keys
 
 
 def extract_volume_from_s3_key(s3_key: str) -> str:
-    """
-    Extract volume identifier from S3 key path.
-    
-    Looks for path segments like 'vol_1', 'vol_2', etc.
-    
-    Args:
-        s3_key (str): S3 object key
-        
-    Returns:
-        str: Volume identifier or 'unknown' if not found
-    """
+    """Extract volume identifier from S3 key path."""
     for part in s3_key.split("/"):
         if part.lower().startswith("vol_"):
             return part
@@ -299,36 +224,14 @@ def extract_volume_from_s3_key(s3_key: str) -> str:
 
 
 def is_author_file(s3_key: str) -> bool:
-    """
-    Check if S3 key points to an authors.json file.
-    
-    Args:
-        s3_key (str): S3 object key
-        
-    Returns:
-        bool: True if file is authors.json
-    """
+    """Check if S3 key points to an authors.json file."""
     return s3_key.lower().endswith("authors.json")
 
 
 def load_documents_from_s3() -> List[Dict]:
-    """
-    Load and process article documents from S3 with automatic tagging.
-
-    Two-pass approach:
-    1. Load all articles from S3, train TF-IDF tagger on full corpus
-    2. Tag each article, chunk, and create document dicts with tags in metadata
-
-    Returns:
-        list: List of document dictionaries ready for indexing
-    """
+    """Load and process article documents from S3 with automatic tagging."""
     documents = []
-    chunk_stats = {
-        'total': 0,
-        'valid': 0,
-        'invalid': 0,
-        'word_counts': []
-    }
+    chunk_stats = {"total": 0, "valid": 0, "invalid": 0, "word_counts": []}
 
     keys = list_s3_json_files(S3_BUCKET, S3_PREFIX, S3_SUFFIX)
     logger.info(f"Found {len(keys)} JSON files in S3")
@@ -388,66 +291,67 @@ def load_documents_from_s3() -> List[Dict]:
         )
 
         for idx, chunk in enumerate(chunks):
-            chunk_stats['total'] += 1
+            chunk_stats["total"] += 1
 
             if not validate_chunk(chunk):
-                chunk_stats['invalid'] += 1
+                chunk_stats["invalid"] += 1
                 logger.debug(f"    Skipped invalid chunk {idx}")
                 continue
 
-            chunk_stats['valid'] += 1
-            word_count = len(re.findall(r'[\u0B80-\u0BFF]+|\w+', chunk))
-            chunk_stats['word_counts'].append(word_count)
+            chunk_stats["valid"] += 1
+            word_count = len(re.findall(r"[\u0B80-\u0BFF]+|\w+", chunk))
+            chunk_stats["word_counts"].append(word_count)
 
-            documents.append({
-                "id": str(uuid.uuid5(
-                    uuid.NAMESPACE_DNS,
-                    f"{key}-{article.get('doc_id')}-{article.get('article_no')}-{idx}"
-                )),
-                "text": chunk,
-                "metadata": {
-                    "doc_id": article.get("doc_id"),
-                    "doc_issue": article.get("doc_issue"),
-                    "article_no": article.get("article_no"),
-                    "author_name": article.get("author_name", ""),
-                    "title": article.get("title", ""),
-                    "year": article.get("year", ""),
-                    "source_document": article.get("source_document", ""),
-                    "source": "s3",
-                    "s3_key": key,
-                    "chunk_id": idx,
-                    "total_chunks": len(chunks),
-                    "volume": volume,
-                    "tags": article_tags,
-                    "tags_tamil": article_tags_tamil,
-                },
-            })
+            doc_id = article.get("doc_id")
+            art_no = article.get("article_no")
+            uuid_name = f"{key}-{doc_id}-{art_no}-{idx}"
+            documents.append(
+                {
+                    "id": str(
+                        uuid.uuid5(
+                            uuid.NAMESPACE_DNS,
+                            uuid_name,
+                        )
+                    ),
+                    "text": chunk,
+                    "metadata": {
+                        "doc_id": article.get("doc_id"),
+                        "doc_issue": article.get("doc_issue"),
+                        "article_no": article.get("article_no"),
+                        "author_name": article.get("author_name", ""),
+                        "title": article.get("title", ""),
+                        "year": article.get("year", ""),
+                        "source_document": article.get("source_document", ""),
+                        "source": "s3",
+                        "s3_key": key,
+                        "chunk_id": idx,
+                        "total_chunks": len(chunks),
+                        "volume": volume,
+                        "tags": article_tags,
+                        "tags_tamil": article_tags_tamil,
+                    },
+                }
+            )
 
-    if chunk_stats['word_counts']:
+    if chunk_stats["word_counts"]:
         logger.info(f"\n{'='*60}")
         logger.info("CHUNK STATISTICS")
         logger.info(f"{'='*60}")
         logger.info(f"Total chunks: {chunk_stats['total']}")
         logger.info(f"Valid chunks: {chunk_stats['valid']}")
         logger.info(f"Invalid chunks: {chunk_stats['invalid']}")
-        logger.info(f"Words -> min={min(chunk_stats['word_counts'])}, "
-                   f"max={max(chunk_stats['word_counts'])}, "
-                   f"avg={sum(chunk_stats['word_counts'])//len(chunk_stats['word_counts'])}")
+        logger.info(
+            f"Words -> min={min(chunk_stats['word_counts'])}, "
+            f"max={max(chunk_stats['word_counts'])}, "
+            f"avg={sum(chunk_stats['word_counts'])//len(chunk_stats['word_counts'])}"
+        )
 
     logger.info(f"Prepared {len(documents)} valid chunks")
     return documents
 
 
 def load_authors_from_s3() -> List[Dict]:
-    """
-    Load author metadata from S3 authors.json files.
-    
-    Extracts author information and creates document dictionaries
-    with associated metadata (doc_id, issue, volume).
-    
-    Returns:
-        list: List of author document dictionaries ready for indexing
-    """
+    """Load author metadata from S3 authors.json files."""
     documents = []
 
     keys = list_s3_json_files(S3_BUCKET, S3_PREFIX, S3_SUFFIX)
@@ -456,13 +360,13 @@ def load_authors_from_s3() -> List[Dict]:
     for key in keys:
         if not is_author_file(key):
             continue
-        
+
         logger.info(f"Processing authors file: {key}")
-        
+
         try:
             obj = s3.get_object(Bucket=S3_BUCKET, Key=key)
             data = json.loads(obj["Body"].read().decode("utf-8"))
-            
+
             if not isinstance(data, list):
                 continue
 
@@ -477,20 +381,24 @@ def load_authors_from_s3() -> List[Dict]:
                     if not author:
                         continue
 
-                    documents.append({
-                        "id": str(uuid.uuid5(
-                            uuid.NAMESPACE_DNS,
-                            f"{key}-{doc_id}-{doc_issue}-{author}"
-                        )),
-                        "text": author,
-                        "metadata": {
-                            "author": author,
-                            "doc_id": doc_id,
-                            "doc_issue": doc_issue,
-                            "volume": volume,
-                            "source": "authors_json",
+                    documents.append(
+                        {
+                            "id": str(
+                                uuid.uuid5(
+                                    uuid.NAMESPACE_DNS,
+                                    f"{key}-{doc_id}-{doc_issue}-{author}",
+                                )
+                            ),
+                            "text": author,
+                            "metadata": {
+                                "author": author,
+                                "doc_id": doc_id,
+                                "doc_issue": doc_issue,
+                                "volume": volume,
+                                "source": "authors_json",
+                            },
                         }
-                    })
+                    )
 
         except Exception as e:
             logger.error(f"Failed to process {key}: {e}")
@@ -514,10 +422,8 @@ def _do_full_index(client):
             )
         },
         sparse_vectors_config={
-            "sparse": models.SparseVectorParams(
-                modifier=models.Modifier.IDF
-            )
-        }
+            "sparse": models.SparseVectorParams(modifier=models.Modifier.IDF)
+        },
     )
     logger.info(f"Created collection: {COLLECTION_NAME}")
 
@@ -606,7 +512,9 @@ def _do_full_index(client):
                     points=points,
                 )
                 indexed_authors += len(points)
-                logger.info(f"  Indexed {indexed_authors}/{len(author_documents)} authors")
+                logger.info(
+                    f"  Indexed {indexed_authors}/{len(author_documents)} authors"
+                )
                 points.clear()
 
         except Exception as e:
@@ -632,16 +540,7 @@ def _do_full_index(client):
 
 
 def main(force_reindex: bool = False):
-    """
-    Smart indexing entry point.
-
-    Flow:
-    1. Connect to Qdrant server
-    2. Check if re-indexing is needed (embedding config or source data changed)
-    3. If no reindex needed and collection exists -> done
-    4. If no reindex needed but collection missing -> restore from S3 snapshot
-    5. If reindex needed (or restore failed) -> full re-index + save snapshot
-    """
+    """Run smart indexing with change detection and snapshot management."""
     logger.info(f"Connecting to Qdrant server at {QDRANT_HOST}:{QDRANT_PORT}")
     client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
 
@@ -663,16 +562,21 @@ def main(force_reindex: bool = False):
         if client.collection_exists(COLLECTION_NAME):
             info = client.get_collection(COLLECTION_NAME)
             logger.info(
-                f"Collection '{COLLECTION_NAME}' exists with {info.points_count} points — nothing to do"
+                f"Collection '{COLLECTION_NAME}' exists with "
+                f"{info.points_count} points — nothing to do"
             )
             return
 
         # Collection missing — try to restore from S3 snapshot
         logger.info("Collection not found in Qdrant — attempting S3 snapshot restore")
-        restored = restore_snapshot_from_s3(client, s3_client, S3_BUCKET, COLLECTION_NAME)
+        restored = restore_snapshot_from_s3(
+            client, s3_client, S3_BUCKET, COLLECTION_NAME
+        )
         if restored:
             info = client.get_collection(COLLECTION_NAME)
-            logger.info(f"Restored collection with {info.points_count} points from S3 snapshot")
+            logger.info(
+                f"Restored collection with {info.points_count} points from S3 snapshot"
+            )
             return
 
         logger.info("Snapshot restore failed — falling through to full reindex")
@@ -689,8 +593,12 @@ def _save_snapshot_and_metadata(client, s3_client):
     """Save snapshot to S3 and update index metadata after indexing."""
     try:
         info = client.get_collection(COLLECTION_NAME)
-        snapshot_key = save_snapshot_to_s3(client, s3_client, S3_BUCKET, COLLECTION_NAME)
-        source_hash = compute_source_data_hash(s3_client, S3_BUCKET, S3_PREFIX, S3_SUFFIX)
+        snapshot_key = save_snapshot_to_s3(
+            client, s3_client, S3_BUCKET, COLLECTION_NAME
+        )
+        source_hash = compute_source_data_hash(
+            s3_client, S3_BUCKET, S3_PREFIX, S3_SUFFIX
+        )
         metadata = build_index_metadata(
             snapshot_s3_key=snapshot_key,
             points_count=info.points_count,

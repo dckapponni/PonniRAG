@@ -14,22 +14,20 @@ Each CSV row maps to one article in Qdrant. We query by doc_id + doc_issue
 Usage:
     cd src/db && python update_csv_tags.py
 """
+
+import logging
 import os
 import sys
-import logging
 from pathlib import Path
 
-import pandas as pd
 from qdrant_client import QdrantClient, models
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
-
-from db.article_tagger import TAXONOMY
-
 # load_csv handles multi-author rows like [பாண்டியன், நா. வேத்தரசன், வணங்காமுடி]
 # that contain commas inside brackets — which pd.read_csv silently drops.
 sys.path.append(str(Path(__file__).resolve().parents[1] / "data_extraction"))
-from csv_fuzzy_matcher import load_csv
+
+from csv_fuzzy_matcher import load_csv  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -41,13 +39,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 CSV_PATH = BASE_DIR / "data" / "summary.csv"
 
 # CSV column names (Tamil headers)
-COL_SERIAL   = "வ.எ."     # article serial number
-COL_YEAR     = "ஆண்டு"
-COL_VOLUME   = "மலர்"     # doc_id in Qdrant
-COL_ISSUE    = "இதழ்"     # doc_issue in Qdrant
-COL_TITLE    = "தலைப்பு"
-COL_AUTHOR   = "ஆசிரியர்"
-COL_TAGS     = "வகை"      # output column we write
+COL_SERIAL = "வ.எ."  # article serial number
+COL_YEAR = "ஆண்டு"
+COL_VOLUME = "மலர்"  # doc_id in Qdrant
+COL_ISSUE = "இதழ்"  # doc_issue in Qdrant
+COL_TITLE = "தலைப்பு"
+COL_AUTHOR = "ஆசிரியர்"
+COL_TAGS = "வகை"  # output column we write
 
 
 def get_tags_from_qdrant(
@@ -56,21 +54,19 @@ def get_tags_from_qdrant(
     doc_issue: str,
     article_no: str,
 ) -> list:
-    """
-    Query Qdrant for tags of a specific article.
-
-    Matches by doc_id (மலர்) + doc_issue (இதழ்) + article_no (வ.எ.)
-    and fetches chunk_id=0 (first chunk carries the article-level tags).
-
-    Falls back to doc_id + doc_issue only if article_no match returns nothing
-    (handles cases where article_no was not stored or differs).
-    """
+    """Query Qdrant for tags of a specific article."""
     # Primary: match by doc_id + doc_issue + article_no
     filter_conditions = [
-        models.FieldCondition(key="type",                match=models.MatchValue(value="article")),
-        models.FieldCondition(key="metadata.doc_id",     match=models.MatchValue(value=doc_id)),
-        models.FieldCondition(key="metadata.doc_issue",  match=models.MatchValue(value=doc_issue)),
-        models.FieldCondition(key="metadata.chunk_id",   match=models.MatchValue(value=0)),
+        models.FieldCondition(key="type", match=models.MatchValue(value="article")),
+        models.FieldCondition(
+            key="metadata.doc_id", match=models.MatchValue(value=doc_id)
+        ),
+        models.FieldCondition(
+            key="metadata.doc_issue", match=models.MatchValue(value=doc_issue)
+        ),
+        models.FieldCondition(
+            key="metadata.chunk_id", match=models.MatchValue(value=0)
+        ),
     ]
 
     # Include article_no if available
@@ -110,6 +106,7 @@ def get_tags_from_qdrant(
 
 
 def main():
+    """Update summary.csv with article tags from Qdrant."""
     if not CSV_PATH.exists():
         logger.error(f"CSV not found: {CSV_PATH}")
         return
@@ -122,12 +119,16 @@ def main():
     # Validate required columns exist
     missing = [c for c in [COL_VOLUME, COL_ISSUE] if c not in df.columns]
     if missing:
-        logger.error(f"Required columns missing: {missing}. Available: {list(df.columns)}")
+        logger.error(
+            f"Required columns missing: {missing}. Available: {list(df.columns)}"
+        )
         return
 
     has_serial = COL_SERIAL in df.columns
     if not has_serial:
-        logger.warning(f"Column '{COL_SERIAL}' not found — will match by மலர்+இதழ் only")
+        logger.warning(
+            f"Column '{COL_SERIAL}' not found — will match by மலர்+இதழ் only"
+        )
 
     logger.info(f"Connecting to Qdrant at {QDRANT_HOST}:{QDRANT_PORT}")
     client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
@@ -146,8 +147,6 @@ def main():
 
         # Normalise: remove trailing .0 from numeric values read as float
         # e.g. pandas reads "1" as 1.0 → "1.0" → we want "1"
-        for val in [doc_id, doc_issue, article_no]:
-            pass  # done below per variable
         if doc_id.endswith(".0"):
             doc_id = doc_id[:-2]
         if doc_issue.endswith(".0"):
@@ -178,7 +177,9 @@ def main():
 
     df.to_csv(CSV_PATH, index=False, encoding="utf-8")
     logger.info(f"Saved updated CSV: {CSV_PATH}")
-    logger.info(f"Tagged {updated}/{len(df)} articles ({not_found} not found in Qdrant)")
+    logger.info(
+        f"Tagged {updated}/{len(df)} articles ({not_found} not found in Qdrant)"
+    )
 
 
 if __name__ == "__main__":

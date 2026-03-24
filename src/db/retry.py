@@ -1,8 +1,9 @@
-"""
-Retry utilities with exponential backoff for external service calls.
+"""Retry utilities with exponential backoff for external service calls.
+
 Provides service-specific wrappers for Qdrant and Gemini API calls.
-No external dependencies — uses only stdlib + safe imports of client libraries.
+No external dependencies -- uses only stdlib plus safe client imports.
 """
+
 import asyncio
 import logging
 import random
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 # Exception predicates
 # ---------------------------------------------------------------------------
 
+
 def is_retryable_qdrant(exc: Exception) -> bool:
     """Return True if the Qdrant exception is transient and worth retrying."""
     if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
@@ -23,6 +25,7 @@ def is_retryable_qdrant(exc: Exception) -> bool:
     # httpx transport errors (connection refused, timeout, etc.)
     try:
         import httpx
+
         if isinstance(exc, httpx.TransportError):
             return True
     except ImportError:
@@ -34,6 +37,7 @@ def is_retryable_qdrant(exc: Exception) -> bool:
             ResponseHandlingException,
             UnexpectedResponse,
         )
+
         if isinstance(exc, ResponseHandlingException):
             return True
         if isinstance(exc, UnexpectedResponse):
@@ -59,6 +63,7 @@ def is_retryable_gemini(exc: Exception) -> bool:
     # httpx transport errors
     try:
         import httpx
+
         if isinstance(exc, httpx.TransportError):
             return True
     except ImportError:
@@ -66,7 +71,8 @@ def is_retryable_gemini(exc: Exception) -> bool:
 
     # google-genai specific errors
     try:
-        from google.genai.errors import ServerError, ClientError, APIError
+        from google.genai.errors import APIError, ClientError, ServerError
+
         if isinstance(exc, ServerError):
             return True
         if isinstance(exc, ClientError):
@@ -92,6 +98,7 @@ def is_retryable_gemini(exc: Exception) -> bool:
 # Backoff computation
 # ---------------------------------------------------------------------------
 
+
 def _compute_delay(
     attempt: int,
     base: float,
@@ -102,7 +109,7 @@ def _compute_delay(
 
     delay = min(base * 2^attempt, maximum) * (1 ± jitter)
     """
-    delay = min(base * (2 ** attempt), maximum)
+    delay = min(base * (2**attempt), maximum)
     if jitter > 0:
         delay *= 1 + random.uniform(-jitter, jitter)
     return max(0, delay)
@@ -111,6 +118,7 @@ def _compute_delay(
 # ---------------------------------------------------------------------------
 # Core retry loops
 # ---------------------------------------------------------------------------
+
 
 def retry_sync(
     fn,
@@ -122,14 +130,18 @@ def retry_sync(
     jitter: float = 0.25,
     is_retryable=None,
 ):
-    """Synchronous retry loop with exponential backoff.
+    """Run synchronous retry loop with exponential backoff.
 
     Calls fn(*args, **kwargs) up to max_attempts times. Non-retryable
     exceptions propagate immediately.
     """
     kwargs = kwargs or {}
-    if is_retryable is None:
-        is_retryable = lambda e: False
+
+    def _default_not_retryable(e):
+        """Return False for all exceptions."""
+        return False
+
+    check_retryable = is_retryable or _default_not_retryable
 
     last_exc = None
     for attempt in range(max_attempts):
@@ -137,17 +149,20 @@ def retry_sync(
             return fn(*args, **kwargs)
         except Exception as exc:
             last_exc = exc
-            if not is_retryable(exc) or attempt == max_attempts - 1:
+            if not check_retryable(exc) or attempt == max_attempts - 1:
                 raise
             delay = _compute_delay(attempt, base_delay, max_delay, jitter)
             logger.warning(
                 "Retry %d/%d for %s after %.2fs: %s",
-                attempt + 1, max_attempts,
-                getattr(fn, "__name__", repr(fn)), delay, exc,
+                attempt + 1,
+                max_attempts,
+                getattr(fn, "__name__", repr(fn)),
+                delay,
+                exc,
             )
             time.sleep(delay)
 
-    raise last_exc  # pragma: no cover — unreachable, satisfies type checker
+    raise last_exc  # pragma: no cover
 
 
 async def retry_async(
@@ -165,8 +180,12 @@ async def retry_async(
     Calls await fn(*args, **kwargs) up to max_attempts times.
     """
     kwargs = kwargs or {}
-    if is_retryable is None:
-        is_retryable = lambda e: False
+
+    def _default_not_retryable(e):
+        """Return False for all exceptions."""
+        return False
+
+    check_retryable = is_retryable or _default_not_retryable
 
     last_exc = None
     for attempt in range(max_attempts):
@@ -174,13 +193,16 @@ async def retry_async(
             return await fn(*args, **kwargs)
         except Exception as exc:
             last_exc = exc
-            if not is_retryable(exc) or attempt == max_attempts - 1:
+            if not check_retryable(exc) or attempt == max_attempts - 1:
                 raise
             delay = _compute_delay(attempt, base_delay, max_delay, jitter)
             logger.warning(
                 "Async retry %d/%d for %s after %.2fs: %s",
-                attempt + 1, max_attempts,
-                getattr(fn, "__name__", repr(fn)), delay, exc,
+                attempt + 1,
+                max_attempts,
+                getattr(fn, "__name__", repr(fn)),
+                delay,
+                exc,
             )
             await asyncio.sleep(delay)
 
@@ -190,6 +212,7 @@ async def retry_async(
 # ---------------------------------------------------------------------------
 # Service-specific convenience wrappers
 # ---------------------------------------------------------------------------
+
 
 def with_qdrant_retry(fn, *args, **kwargs):
     """Retry a Qdrant call: 3 attempts, 0.5s→4s backoff, 25% jitter."""

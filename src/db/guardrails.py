@@ -6,9 +6,9 @@ hardening, output validation, and error sanitization.  All functions are
 pure and stateless — no project dependencies.
 """
 
+import logging
 import re
 import unicodedata
-import logging
 from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -20,19 +20,39 @@ logger = logging.getLogger(__name__)
 # HIGH confidence patterns — block the request outright
 _HIGH_PATTERNS = [
     # Instruction override
-    re.compile(r"ignore\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|rules?|context)", re.I),
-    re.compile(r"disregard\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|rules?)", re.I),
-    re.compile(r"forget\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|rules?)", re.I),
-    re.compile(r"override\s+(all\s+)?(previous|prior|above|system)\s+(instructions?|prompts?|rules?)", re.I),
+    re.compile(
+        r"ignore\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|rules?|context)",
+        re.I,
+    ),
+    re.compile(
+        r"disregard\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|rules?)",
+        re.I,
+    ),
+    re.compile(
+        r"forget\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|rules?)",
+        re.I,
+    ),
+    re.compile(
+        r"override\s+(all\s+)?(previous|prior|above|system)\s+(instructions?|prompts?|rules?)",
+        re.I,
+    ),
     # Role switching
     re.compile(r"you\s+are\s+now\s+(a|an|the)\s+", re.I),
     re.compile(r"act\s+as\s+(a|an|the|if)\s+", re.I),
     re.compile(r"pretend\s+(to\s+be|you\s+are)\s+", re.I),
     re.compile(r"switch\s+to\s+.{0,20}\s*mode", re.I),
     # System prompt extraction
-    re.compile(r"(show|reveal|display|print|output|repeat|echo)\s+(me\s+)?(your|the)\s+(system\s+)?(prompt|instructions?|rules?|guidelines?)", re.I),
-    re.compile(r"what\s+(are|is)\s+your\s+(system\s+)?(prompt|instructions?|rules?|guidelines?)", re.I),
-    re.compile(r"(give|tell)\s+me\s+your\s+(system\s+)?(prompt|instructions?|rules?)", re.I),
+    re.compile(
+        r"(show|reveal|display|print|output|repeat|echo)\s+(me\s+)?(your|the)\s+(system\s+)?(prompt|instructions?|rules?|guidelines?)",
+        re.I,
+    ),
+    re.compile(
+        r"what\s+(are|is)\s+your\s+(system\s+)?(prompt|instructions?|rules?|guidelines?)",
+        re.I,
+    ),
+    re.compile(
+        r"(give|tell)\s+me\s+your\s+(system\s+)?(prompt|instructions?|rules?)", re.I
+    ),
     # Delimiter / format injection
     re.compile(r"<\s*system\s*>", re.I),
     re.compile(r"<\s*/?\s*(?:system|user|assistant|human|ai)\s*>", re.I),
@@ -47,8 +67,14 @@ _HIGH_PATTERNS = [
 _MEDIUM_PATTERNS = [
     re.compile(r"from\s+now\s+on", re.I),
     re.compile(r"your\s+new\s+(task|role|job|purpose)\s+is", re.I),
-    re.compile(r"(list|show|print|display)\s+(all\s+)?(environment\s+variables?|env\s+vars?)", re.I),
-    re.compile(r"(list|show|print|display)\s+(all\s+)?(api\s+keys?|secrets?|credentials?)", re.I),
+    re.compile(
+        r"(list|show|print|display)\s+(all\s+)?(environment\s+variables?|env\s+vars?)",
+        re.I,
+    ),
+    re.compile(
+        r"(list|show|print|display)\s+(all\s+)?(api\s+keys?|secrets?|credentials?)",
+        re.I,
+    ),
 ]
 
 
@@ -80,9 +106,7 @@ def detect_injection(text: str) -> Tuple[bool, str]:
 # ============================================================================
 
 # Control characters to strip (keep \n, \t, space)
-_CONTROL_CHAR_RE = re.compile(
-    r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]"
-)
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 
 # Prompt template separators that could be used to inject structure
 _SEPARATOR_RE = re.compile(r"={4,}")
@@ -98,9 +122,9 @@ _MULTI_SPACE_RE = re.compile(r" {3,}")
 
 
 def sanitize_query(question: str) -> str:
-    """Neutralize structural attack vectors in user input.
+    r"""Neutralize structural attack vectors in user input.
 
-    - Strips control characters (keeps \\n, \\t, space)
+    - Strips control characters (keeps \n, \t, space)
     - Replaces prompt template separators (====, ```)
     - Collapses excessive newlines/spaces
     - NFC normalizes (idempotent with existing normalization)
@@ -168,7 +192,8 @@ def validate_history(history: Optional[List[Dict]]) -> Optional[List[Dict]]:
         if expected_role is not None and role != expected_role:
             logger.warning(
                 "History role '%s' out of order (expected '%s') — dropping turn",
-                role, expected_role
+                role,
+                expected_role,
             )
             continue
 
@@ -282,7 +307,9 @@ def sanitize_output(response: str) -> str:
 # ERROR SANITIZATION
 # ============================================================================
 
-SAFE_ERROR_MESSAGE = "மன்னிக்கவும், தற்போது சேவை இடையூறு ஏற்பட்டுள்ளது. மீண்டும் முயற்சிக்கவும்."
+SAFE_ERROR_MESSAGE = (
+    "மன்னிக்கவும், தற்போது சேவை இடையூறு ஏற்பட்டுள்ளது. மீண்டும் முயற்சிக்கவும்."
+)
 SAFE_ERROR_MESSAGE_EN = "Sorry, a service interruption has occurred. Please try again."
 
 
@@ -297,8 +324,11 @@ def safe_error_response(language: str = "ta") -> Dict:
 
 
 def safe_error_message(context: str = "") -> str:
-    """Return a generic error string. If context is 'en', returns English; otherwise Tamil.
-    For non-language context strings, logs them and returns Tamil."""
+    """Return a generic error string.
+
+    If context is 'en', returns English; otherwise Tamil.
+    For non-language context strings, logs them and returns Tamil.
+    """
     if context == "en":
         return SAFE_ERROR_MESSAGE_EN
     if context:

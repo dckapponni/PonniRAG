@@ -1,26 +1,25 @@
-"""
-CSV query pipeline for author/topic queries in Tamil document processing.
+"""CSV query pipeline for author/topic queries in Tamil document processing.
+
 Handles author name matching, query type detection, entity extraction,
 and CSV data formatting for the Ponni magazine archive.
 """
-import re
+
 import logging
+import re
 import threading
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 import pandas as pd
-
 from tamil_text import (
-    FUZZY_THRESHOLD,
-    TYPO_DISTANCE,
-    fuzzy_match_score,
-    _edit_distance_one,
-    _strip_tamil_possessive_suffixes,
-    _strip_tamil_possessive_suffix_word,
-    _PatternBank,
     _RE_INITIALS_NAME,
     _RE_TAMIL_WORD,
+    FUZZY_THRESHOLD,
+    _edit_distance_one,
+    _PatternBank,
+    _strip_tamil_possessive_suffix_word,
+    _strip_tamil_possessive_suffixes,
+    fuzzy_match_score,
     normalize_unicode,
 )
 
@@ -33,6 +32,7 @@ _author_system_lock = threading.Lock()
 # ============================================================================
 # CSV LOADER HELPER
 # ============================================================================
+
 
 def _load_csv_safe(csv_path) -> pd.DataFrame:
     """
@@ -52,6 +52,7 @@ def _load_csv_safe(csv_path) -> pd.DataFrame:
     # Primary: load_csv handles multi-author bracket fields
     try:
         from csv_fuzzy_matcher import load_csv
+
         df = load_csv(csv_path)
         df.columns = df.columns.str.strip()
         logger.info(f"CSV loaded via load_csv: {len(df)} rows")
@@ -81,6 +82,7 @@ def _load_csv_safe(csv_path) -> pd.DataFrame:
 # ============================================================================
 # AUTHOR FIELD PARSING
 # ============================================================================
+
 
 def _format_author_display(csv_name: str) -> str:
     """Format a CSV author cell for display: comma-separated, no brackets, 'NA' if empty."""
@@ -121,26 +123,37 @@ def _parse_csv_authors(csv_name: str) -> List[str]:
 # AUTHOR NAME NORMALISATION & MATCHING
 # ============================================================================
 
+
 def normalize_author_name(name: str) -> str:
+    """Normalize an author name by stripping honorific prefixes."""
     if not name:
         return ""
     name = normalize_unicode(name)
     prefixes_to_remove = [
-        r'மு\.,?\s*', r'டாக்டர்\.?\s*', r'திரு\.,?\s*',
-        r'திருமதி\.?\s*', r'Dr\.?\s*', r'Mr\.?\s*', r'Mrs\.?\s*',
-        r'கவிஞர்\.?\s*', r'பேராசிரியர்\.?\s*', r'அறிஞர்\.?\s*',
-        r'புலவர்\.?\s*', r'கவியரசு\.?\s*', r'பாவேந்தர்\.?\s*',
+        r"மு\.,?\s*",
+        r"டாக்டர்\.?\s*",
+        r"திரு\.,?\s*",
+        r"திருமதி\.?\s*",
+        r"Dr\.?\s*",
+        r"Mr\.?\s*",
+        r"Mrs\.?\s*",
+        r"கவிஞர்\.?\s*",
+        r"பேராசிரியர்\.?\s*",
+        r"அறிஞர்\.?\s*",
+        r"புலவர்\.?\s*",
+        r"கவியரசு\.?\s*",
+        r"பாவேந்தர்\.?\s*",
     ]
     cleaned = name.strip()
     for prefix in prefixes_to_remove:
-        cleaned = re.sub(prefix, '', cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        cleaned = re.sub(prefix, "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned
 
 
 def flexible_author_match(search_name: str, csv_name: str) -> bool:
-    """
-    Flexible matching between search query and CSV author field.
+    """Flexibly match a search query against a CSV author field.
+
     Supports multi-author fields like "[A, B, C]".
     Checks each individual parsed author name against the search query.
     """
@@ -151,14 +164,14 @@ def flexible_author_match(search_name: str, csv_name: str) -> bool:
     csv_authors = _parse_csv_authors(csv_name)
 
     special_cases = {
-        'கலைஞர்':     ['கருணாநிதி', 'மு.கருணாநிதி', 'மு. கருணாநிதி'],
-        'கருணாநிதி':  ['கலைஞர்',    'மு.கருணாநிதி', 'மு. கருணாநிதி'],
-        'அண்ணா':      ['அண்ணாதுரை', 'சி.என்.அண்ணாதுரை'],
-        'அண்ணாதுரை':  ['அண்ணா',     'சி.என்.அண்ணாதுரை'],
-        'பாரதிதாசன்': ['பாவேந்தர்', 'பாவேந்தர் பாரதிதாசன்'],
-        'பாவேந்தர்':  ['பாரதிதாசன்', 'பாவேந்தர் பாரதிதாசன்'],
-        'கண்ணதாசன்':  ['கவியரசு', 'கவியரசு கண்ணதாசன்'],
-        'கவியரசு':    ['கண்ணதாசன்', 'கவியரசு கண்ணதாசன்'],
+        "கலைஞர்": ["கருணாநிதி", "மு.கருணாநிதி", "மு. கருணாநிதி"],
+        "கருணாநிதி": ["கலைஞர்", "மு.கருணாநிதி", "மு. கருணாநிதி"],
+        "அண்ணா": ["அண்ணாதுரை", "சி.என்.அண்ணாதுரை"],
+        "அண்ணாதுரை": ["அண்ணா", "சி.என்.அண்ணாதுரை"],
+        "பாரதிதாசன்": ["பாவேந்தர்", "பாவேந்தர் பாரதிதாசன்"],
+        "பாவேந்தர்": ["பாரதிதாசன்", "பாவேந்தர் பாரதிதாசன்"],
+        "கண்ணதாசன்": ["கவியரசு", "கவியரசு கண்ணதாசன்"],
+        "கவியரசு": ["கண்ணதாசன்", "கவியரசு கண்ணதாசன்"],
     }
 
     for author in csv_authors:
@@ -178,16 +191,26 @@ def flexible_author_match(search_name: str, csv_name: str) -> bool:
         for key, variations in special_cases.items():
             if key in search_normalized:
                 for variant in variations:
-                    if variant.lower().strip() and variant.lower().strip() in csv_normalized:
+                    if (
+                        variant.lower().strip()
+                        and variant.lower().strip() in csv_normalized
+                    ):
                         return True
             if key in csv_normalized:
                 for variant in variations:
-                    if variant.lower().strip() and variant.lower().strip() in search_normalized:
+                    if (
+                        variant.lower().strip()
+                        and variant.lower().strip() in search_normalized
+                    ):
                         return True
 
         # 4. Token-level match (exact tokens, min length 4)
-        search_tokens = [t for t in re.findall(r'[\u0B80-\u0BFF]+', search_normalized) if len(t) >= 4]
-        csv_tokens    = [t for t in re.findall(r'[\u0B80-\u0BFF]+', csv_normalized)    if len(t) >= 4]
+        search_tokens = [
+            t for t in re.findall(r"[\u0B80-\u0BFF]+", search_normalized) if len(t) >= 4
+        ]
+        csv_tokens = [
+            t for t in re.findall(r"[\u0B80-\u0BFF]+", csv_normalized) if len(t) >= 4
+        ]
         if search_tokens and csv_tokens:
             if all(any(st == ct for ct in csv_tokens) for st in search_tokens):
                 return True
@@ -209,7 +232,7 @@ def _find_closest_author(df: pd.DataFrame, search_name: str) -> tuple:
     search_norm = normalize_author_name(search_name).lower()
 
     all_authors = []
-    for val in df['ஆசிரியர்'].dropna():
+    for val in df["ஆசிரியர்"].dropna():
         all_authors.extend(_parse_csv_authors(str(val)))
 
     for name in set(all_authors):
@@ -224,7 +247,7 @@ def _find_closest_author(df: pd.DataFrame, search_name: str) -> tuple:
 def _find_closest_title(df: pd.DataFrame, topic: str) -> tuple:
     best_title, best_score = "", 0.0
     topic_lower = topic.lower()
-    for title in df['தலைப்பு'].dropna().unique():
+    for title in df["தலைப்பு"].dropna().unique():
         score = fuzzy_match_score(topic_lower, str(title).lower())
         if score > best_score:
             best_score = score
@@ -236,10 +259,12 @@ def _find_closest_title(df: pd.DataFrame, topic: str) -> tuple:
 # MAIN QUERY SYSTEM
 # ============================================================================
 
+
 class EnhancedAuthorQuerySystem:
     """Robust author query system with improved CSV parsing and query detection."""
 
     def __init__(self, csv_path: str):
+        """Initialize with path to the summary CSV file."""
         self.csv_path = Path(csv_path)
         self.df = None
         self._load_csv()
@@ -272,20 +297,28 @@ class EnhancedAuthorQuerySystem:
 
             self._fix_column_names()
 
-            if 'ஆசிரியர்' in self.df.columns:
-                self.df['ஆசிரியர்'] = self.df['ஆசிரியர்'].fillna('').astype(str).str.strip()
+            if "ஆசிரியர்" in self.df.columns:
+                self.df["ஆசிரியர்"] = (
+                    self.df["ஆசிரியர்"].fillna("").astype(str).str.strip()
+                )
                 before = len(self.df)
-                self.df = self.df[self.df['ஆசிரியர்'] != '']
-                logger.info(f"Authors: {before} → {len(self.df)} rows after filtering empty")
+                self.df = self.df[self.df["ஆசிரியர்"] != ""]
+                logger.info(
+                    f"Authors: {before} → {len(self.df)} rows after filtering empty"
+                )
             else:
                 logger.error("Missing 'ஆசிரியர்' column")
                 return
 
-            if 'தலைப்பு' in self.df.columns:
-                self.df['தலைப்பு'] = self.df['தலைப்பு'].fillna('').astype(str).str.strip()
+            if "தலைப்பு" in self.df.columns:
+                self.df["தலைப்பு"] = (
+                    self.df["தலைப்பு"].fillna("").astype(str).str.strip()
+                )
 
             if len(self.df) > 0:
-                logger.info(f"Sample author: {self.df.iloc[0].get('ஆசிரியர்', 'N/A')[:40]}")
+                logger.info(
+                    f"Sample author: {self.df.iloc[0].get('ஆசிரியர்', 'N/A')[:40]}"
+                )
 
         except Exception as e:
             logger.error(f"CSV error: {e}", exc_info=True)
@@ -293,9 +326,11 @@ class EnhancedAuthorQuerySystem:
 
     def _fix_column_names(self):
         mappings = {
-            'author': 'ஆசிரியர்', 'Author': 'ஆசிரியர்',
-            'title':  'தலைப்பு',   'Title':  'தலைப்பு',
-            'heading': 'தலைப்பு',
+            "author": "ஆசிரியர்",
+            "Author": "ஆசிரியர்",
+            "title": "தலைப்பு",
+            "Title": "தலைப்பு",
+            "heading": "தலைப்பு",
         }
         for old, new in mappings.items():
             if old in self.df.columns and new not in self.df.columns:
@@ -303,45 +338,54 @@ class EnhancedAuthorQuerySystem:
                 logger.info(f"Renamed '{old}' → '{new}'")
 
     def detect_query_type(self, question: str) -> str:
+        """Classify a question into a CSV query type or 'none'."""
         q = question.lower().strip()
 
         if any(p in q for p in _PatternBank.LIST_ALL_AUTHORS):
-            return 'list_all_authors'
+            return "list_all_authors"
         if any(p in q for p in _PatternBank.TOPIC_AUTHOR):
-            return 'topic_author'
+            return "topic_author"
 
-        has_known_author  = any(a in q for a in _PatternBank.KNOWN_AUTHORS)
+        has_known_author = any(a in q for a in _PatternBank.KNOWN_AUTHORS)
         has_initials_name = bool(_RE_INITIALS_NAME.search(q))
         has_author_action = any(p in q for p in _PatternBank.AUTHOR_ACTION)
 
         if (has_known_author or has_initials_name) and has_author_action:
-            return 'author_topics'
+            return "author_topics"
         if (has_known_author or has_initials_name) and (
-            'எழுதிய' in q or 'படைப்பு' in q or 'இயற்றிய' in q or 'படைத்த' in q
+            "எழுதிய" in q or "படைப்பு" in q or "இயற்றிய" in q or "படைத்த" in q
         ):
-            return 'author_topics'
+            return "author_topics"
 
         topic_content_patterns = [
-            'பற்றிய படைப்புகள்', 'பற்றிய கட்டுரைகள்', 'பற்றிய கவிதைகள்',
-            'பற்றிய கதைகள்', 'பற்றி படைப்புகள்', 'பற்றி கட்டுரைகள்',
-            'தொடர்பான படைப்புகள்', 'தொடர்பான கட்டுரைகள்',
-            'குறித்த படைப்புகள்', 'குறித்த கட்டுரைகள்',
-            'சார்ந்த படைப்புகள்', 'சார்ந்த கட்டுரைகள்',
+            "பற்றிய படைப்புகள்",
+            "பற்றிய கட்டுரைகள்",
+            "பற்றிய கவிதைகள்",
+            "பற்றிய கதைகள்",
+            "பற்றி படைப்புகள்",
+            "பற்றி கட்டுரைகள்",
+            "தொடர்பான படைப்புகள்",
+            "தொடர்பான கட்டுரைகள்",
+            "குறித்த படைப்புகள்",
+            "குறித்த கட்டுரைகள்",
+            "சார்ந்த படைப்புகள்",
+            "சார்ந்த கட்டுரைகள்",
         ]
         if any(p in q for p in topic_content_patterns):
-            return 'topic_author'
+            return "topic_author"
 
-        return 'none'
+        return "none"
 
     def extract_entity(self, question: str, query_type: str) -> str:
+        """Extract the key entity (author name or topic) from a question."""
         q = question.strip()
 
         for variation in _PatternBank.PONNI:
-            if variation not in ('பொன்னி', 'ponni'):
-                q = q.replace(variation, 'பொன்னி')
-        q = re.sub(r'ponni\b', 'பொன்னி', q, flags=re.IGNORECASE)
+            if variation not in ("பொன்னி", "ponni"):
+                q = q.replace(variation, "பொன்னி")
+        q = re.sub(r"ponni\b", "பொன்னி", q, flags=re.IGNORECASE)
 
-        if query_type == 'author_topics':
+        if query_type == "author_topics":
             q_lower_raw = q.lower()
             for pattern, canonical in _PatternBank.AUTHOR_CANONICAL.items():
                 if pattern in q_lower_raw:
@@ -358,8 +402,8 @@ class EnhancedAuthorQuerySystem:
             noise = sorted(_PatternBank.AUTHOR_NOISE_PHRASES, key=len, reverse=True)
             q_clean = q_stripped
             for nw in noise:
-                q_clean = re.sub(re.escape(nw), ' ', q_clean, flags=re.IGNORECASE)
-            q_clean = re.sub(r'\s+', ' ', q_clean).strip()
+                q_clean = re.sub(re.escape(nw), " ", q_clean, flags=re.IGNORECASE)
+            q_clean = re.sub(r"\s+", " ", q_clean).strip()
 
             m = _RE_INITIALS_NAME.search(q_clean)
             if m:
@@ -371,53 +415,76 @@ class EnhancedAuthorQuerySystem:
             tokens = _RE_TAMIL_WORD.findall(q_clean)
             tokens = [_strip_tamil_possessive_suffix_word(t) for t in tokens]
             tokens = [
-                normalize_author_name(t) for t in tokens
+                normalize_author_name(t)
+                for t in tokens
                 if len(t) > 2 and t not in _PatternBank.AUTHOR_NOISE_TOKENS
             ]
-            return ' '.join(tokens[:3]) if tokens else ''
+            return " ".join(tokens[:3]) if tokens else ""
 
-        elif query_type == 'topic_author':
+        elif query_type == "topic_author":
             noise = sorted(_PatternBank.TOPIC_NOISE_PHRASES, key=len, reverse=True)
             q_title = q
             for np_phrase in noise:
-                q_title = re.sub(re.escape(np_phrase), '  ', q_title, flags=re.IGNORECASE)
+                q_title = re.sub(
+                    re.escape(np_phrase), "  ", q_title, flags=re.IGNORECASE
+                )
             for sw in _PatternBank.TITLE_SUFFIXES:
-                q_title = re.sub(r'\s*' + re.escape(sw) + r'\s*$', '', q_title.strip(), flags=re.IGNORECASE)
+                q_title = re.sub(
+                    r"\s*" + re.escape(sw) + r"\s*$",
+                    "",
+                    q_title.strip(),
+                    flags=re.IGNORECASE,
+                )
             q_title = _strip_tamil_possessive_suffixes(q_title)
             for _pat, _repl in [
-                (r'த்தில்(?=\s|$)', 'ம்'), (r'த்தின்(?=\s|$)', 'ம்'),
-                (r'த்திற்கு(?=\s|$)', 'ம்'), (r'யில்(?=\s|$)', ''), (r'வில்(?=\s|$)', ''),
+                (r"த்தில்(?=\s|$)", "ம்"),
+                (r"த்தின்(?=\s|$)", "ம்"),
+                (r"த்திற்கு(?=\s|$)", "ம்"),
+                (r"யில்(?=\s|$)", ""),
+                (r"வில்(?=\s|$)", ""),
             ]:
                 q_title = re.sub(_pat, _repl, q_title)
-            q_title = q_title.replace('"', '').replace("'", '')
-            q_title = re.sub(r'  +(யார்|என்ன|யாவை|எவர்)\??$', '', q_title)
-            q_title = re.sub(r'\s+', ' ', q_title).strip()
+            q_title = q_title.replace('"', "").replace("'", "")
+            q_title = re.sub(r"  +(யார்|என்ன|யாவை|எவர்)\??$", "", q_title)
+            q_title = re.sub(r"\s+", " ", q_title).strip()
 
-            words = re.findall(r'[\u0B80-\u0BFF!?,।]+|[a-zA-Z]+', q_title)
+            words = re.findall(r"[\u0B80-\u0BFF!?,।]+|[a-zA-Z]+", q_title)
             words = [
-                w for w in words
-                if len(w.rstrip('?!,')) > 1
-                and not (w.rstrip('?!,').lower() in _PatternBank.TOPIC_NOISE_TOKENS and not w.endswith('?'))
-                and w not in {'?', '!', ',', '।'}
+                w
+                for w in words
+                if len(w.rstrip("?!,")) > 1
+                and not (
+                    w.rstrip("?!,").lower() in _PatternBank.TOPIC_NOISE_TOKENS
+                    and not w.endswith("?")
+                )
+                and w not in {"?", "!", ",", "।"}
             ]
-            result = ' '.join(words) if words else ''
-            if result.strip().lower().rstrip('?!') in {'யார்', 'என்ன', 'யாவை', 'எவர்', ''}:
-                return ''
+            result = " ".join(words) if words else ""
+            if result.strip().lower().rstrip("?!") in {
+                "யார்",
+                "என்ன",
+                "யாவை",
+                "எவர்",
+                "",
+            }:
+                return ""
             return result
 
-        return ''
+        return ""
 
     def list_all_authors(self) -> Dict:
-        """
-        List all unique authors with article counts.
+        """List all unique authors with article counts.
+
         Each individual name in a multi-author row is counted separately.
         """
         all_authors = []
-        for val in self.df['ஆசிரியர்']:
+        for val in self.df["ஆசிரியர்"]:
             all_authors.extend(_parse_csv_authors(val))
 
         counts = pd.Series(all_authors).value_counts()
-        authors = [{"name": author, "count": int(count)} for author, count in counts.items()]
+        authors = [
+            {"name": author, "count": int(count)} for author, count in counts.items()
+        ]
 
         return {
             "type": "list_all_authors",
@@ -428,12 +495,19 @@ class EnhancedAuthorQuerySystem:
         }
 
     def get_topics_by_author(self, author_name: str) -> Dict:
+        """Return article titles written by the given author."""
         if self.df is None or self.df.empty:
-            return {"type": "author_topics", "success": False,
-                    "message": "CSV தரவு கிடைக்கவில்லை", "articles": []}
+            return {
+                "type": "author_topics",
+                "success": False,
+                "message": "CSV தரவு கிடைக்கவில்லை",
+                "articles": [],
+            }
 
         matches = self.df[
-            self.df['ஆசிரியர்'].apply(lambda x: flexible_author_match(author_name, str(x)))
+            self.df["ஆசிரியர்"].apply(
+                lambda x: flexible_author_match(author_name, str(x))
+            )
         ]
 
         if matches.empty:
@@ -442,62 +516,100 @@ class EnhancedAuthorQuerySystem:
             if best_score >= 0.70:
                 suggestion = f"நீங்கள் '{best_name}' என்பவரை குறிப்பிட்டீர்களா? (ஒற்றுமை: {best_score:.0%})"
             return {
-                "type": "author_topics", "success": False, "author": author_name,
+                "type": "author_topics",
+                "success": False,
+                "author": author_name,
                 "message": f"'{author_name}' கண்டுபிடிக்க முடியவில்லை",
-                "suggestion": suggestion, "articles": [],
+                "suggestion": suggestion,
+                "articles": [],
             }
 
         articles = []
         for _, row in matches.iterrows():
-            article = {"title": row.get('தலைப்பு', ''), "author": _format_author_display(str(row.get('ஆசிரியர்', '')))}
-            for col in ['ஆண்டு', 'இதழ்', 'ச.எ.', 'வ.எ.']:
+            article = {
+                "title": row.get("தலைப்பு", ""),
+                "author": _format_author_display(str(row.get("ஆசிரியர்", ""))),
+            }
+            for col in ["ஆண்டு", "இதழ்", "ச.எ.", "வ.எ."]:
                 if col in row and pd.notna(row[col]):
                     try:
-                        article[col] = int(row[col]) if col in ['ஆண்டு', 'ச.எ.', 'வ.எ.'] else str(row[col])
+                        article[col] = (
+                            int(row[col])
+                            if col in ["ஆண்டு", "ச.எ.", "வ.எ."]
+                            else str(row[col])
+                        )
                     except Exception:
                         article[col] = str(row[col])
             articles.append(article)
 
         return {
-            "type": "author_topics", "success": True, "author": author_name,
-            "matched_author": matches.iloc[0]['ஆசிரியர்'],
-            "count": len(articles), "articles": articles,
+            "type": "author_topics",
+            "success": True,
+            "author": author_name,
+            "matched_author": matches.iloc[0]["ஆசிரியர்"],
+            "count": len(articles),
+            "articles": articles,
         }
 
     def get_author_by_topic(self, topic: str) -> Dict:
+        """Return authors who wrote about the given topic."""
         if self.df is None or self.df.empty:
-            return {"type": "topic_author", "success": False,
-                    "message": "CSV தரவு கிடைக்கவில்லை", "articles": []}
+            return {
+                "type": "topic_author",
+                "success": False,
+                "message": "CSV தரவு கிடைக்கவில்லை",
+                "articles": [],
+            }
 
         topic_cleaned = topic
         for suffix in _PatternBank.TITLE_SUFFIXES:
-            topic_cleaned = re.sub(r'\s*' + re.escape(suffix) + r'\s*$',
-                                   '', topic_cleaned.strip(), flags=re.IGNORECASE)
+            topic_cleaned = re.sub(
+                r"\s*" + re.escape(suffix) + r"\s*$",
+                "",
+                topic_cleaned.strip(),
+                flags=re.IGNORECASE,
+            )
         topic_cleaned = _strip_tamil_possessive_suffixes(topic_cleaned)
-        topic_cleaned = topic_cleaned.replace("'", "").replace('"', '').replace('?', '').strip()
+        topic_cleaned = (
+            topic_cleaned.replace("'", "").replace('"', "").replace("?", "").strip()
+        )
 
         def _build_articles(df_slice):
             articles = []
             for _, row in df_slice.iterrows():
-                article = {"title": row.get('தலைப்பு', ''), "author": _format_author_display(str(row.get('ஆசிரியர்', '')))}
-                for col in ['ஆண்டு', 'இதழ்', 'ச.எ.', 'வ.எ.']:
+                article = {
+                    "title": row.get("தலைப்பு", ""),
+                    "author": _format_author_display(str(row.get("ஆசிரியர்", ""))),
+                }
+                for col in ["ஆண்டு", "இதழ்", "ச.எ.", "வ.எ."]:
                     if col in row and pd.notna(row[col]):
                         try:
-                            article[col] = int(row[col]) if col in ['ஆண்டு', 'ச.எ.', 'வ.எ.'] else str(row[col])
+                            article[col] = (
+                                int(row[col])
+                                if col in ["ஆண்டு", "ச.எ.", "வ.எ."]
+                                else str(row[col])
+                            )
                         except Exception:
                             article[col] = str(row[col])
                 articles.append(article)
             return articles
 
         # Stage 1: exact substring
-        matches = self.df[self.df['தலைப்பு'].str.contains(topic_cleaned, case=False, na=False, regex=False)]
+        matches = self.df[
+            self.df["தலைப்பு"].str.contains(
+                topic_cleaned, case=False, na=False, regex=False
+            )
+        ]
 
         # Stage 2: all words present
         if matches.empty and len(topic_cleaned.split()) > 1:
             words = topic_cleaned.split()
-            matches = self.df[self.df['தலைப்பு'].apply(
-                lambda t: pd.notna(t) and all(w.lower() in str(t).lower() for w in words)
-            )]
+            matches = self.df[
+                self.df["தலைப்பு"].apply(
+                    lambda t: pd.notna(t)
+                    and all(w.lower() in str(t).lower() for w in words)
+                )
+            ]
 
         # Stage 2b: majority-word match
         if matches.empty and len(topic_cleaned.split()) > 2:
@@ -506,21 +618,32 @@ class EnhancedAuthorQuerySystem:
                 min_matches = max(2, int(len(meaningful_words) * 0.6))
                 majority_rows = []
                 for _, row in self.df.iterrows():
-                    title = str(row.get('தலைப்பு', ''))
+                    title = str(row.get("தலைப்பு", ""))
                     if not title:
                         continue
-                    title_tokens = set(re.findall(r'[\u0B80-\u0BFF]+|[a-zA-Z]+', title.lower()))
-                    if sum(1 for w in meaningful_words if w.lower() in title_tokens) >= min_matches:
+                    title_tokens = set(
+                        re.findall(r"[\u0B80-\u0BFF]+|[a-zA-Z]+", title.lower())
+                    )
+                    if (
+                        sum(1 for w in meaningful_words if w.lower() in title_tokens)
+                        >= min_matches
+                    ):
                         majority_rows.append(row)
                 if majority_rows and len(majority_rows) <= 8:
                     matches = pd.DataFrame(majority_rows)
 
         # Stage 3: longest Tamil word (>= 6 chars), result set <= 10
         if matches.empty:
-            tamil_words = [w for w in topic_cleaned.split() if re.search(r'[\u0B80-\u0BFF]{6,}', w)]
+            tamil_words = [
+                w for w in topic_cleaned.split() if re.search(r"[\u0B80-\u0BFF]{6,}", w)
+            ]
             if tamil_words:
                 main_word = max(tamil_words, key=len)
-                candidate = self.df[self.df['தலைப்பு'].str.contains(main_word, case=False, na=False, regex=False)]
+                candidate = self.df[
+                    self.df["தலைப்பு"].str.contains(
+                        main_word, case=False, na=False, regex=False
+                    )
+                ]
                 if not candidate.empty and len(candidate) <= 10:
                     matches = candidate
 
@@ -528,7 +651,7 @@ class EnhancedAuthorQuerySystem:
         if matches.empty:
             fuzzy_rows = []
             for _, row in self.df.iterrows():
-                title = str(row.get('தலைப்பு', ''))
+                title = str(row.get("தலைப்பு", ""))
                 if title and fuzzy_match_score(topic_cleaned, title) >= 0.80:
                     fuzzy_rows.append((row, fuzzy_match_score(topic_cleaned, title)))
             if fuzzy_rows:
@@ -539,13 +662,20 @@ class EnhancedAuthorQuerySystem:
         if matches.empty:
             tokens = [t for t in topic_cleaned.split() if len(t) >= 5]
             if len(tokens) >= 2:
-                candidate = self.df[self.df['தலைப்பு'].apply(
-                    lambda t: pd.notna(t) and all(tok.lower() in str(t).lower() for tok in tokens)
-                )]
+                candidate = self.df[
+                    self.df["தலைப்பு"].apply(
+                        lambda t: pd.notna(t)
+                        and all(tok.lower() in str(t).lower() for tok in tokens)
+                    )
+                ]
                 if not candidate.empty:
                     matches = candidate
             elif len(tokens) == 1 and len(tokens[0]) >= 7:
-                candidate = self.df[self.df['தலைப்பு'].str.contains(tokens[0], case=False, na=False, regex=False)]
+                candidate = self.df[
+                    self.df["தலைப்பு"].str.contains(
+                        tokens[0], case=False, na=False, regex=False
+                    )
+                ]
                 if not candidate.empty and len(candidate) <= 5:
                     matches = candidate
 
@@ -555,16 +685,22 @@ class EnhancedAuthorQuerySystem:
             if best_score >= 0.70:
                 suggestion = f"நீங்கள் '{best_title}' என்ற தலைப்பை குறிப்பிட்டீர்களா? (ஒற்றுமை: {best_score:.0%})"
             return {
-                "type": "topic_author", "success": False, "topic": topic,
+                "type": "topic_author",
+                "success": False,
+                "topic": topic,
                 "cleaned_topic": topic_cleaned,
                 "message": f"'{topic}' தலைப்பு கண்டுபிடிக்க முடியவில்லை. தேடிய சொல்: '{topic_cleaned}'",
-                "suggestion": suggestion, "articles": [],
+                "suggestion": suggestion,
+                "articles": [],
             }
 
         return {
-            "type": "topic_author", "success": True, "topic": topic,
+            "type": "topic_author",
+            "success": True,
+            "topic": topic,
             "cleaned_topic": topic_cleaned,
-            "count": len(matches), "articles": _build_articles(matches),
+            "count": len(matches),
+            "articles": _build_articles(matches),
         }
 
 
@@ -572,69 +708,95 @@ class EnhancedAuthorQuerySystem:
 # FORMATTERS
 # ============================================================================
 
+
 def format_author_list(result: Dict) -> str:
-    if not result['success']:
+    """Format a list_all_authors result dict as a Tamil display string."""
+    if not result["success"]:
         return f"Error: {result['message']}"
     lines = [
         "பொன்னி இதழில் எழுதிய எழுத்தாளர்கள்",
         f"மொத்த எழுத்தாளர்கள்: {result['total_authors']} | மொத்த கட்டுரைகள்: {result['total_articles']}",
         "",
     ]
-    for idx, author in enumerate(sorted(result['authors'], key=lambda x: x['count'], reverse=True), 1):
+    for idx, author in enumerate(
+        sorted(result["authors"], key=lambda x: x["count"], reverse=True), 1
+    ):
         lines.append(f"{idx}. {author['name']} ({author['count']} கட்டுரைகள்)")
-    return '\n'.join(lines)
+    return "\n".join(lines)
 
 
 def format_author_topics(result: Dict) -> str:
-    if not result['success']:
+    """Format a get_topics_by_author result dict as a Tamil display string."""
+    if not result["success"]:
         return f"Error: {result['message']}"
     lines = [
         f"எழுத்தாளர்: {result.get('matched_author', result['author'])}",
-        f"மொத்த படைப்புகள்: {result['count']}", "",
+        f"மொத்த படைப்புகள்: {result['count']}",
+        "",
     ]
     for idx, article in enumerate(
-        sorted(result['articles'], key=lambda x: (x.get('ஆண்டு', 9999), str(x.get('இதழ்', '')))), 1
+        sorted(
+            result["articles"],
+            key=lambda x: (x.get("ஆண்டு", 9999), str(x.get("இதழ்", ""))),
+        ),
+        1,
     ):
-        parts = [f"தலைப்பு: {article.get('title', '-')}", f"ஆசிரியர்: {article.get('author', '-')}"]
-        if 'ஆண்டு' in article:
+        parts = [
+            f"தலைப்பு: {article.get('title', '-')}",
+            f"ஆசிரியர்: {article.get('author', '-')}",
+        ]
+        if "ஆண்டு" in article:
             parts.append(f"ஆண்டு: {article['ஆண்டு']}")
-        if 'இதழ்' in article:
+        if "இதழ்" in article:
             parts.append(f"இதழ்: {article['இதழ்']}")
         lines.append(f"{idx}. {' | '.join(parts)}")
-    return '\n'.join(lines)
+    return "\n".join(lines)
 
 
 def format_topic_authors(result: Dict) -> str:
-    if not result['success']:
+    """Format a get_author_by_topic result dict as a Tamil display string."""
+    if not result["success"]:
         msg = f"Error: {result['message']}"
-        if 'suggestion' in result:
+        if "suggestion" in result:
             msg += f"\n\nசிபாரிசு: {result['suggestion']}"
         return msg
     lines = [f"தலைப்பு: '{result['topic']}' பற்றிய கட்டுரைகள்"]
-    if result.get('cleaned_topic') and result['cleaned_topic'] != result['topic']:
+    if result.get("cleaned_topic") and result["cleaned_topic"] != result["topic"]:
         lines.append(f"(தேடிய சொல்: '{result['cleaned_topic']}')")
     lines.extend([f"கண்டுபிடிக்கப்பட்டவை: {result['count']}", ""])
-    for idx, article in enumerate(result['articles'], 1):
-        parts = [f"தலைப்பு: {article.get('title', '-')}", f"ஆசிரியர்: {article.get('author', '-')}"]
-        if 'ஆண்டு' in article:
+    for idx, article in enumerate(result["articles"], 1):
+        parts = [
+            f"தலைப்பு: {article.get('title', '-')}",
+            f"ஆசிரியர்: {article.get('author', '-')}",
+        ]
+        if "ஆண்டு" in article:
             parts.append(f"ஆண்டு: {article['ஆண்டு']}")
-        if 'இதழ்' in article:
+        if "இதழ்" in article:
             parts.append(f"இதழ்: {article['இதழ்']}")
         lines.append(f"{idx}. {' | '.join(parts)}")
-    return '\n'.join(lines)
+    return "\n".join(lines)
 
 
 # ============================================================================
 # ISSUE COUNT & START YEAR
 # ============================================================================
 
+
 def detect_issue_count_query(question: str) -> bool:
+    """Return True if the question is asking for an issue/article count."""
     q = question.lower()
     patterns = [
-        'இதழ் எண்ணிக்கை', 'எத்தனை இதழ்', 'இதழ்கள் எத்தனை',
-        'மொத்த இதழ்', 'இதழ் count', 'issue count',
-        'how many issues', 'number of issues', 'total issues',
-        'இதழ் பட்டியல்', 'இதழ்களின் பட்டியல்',
+        "இதழ் எண்ணிக்கை",
+        "எத்தனை இதழ்",
+        "இதழ்கள் எத்தனை",
+        "மொத்த இதழ்",
+        "இதழ் count",
+        "issue count",
+        "how many issues",
+        "number of issues",
+        "total issues",
+        "இதழ் பட்டியல்",
+        "இதழ்களின் பட்டியல்",
     ]
     return any(pattern in q for pattern in patterns)
 
@@ -649,19 +811,34 @@ def get_issue_count(csv_path: str) -> Dict:
     try:
         df = _load_csv_safe(csv_path)
         if df.empty:
-            return {"success": False, "message": "CSV தரவை படிக்க முடியவில்லை", "count": 0, "issues": []}
+            return {
+                "success": False,
+                "message": "CSV தரவை படிக்க முடியவில்லை",
+                "count": 0,
+                "issues": [],
+            }
 
-        issue_col = next((c for c in ['இதழ்', 'issue', 'Issue', 'doc_issue'] if c in df.columns), None)
+        issue_col = next(
+            (c for c in ["இதழ்", "issue", "Issue", "doc_issue"] if c in df.columns),
+            None,
+        )
         if not issue_col:
-            return {"success": False, "message": "இதழ் column கிடைக்கவில்லை", "count": 0, "issues": []}
+            return {
+                "success": False,
+                "message": "இதழ் column கிடைக்கவில்லை",
+                "count": 0,
+                "issues": [],
+            }
 
-        df[issue_col] = df[issue_col].fillna('').astype(str).str.strip()
-        df_filtered = df[df[issue_col] != '']
+        df[issue_col] = df[issue_col].fillna("").astype(str).str.strip()
+        df_filtered = df[df[issue_col] != ""]
         unique_issues = df_filtered[issue_col].unique()
         issue_counts = df_filtered[issue_col].value_counts()
 
         try:
-            sorted_issues = sorted(unique_issues, key=lambda x: int(x) if x.isdigit() else x)
+            sorted_issues = sorted(
+                unique_issues, key=lambda x: int(x) if x.isdigit() else x
+            )
         except Exception:
             sorted_issues = sorted(unique_issues)
 
@@ -669,63 +846,90 @@ def get_issue_count(csv_path: str) -> Dict:
             "success": True,
             "count": len(unique_issues),
             "total_articles": len(df_filtered),
-            "issues": [{"issue_number": i, "article_count": int(issue_counts[i])} for i in sorted_issues],
+            "issues": [
+                {"issue_number": i, "article_count": int(issue_counts[i])}
+                for i in sorted_issues
+            ],
         }
 
     except Exception as e:
         logger.error(f"Error getting issue count: {e}", exc_info=True)
-        return {"success": False, "message": f"பிழை: {str(e)}", "count": 0, "issues": []}
+        return {
+            "success": False,
+            "message": f"பிழை: {str(e)}",
+            "count": 0,
+            "issues": [],
+        }
 
 
 def format_issue_count(result: Dict) -> str:
-    if not result['success']:
+    """Format an issue-count result dict as a Tamil display string."""
+    if not result["success"]:
         return f"Error: {result['message']}"
     lines = [
         "பொன்னி இதழ்கள் விவரம்",
         f"மொத்த இதழ்கள்: {result['count']}",
-        f"மொத்த கட்டுரைகள்: {result['total_articles']}", "",
+        f"மொத்த கட்டுரைகள்: {result['total_articles']}",
+        "",
     ]
-    issues = result['issues']
+    issues = result["issues"]
     if len(issues) <= 20:
         for idx, info in enumerate(issues, 1):
-            lines.append(f"{idx}. இதழ்: {info['issue_number']} | கட்டுரைகள்: {info['article_count']}")
+            lines.append(
+                f"{idx}. இதழ்: {info['issue_number']} | கட்டுரைகள்: {info['article_count']}"
+            )
     else:
         lines.append("முதல் 10 இதழ்கள்:")
         for idx, info in enumerate(issues[:10], 1):
-            lines.append(f"{idx}. இதழ்: {info['issue_number']} | கட்டுரைகள்: {info['article_count']}")
-        lines.extend(["", f"... (மேலும் {len(issues) - 20} இதழ்கள்)", "", "கடைசி 10 இதழ்கள்:"])
+            lines.append(
+                f"{idx}. இதழ்: {info['issue_number']} | கட்டுரைகள்: {info['article_count']}"
+            )
+        lines.extend(
+            ["", f"... (மேலும் {len(issues) - 20} இதழ்கள்)", "", "கடைசி 10 இதழ்கள்:"]
+        )
         for idx, info in enumerate(issues[-10:], len(issues) - 9):
-            lines.append(f"{idx}. இதழ்: {info['issue_number']} | கட்டுரைகள்: {info['article_count']}")
+            lines.append(
+                f"{idx}. இதழ்: {info['issue_number']} | கட்டுரைகள்: {info['article_count']}"
+            )
     lines.append("")
-    if result['issues']:
-        counts = [i['article_count'] for i in result['issues']]
+    if result["issues"]:
+        counts = [i["article_count"] for i in result["issues"]]
         lines += [
             "புள்ளிவிவரம்:",
             f"  • சராசரி கட்டுரைகள் ஒரு இதழுக்கு: {sum(counts) / len(counts):.1f}",
             f"  • குறைந்தபட்ச கட்டுரைகள்: {min(counts)}",
             f"  • அதிகபட்ச கட்டுரைகள்: {max(counts)}",
         ]
-    return '\n'.join(lines)
+    return "\n".join(lines)
 
 
 def detect_start_year_query(question: str) -> bool:
+    """Return True if the question is asking when the magazine started."""
     q = question.lower()
-    return any(p in q for p in [
-        "எந்த ஆண்டு தொடங்கியது", "முதல் ஆண்டு", "தொடங்கிய ஆண்டு",
-        "எப்போது தொடங்கியது", "start year", "when did ponni start",
-    ])
+    return any(
+        p in q
+        for p in [
+            "எந்த ஆண்டு தொடங்கியது",
+            "முதல் ஆண்டு",
+            "தொடங்கிய ஆண்டு",
+            "எப்போது தொடங்கியது",
+            "start year",
+            "when did ponni start",
+        ]
+    )
 
 
 def get_start_year(csv_path: str) -> str:
-    """
-    FIXED: uses _load_csv_safe so multi-author rows are not dropped.
+    """Return the earliest publication year found in the CSV.
+
+    Uses _load_csv_safe so multi-author rows are not dropped.
     Min year result is the same either way, but keeps loading consistent.
     """
     df = _load_csv_safe(csv_path)
-    if df.empty or 'ஆண்டு' not in df.columns:
+    if df.empty or "ஆண்டு" not in df.columns:
         return "CSV தரவில் ஆண்டு தகவல் இல்லை."
     try:
-        df['ஆண்டு'] = pd.to_numeric(df['ஆண்டு'], errors='coerce')
+        df["ஆண்டு"] = pd.to_numeric(df["ஆண்டு"], errors="coerce")
         return f"பொன்னி இதழ் {int(df['ஆண்டு'].min())} ஆம் ஆண்டு தொடங்கியது.\n\n"
     except Exception as e:
         logger.error(f"Start year calculation error: {e}")
@@ -736,7 +940,13 @@ def get_start_year(csv_path: str) -> str:
 # MAIN ENTRY POINT
 # ============================================================================
 
+
 def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
+    """Route a question to the appropriate CSV query handler.
+
+    Returns (is_handled, response_text). is_handled is False when the
+    question is not a CSV query (caller should proceed to vector search).
+    """
     if detect_start_year_query(question):
         logger.info("Detected start year query")
         return True, get_start_year(csv_path)
@@ -755,18 +965,18 @@ def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
     query_type = system.detect_query_type(question)
     logger.info(f"Query type: {query_type}")
 
-    if query_type == 'none':
+    if query_type == "none":
         return False, ""
-    if query_type == 'list_all_authors':
+    if query_type == "list_all_authors":
         return True, format_author_list(system.list_all_authors())
-    if query_type == 'author_topics':
-        entity = system.extract_entity(question, 'author_topics')
+    if query_type == "author_topics":
+        entity = system.extract_entity(question, "author_topics")
         logger.info(f"Extracted author: '{entity}'")
         if not entity:
             return True, "Warning: எழுத்தாளர் பெயரை தெளிவாக குறிப்பிடவும்"
         return True, format_author_topics(system.get_topics_by_author(entity))
-    if query_type == 'topic_author':
-        entity = system.extract_entity(question, 'topic_author')
+    if query_type == "topic_author":
+        entity = system.extract_entity(question, "topic_author")
         logger.info(f"Extracted topic: '{entity}'")
         if not entity:
             return True, "Warning: தலைப்பை தெளிவாக குறிப்பிடவும்"
@@ -776,15 +986,17 @@ def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
 
 
 def _csv_source(csv_data: str) -> List[Dict]:
-    return [{
-        "volume": "பொன்னி கட்டுரை தரவுத்தளம்",
-        "heading": "Article Database",
-        "doc_issue": "",
-        "content": csv_data,
-        "word_count": len(csv_data.split()),
-        "chunks_merged": 0,
-        "score": 1.0,
-    }]
+    return [
+        {
+            "volume": "பொன்னி கட்டுரை தரவுத்தளம்",
+            "heading": "Article Database",
+            "doc_issue": "",
+            "content": csv_data,
+            "word_count": len(csv_data.split()),
+            "chunks_merged": 0,
+            "score": 1.0,
+        }
+    ]
 
 
 def _csv_data_suffix(csv_data: str) -> str:

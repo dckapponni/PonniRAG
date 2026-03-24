@@ -1,20 +1,22 @@
-"""
-LLM layer (Gemini) for Tamil document answer generation.
+"""LLM layer (Gemini) for Tamil document answer generation.
+
 Handles prompt construction, Gemini API calls (sync/async/streaming),
 and answer post-processing for the Ponni RAG system.
 """
+
+import logging
 import os
 import re
-import logging
-import time
 import threading
-from typing import List, Dict
-from dotenv import load_dotenv
+import time
+from typing import Dict, List
 
+from dotenv import load_dotenv
 from google import genai
 from google.genai import types as genai_types
 from guardrails import ANTI_INJECTION_PREAMBLE, sanitize_output
-from retry import with_gemini_retry, with_gemini_retry_async, is_retryable_gemini
+from retry import is_retryable_gemini, with_gemini_retry, with_gemini_retry_async
+
 load_dotenv()
 logger = logging.getLogger(__name__)
 
@@ -41,7 +43,8 @@ PONNI_ABOUT_CONTEXT = """பொன்னி இதழ் பற்றிய ப�
 
 பொன்னி இதழ் ஒரு கலை இலக்கிய இதழாக மட்டுமின்றி புரட்சி இதழாகவே இருந்திருக்கிறது. 1947 முதல் 1955 வரையிலான தமிழகத்தின் காலக் கண்ணாடியாகப் பொன்னி இதழ் விளங்குகிறது."""
 
-ENGLISH_ANSWER_SYSTEM_PROMPT = """You are an expert on Ponni magazine who answers questions in English.
+ENGLISH_ANSWER_SYSTEM_PROMPT = (
+    """You are an expert on Ponni magazine who answers questions in English.
 
 Your task:
 1. Write a detailed answer based on the given context and question
@@ -73,7 +76,9 @@ Rules for questions about Ponni magazine (very important):
 
 ---
 Ponni Background Information:
-""" + PONNI_ABOUT_CONTEXT + """
+"""
+    + PONNI_ABOUT_CONTEXT
+    + """
 ---
 
 Formatting rules:
@@ -97,8 +102,10 @@ Critical — Irrelevant context rule:
 - If the document context provided does NOT directly answer the question, do NOT force-fit the context into your answer
 - In that case, clearly state: "This information is not currently available in the database"
 - Do NOT extract information from unrelated documents to fabricate an incorrect answer"""
+)
 
-TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இதழ் தொடர்பான கேள்விகளுக்கு பதிலளிக்கும் ஒரு தமிழ் நிபுணர்.
+TAMIL_ANSWER_SYSTEM_PROMPT = (
+    """நீங்கள் பொன்னி இதழ் தொடர்பான கேள்விகளுக்கு பதிலளிக்கும் ஒரு தமிழ் நிபுணர்.
 
 உங்கள் பணி:
 1. கொடுக்கப்பட்ட சூழல் (context) மற்றும் கேள்வியின் அடிப்படையில் விரிவான பதில் எழுதுக
@@ -145,7 +152,9 @@ TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இத�
 - கேள்வி "செய்திகள்", "பற்றி", "விவரம்" போன்றதாக இருந்தால்,மொழி பகுப்பாய்வு அல்லது இலக்கண விளக்கம் எழுதக்கூடாது.ஆவணங்களில் உள்ள தகவலை மட்டும் சுருக்கமாக விளக்க வேண்டும்.
 ---
 பொன்னி பின்னணி தகவல்:
-""" + PONNI_ABOUT_CONTEXT + """
+"""
+    + PONNI_ABOUT_CONTEXT
+    + """
 ---
 
 மிக முக்கியமான வடிவமைப்பு விதிகள் (Formatting Rules):
@@ -180,6 +189,7 @@ TAMIL_ANSWER_SYSTEM_PROMPT = """நீங்கள் பொன்னி இத�
 - தொடர்பில்லாத ஆவணங்களிலிருந்து தகவல்களை எடுத்து தவறான பதிலை உருவாக்கக் கூடாது
 
 இப்போது, கீழே கொடுக்கப்பட்ட கேள்வி மற்றும் சூழலின் அடிப்படையில், மேலுள்ள அனைத்து விதிகளையும் கட்டாயமாக பின்பற்றி, தெளிவாகவும் வாசிக்க எளிதாகவும் விரிவான பதிலை எழுதுக."""
+)
 
 _CSV_SYSTEM_PROMPT = """நீங்கள் பொன்னி இதழ் கட்டுரை தரவுத்தளத்தின் தகவல்களை வைத்து கேள்விகளுக்கு பதிலளிக்கும் தமிழ் உதவியாளர்.
 
@@ -235,12 +245,19 @@ def _truncate_at_sentence_boundary(text: str) -> str:
     if not text:
         return text
     stripped = text.rstrip()
-    if stripped and stripped[-1] in '.?!।':
+    if stripped and stripped[-1] in ".?!।":
         return stripped
-    last_boundary = max(stripped.rfind('. '), stripped.rfind('.'), stripped.rfind('? '), stripped.rfind('?'),
-                        stripped.rfind('! '), stripped.rfind('!'), stripped.rfind('।'))
+    last_boundary = max(
+        stripped.rfind(". "),
+        stripped.rfind("."),
+        stripped.rfind("? "),
+        stripped.rfind("?"),
+        stripped.rfind("! "),
+        stripped.rfind("!"),
+        stripped.rfind("।"),
+    )
     if last_boundary > len(stripped) * 0.5:
-        return stripped[:last_boundary + 1].rstrip()
+        return stripped[: last_boundary + 1].rstrip()
     return stripped
 
 
@@ -362,9 +379,24 @@ def _gemini_generation_config(
 
 
 _WH_PATTERNS = [
-    'யார்', 'என்ன', 'எப்போது', 'எங்கே', 'எது', 'ஏன்', 'எப்படி',
-    'எவ்வளவு', 'எத்தனை', 'யாவை', 'எவை',
-    'who', 'what', 'when', 'where', 'which', 'why', 'how',
+    "யார்",
+    "என்ன",
+    "எப்போது",
+    "எங்கே",
+    "எது",
+    "ஏன்",
+    "எப்படி",
+    "எவ்வளவு",
+    "எத்தனை",
+    "யாவை",
+    "எவை",
+    "who",
+    "what",
+    "when",
+    "where",
+    "which",
+    "why",
+    "how",
 ]
 
 
@@ -389,7 +421,10 @@ def _get_csv_system_prompt(language: str = "ta") -> str:
 
 
 def _build_user_content(
-    question: str, context: str, csv_context: str, context_doc_count: int = 0,
+    question: str,
+    context: str,
+    csv_context: str,
+    context_doc_count: int = 0,
     language: str = "ta",
 ) -> str:
     """Build the user prompt for vector-search queries. Omits empty sections.
@@ -406,10 +441,18 @@ def _build_user_content(
     parts = [f"{q_label}:\n{question}\n"]
 
     if csv_context and csv_context.strip():
-        parts.append(f"========================\n{csv_label}:\n{csv_context}\n========================\n")
+        parts.append(
+            f"========================\n"
+            f"{csv_label}:\n{csv_context}\n"
+            f"========================\n"
+        )
 
     if context and context.strip():
-        parts.append(f"========================\n{doc_label}:\n{context}\n========================\n")
+        parts.append(
+            f"========================\n"
+            f"{doc_label}:\n{context}\n"
+            f"========================\n"
+        )
 
     # Repeat the question after context so it's fresh in the model's attention
     parts.append(f"{q_label}: {question}")
@@ -427,7 +470,11 @@ def _build_user_content(
                 "விளக்கவும் (100-300 சொற்கள்):"
             )
     else:
-        closing = "Detailed answer (200-500 words):" if en else "விரிவான பதில் (200-500 சொற்கள்):"
+        closing = (
+            "Detailed answer (200-500 words):"
+            if en
+            else "விரிவான பதில் (200-500 சொற்கள்):"
+        )
 
     if context_doc_count > 1:
         if en:
@@ -448,10 +495,20 @@ def _build_user_content(
 
 
 _YES_NO_PATTERNS = [
-    'உள்ளாரா', 'உள்ளதா', 'இருக்கிறதா', 'இருக்கிறாரா',
-    'எழுதியுள்ளாரா', 'எழுதினாரா', 'எழுதியிருக்கிறாரா',
-    'உண்டா', 'இல்லையா', 'ஆகுமா', 'முடியுமா',
-    'செய்தாரா', 'செய்துள்ளாரா', 'பங்களித்தாரா',
+    "உள்ளாரா",
+    "உள்ளதா",
+    "இருக்கிறதா",
+    "இருக்கிறாரா",
+    "எழுதியுள்ளாரா",
+    "எழுதினாரா",
+    "எழுதியிருக்கிறாரா",
+    "உண்டா",
+    "இல்லையா",
+    "ஆகுமா",
+    "முடியுமா",
+    "செய்தாரா",
+    "செய்துள்ளாரா",
+    "பங்களித்தாரா",
 ]
 
 
@@ -535,14 +592,21 @@ def _build_multi_turn_contents(history: list, current_user_content: str) -> list
 
 
 def generate_llm_answer(
-    question: str, context: str, csv_context: str, max_words: int = 500,
-    user_content: str = None, system_prompt: str = None,
-    disable_thinking: bool = False, context_doc_count: int = 0,
-    history: list = None, language: str = "ta",
+    question: str,
+    context: str,
+    csv_context: str,
+    max_words: int = 500,
+    user_content: str = None,
+    system_prompt: str = None,
+    disable_thinking: bool = False,
+    context_doc_count: int = 0,
+    history: list = None,
+    language: str = "ta",
 ) -> str:
-    """
-    Generate LLM answer using Gemini API (synchronous).
-    Pass user_content/system_prompt to override defaults (e.g. for CSV queries).
+    """Generate LLM answer using Gemini API (synchronous).
+
+    Pass user_content/system_prompt to override defaults
+    (e.g. for CSV queries).
     """
     try:
         client = _get_gemini_client()
@@ -550,33 +614,43 @@ def generate_llm_answer(
             system_prompt = _get_system_prompt(language)
         if user_content is None:
             user_content = _build_user_content(
-                question, context, csv_context,
+                question,
+                context,
+                csv_context,
                 context_doc_count=context_doc_count,
                 language=language,
             )
 
-        contents = _build_multi_turn_contents(history, user_content) if history else user_content
+        contents = (
+            _build_multi_turn_contents(history, user_content)
+            if history
+            else user_content
+        )
 
         response = with_gemini_retry(
             client.models.generate_content,
             model=GEMINI_MODEL,
             contents=contents,
-            config=_gemini_generation_config(system_prompt, disable_thinking=disable_thinking),
+            config=_gemini_generation_config(
+                system_prompt, disable_thinking=disable_thinking
+            ),
         )
 
         answer = (response.text or "").strip()
 
-        answer = re.sub(r'[^\S\n]+', ' ', answer)
-        answer = re.sub(r'\n{3,}', '\n\n', answer)
+        answer = re.sub(r"[^\S\n]+", " ", answer)
+        answer = re.sub(r"\n{3,}", "\n\n", answer)
 
         # Check if response was truncated due to token limit
-        if (response.candidates and
-                response.candidates[0].finish_reason and
-                str(response.candidates[0].finish_reason) == "MAX_TOKENS"):
+        if (
+            response.candidates
+            and response.candidates[0].finish_reason
+            and str(response.candidates[0].finish_reason) == "MAX_TOKENS"
+        ):
             answer = _truncate_at_sentence_boundary(answer)
             logger.info("Response hit token limit — truncated at sentence boundary")
 
-        word_count = len(re.findall(r'[\u0B80-\u0BFF]+|\w+', answer))
+        word_count = len(re.findall(r"[\u0B80-\u0BFF]+|\w+", answer))
         logger.info(f"Gemini answer generated: {word_count} words")
 
         answer = sanitize_output(answer)
@@ -590,14 +664,21 @@ def generate_llm_answer(
 
 
 async def generate_llm_answer_async(
-    question: str, context: str, csv_context: str, max_words: int = 500,
-    user_content: str = None, system_prompt: str = None,
-    disable_thinking: bool = False, context_doc_count: int = 0,
-    history: list = None, language: str = "ta",
+    question: str,
+    context: str,
+    csv_context: str,
+    max_words: int = 500,
+    user_content: str = None,
+    system_prompt: str = None,
+    disable_thinking: bool = False,
+    context_doc_count: int = 0,
+    history: list = None,
+    language: str = "ta",
 ) -> str:
-    """
-    Async version of generate_llm_answer using Gemini API.
-    Pass user_content/system_prompt to override defaults (e.g. for CSV queries).
+    """Generate LLM answer using Gemini API (async).
+
+    Pass user_content/system_prompt to override defaults
+    (e.g. for CSV queries).
     """
     try:
         client = _get_gemini_client()
@@ -605,32 +686,44 @@ async def generate_llm_answer_async(
             system_prompt = _get_system_prompt(language)
         if user_content is None:
             user_content = _build_user_content(
-                question, context, csv_context,
+                question,
+                context,
+                csv_context,
                 context_doc_count=context_doc_count,
                 language=language,
             )
 
-        contents = _build_multi_turn_contents(history, user_content) if history else user_content
+        contents = (
+            _build_multi_turn_contents(history, user_content)
+            if history
+            else user_content
+        )
 
         response = await with_gemini_retry_async(
             client.aio.models.generate_content,
             model=GEMINI_MODEL,
             contents=contents,
-            config=_gemini_generation_config(system_prompt, disable_thinking=disable_thinking),
+            config=_gemini_generation_config(
+                system_prompt, disable_thinking=disable_thinking
+            ),
         )
 
         answer = (response.text or "").strip()
 
-        answer = re.sub(r'[^\S\n]+', ' ', answer)
-        answer = re.sub(r'\n{3,}', '\n\n', answer)
+        answer = re.sub(r"[^\S\n]+", " ", answer)
+        answer = re.sub(r"\n{3,}", "\n\n", answer)
 
-        if (response.candidates and
-                response.candidates[0].finish_reason and
-                str(response.candidates[0].finish_reason) == "MAX_TOKENS"):
+        if (
+            response.candidates
+            and response.candidates[0].finish_reason
+            and str(response.candidates[0].finish_reason) == "MAX_TOKENS"
+        ):
             answer = _truncate_at_sentence_boundary(answer)
-            logger.info("Async response hit token limit — truncated at sentence boundary")
+            logger.info(
+                "Async response hit token limit — truncated at sentence boundary"
+            )
 
-        word_count = len(re.findall(r'[\u0B80-\u0BFF]+|\w+', answer))
+        word_count = len(re.findall(r"[\u0B80-\u0BFF]+|\w+", answer))
         logger.info(f"Gemini async answer generated: {word_count} words")
 
         answer = sanitize_output(answer)
@@ -644,15 +737,21 @@ async def generate_llm_answer_async(
 
 
 def generate_llm_answer_stream(
-    question: str, context: str, csv_context: str,
-    user_content: str = None, system_prompt: str = None,
-    disable_thinking: bool = False, context_doc_count: int = 0,
-    history: list = None, language: str = "ta",
+    question: str,
+    context: str,
+    csv_context: str,
+    user_content: str = None,
+    system_prompt: str = None,
+    disable_thinking: bool = False,
+    context_doc_count: int = 0,
+    history: list = None,
+    language: str = "ta",
 ):
-    """
-    Generate LLM answer using Gemini API with streaming.
+    """Generate LLM answer using Gemini API with streaming.
+
     Yields individual token strings as they arrive.
-    Pass user_content/system_prompt to override defaults (e.g. for CSV queries).
+    Pass user_content/system_prompt to override defaults
+    (e.g. for CSV queries).
     """
     try:
         client = _get_gemini_client()
@@ -660,18 +759,26 @@ def generate_llm_answer_stream(
             system_prompt = _get_system_prompt(language)
         if user_content is None:
             user_content = _build_user_content(
-                question, context, csv_context,
+                question,
+                context,
+                csv_context,
                 context_doc_count=context_doc_count,
                 language=language,
             )
 
-        contents = _build_multi_turn_contents(history, user_content) if history else user_content
+        contents = (
+            _build_multi_turn_contents(history, user_content)
+            if history
+            else user_content
+        )
 
         stream = with_gemini_retry(
             client.models.generate_content_stream,
             model=GEMINI_MODEL,
             contents=contents,
-            config=_gemini_generation_config(system_prompt, disable_thinking=disable_thinking),
+            config=_gemini_generation_config(
+                system_prompt, disable_thinking=disable_thinking
+            ),
         )
         for chunk in stream:
             token = chunk.text
@@ -692,25 +799,25 @@ def generate_extractive_answer(facts: List[Dict], question: str) -> str:
 
     answer_sentences = []
     for fact in facts[:5]:
-        sent = fact['sentence'].strip()
-        sent = re.sub(r'__.*?__|பொன்னி களஞ்சியம்', '', sent)
-        sent = re.sub(r'\s+', ' ', sent).strip()
+        sent = fact["sentence"].strip()
+        sent = re.sub(r"__.*?__|பொன்னி களஞ்சியம்", "", sent)
+        sent = re.sub(r"\s+", " ", sent).strip()
         if len(sent) > 30:
             answer_sentences.append(sent)
 
     if not answer_sentences:
         return ""
 
-    answer = '. '.join(answer_sentences)
-    if answer and answer[-1] not in '.!?।':
-        answer += '.'
+    answer = ". ".join(answer_sentences)
+    if answer and answer[-1] not in ".!?।":
+        answer += "."
 
     return answer
 
 
 def validate_gemini_api():
-    """
-    Validate that the Gemini API key is configured and working.
+    """Validate that the Gemini API key is configured and working.
+
     Called at startup to fail fast if misconfigured.
     Uses check_gemini_health() to avoid duplicating ping logic.
     """

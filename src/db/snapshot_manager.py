@@ -1,11 +1,7 @@
-"""
-Snapshot manager for Qdrant index persistence via S3.
+"""Snapshot manager for Qdrant index persistence via S3.
 
-Handles:
-- Embedding fingerprint computation for change detection
-- Source data hash computation to detect when S3 data changes
-- Index metadata storage in S3
-- Snapshot save/restore to/from S3
+Handles embedding fingerprint computation, source data hash
+computation, index metadata storage, and snapshot save/restore.
 """
 
 import hashlib
@@ -18,20 +14,20 @@ from datetime import datetime, timezone
 import httpx
 
 from src.config.config import (
-    EMBEDDING_MODEL,
-    EMBEDDING_DIM,
     CHUNK_SIZE,
-    SNAPSHOT_S3_PREFIX,
     COLLECTION_NAME,
+    EMBEDDING_DIM,
+    EMBEDDING_MODEL,
     QDRANT_HOST,
     QDRANT_PORT,
+    SNAPSHOT_S3_PREFIX,
 )
 
 logger = logging.getLogger(__name__)
 
 
 def compute_embedding_fingerprint() -> str:
-    """SHA256 hash of (EMBEDDING_MODEL, EMBEDDING_DIM, CHUNK_SIZE).
+    """Compute SHA256 hash of embedding configuration.
 
     If any of these change, the index is invalidated and a full
     re-index is required.
@@ -41,7 +37,7 @@ def compute_embedding_fingerprint() -> str:
 
 
 def compute_source_data_hash(s3_client, bucket: str, prefix: str, suffix: str) -> str:
-    """Hash of all S3 source file keys + their LastModified timestamps.
+    """Compute hash of S3 source file keys and LastModified timestamps.
 
     Detects when source data has been added, modified, or removed.
     """
@@ -60,6 +56,7 @@ def compute_source_data_hash(s3_client, bucket: str, prefix: str, suffix: str) -
 
 
 def _metadata_s3_key() -> str:
+    """Return the S3 key for the index metadata JSON file."""
     return f"{SNAPSHOT_S3_PREFIX}index_metadata.json"
 
 
@@ -103,7 +100,9 @@ def needs_reindex(s3_client, bucket: str, prefix: str, suffix: str) -> tuple[boo
     if current_fingerprint != stored_fingerprint:
         return True, (
             f"embedding config changed "
-            f"(model/dim/chunk_size): {stored_fingerprint[:12]}... -> {current_fingerprint[:12]}..."
+            f"(model/dim/chunk_size): "
+            f"{stored_fingerprint[:12]}..."
+            f" -> {current_fingerprint[:12]}..."
         )
 
     current_source_hash = compute_source_data_hash(s3_client, bucket, prefix, suffix)
@@ -115,7 +114,9 @@ def needs_reindex(s3_client, bucket: str, prefix: str, suffix: str) -> tuple[boo
     return False, "index is up to date"
 
 
-def save_snapshot_to_s3(qdrant_client, s3_client, bucket: str, collection_name: str) -> str:
+def save_snapshot_to_s3(
+    qdrant_client, s3_client, bucket: str, collection_name: str
+) -> str:
     """Create Qdrant snapshot, download tarball, upload to S3.
 
     Returns the S3 key of the uploaded snapshot.
@@ -129,7 +130,8 @@ def save_snapshot_to_s3(qdrant_client, s3_client, bucket: str, collection_name: 
     with tempfile.NamedTemporaryFile(suffix=".snapshot", delete=False) as tmp:
         tmp_path = tmp.name
 
-    # Download snapshot via Qdrant REST API (get_snapshot was removed in qdrant-client 1.12+)
+    # Download snapshot via Qdrant REST API
+    # (get_snapshot was removed in qdrant-client 1.12+)
     download_url = (
         f"http://{QDRANT_HOST}:{QDRANT_PORT}"
         f"/collections/{collection_name}/snapshots/{snapshot_name}"
@@ -155,7 +157,9 @@ def save_snapshot_to_s3(qdrant_client, s3_client, bucket: str, collection_name: 
     return s3_key
 
 
-def restore_snapshot_from_s3(qdrant_client, s3_client, bucket: str, collection_name: str) -> bool:
+def restore_snapshot_from_s3(
+    qdrant_client, s3_client, bucket: str, collection_name: str
+) -> bool:
     """Download snapshot from S3, upload to Qdrant via recover_snapshot.
 
     Returns True if restored successfully, False if no snapshot available.
