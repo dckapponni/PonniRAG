@@ -482,8 +482,11 @@ class TestGeminiUnhealthyShortCircuit:
         # LLM should NOT have been called because health cache says unhealthy
         mock_llm.assert_not_called()
         assert result.get("fallback_reason") is not None
+
+
 @patch("db.llm.with_gemini_retry")
 def test_llm_fallback(mock_retry):
+    """Test LLM fallback on retry failure."""
     mock_retry.side_effect = Exception("fail")
 
     from db.llm import generate_llm_answer
@@ -492,15 +495,19 @@ def test_llm_fallback(mock_retry):
 
     assert result == ""
 
+
 def test_llm_empty_sources():
+    """Test LLM with empty sources."""
     from db.llm import generate_llm_answer
 
     result = generate_llm_answer("test", "", "")
 
     assert isinstance(result, str)
-    
+
+
 @patch("db.llm.with_gemini_retry")
 def test_llm_success(mock_retry):
+    """Test successful LLM answer generation."""
     mock_response = MagicMock()
     mock_response.text = "Test response"
     mock_response.candidates = []
@@ -512,9 +519,11 @@ def test_llm_success(mock_retry):
     result = generate_llm_answer("test", "context", "")
 
     assert "Test response" in result
-    
+
+
 @patch("db.llm.with_gemini_retry")
 def test_llm_stream(mock_retry):
+    """Test LLM streaming generation."""
     mock_chunk = MagicMock()
     mock_chunk.text = "hello"
 

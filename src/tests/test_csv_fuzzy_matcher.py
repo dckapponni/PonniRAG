@@ -192,7 +192,10 @@ class TestExtractMalarIssueFromText:
         lines = text.splitlines()
         malar, issue, _ = extract_malar_ithal_from_text(lines)
         assert malar == "பொங்கல்"
-        assert issue in ["3","பொங்கல் மலர்"]  # Issue may be associated with the special malar
+        assert issue in [
+            "3",
+            "பொங்கல் மலர்",
+        ]  # Issue may be associated with the special malar
 
     def test_extract_with_different_patterns(self):
         """Test extraction with various pattern variations.

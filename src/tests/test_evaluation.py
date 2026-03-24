@@ -520,6 +520,7 @@ class TestComposite:
         """Apply 0.50 weight to semantic_similarity."""
         r = MetricResult(sample_id="x", semantic_similarity=0.8)
         assert 0.0 <= _composite(r) <= 1.0
+
     def test_rouge_l_weight(self):
         """Apply 0.15 weight to rouge_l."""
         r = MetricResult(sample_id="x", rouge_l=1.0)
@@ -748,6 +749,7 @@ class TestROUGEGracefulDegradation:
         with patch.dict("sys.modules", {"rouge_score": None}):
             result = MetricsCalculator._rouge_l("ref text", "hyp text")
         assert result == 0.0
+
 
 class TestBLEUCharacterLevel:
     """Test character-level BLEU when sacrebleu is available."""
@@ -1159,6 +1161,7 @@ class TestRunEvaluation:
         report_dict = report.to_dict()
         assert "averages" in report_dict
         assert "per_sample" in report_dict
+
     def test_run_evaluation_live_mode_calls_ask_question(self, tmp_path):
         """Trigger ask_question for each sample in live mode."""
         data = [
@@ -1282,11 +1285,10 @@ class TestSmokeEndToEnd:
         assert loaded[0].category == "hist"
         assert loaded[0].llm_answer == "LLM"
         assert loaded[0].notes == "note"
-from evaluation.evaluate import _fill_llm_answers
-from evaluation.dataset import EvalSample
-from unittest.mock import patch
+
 
 def test_fill_llm_answers_import_error():
+    """Verify fill_llm_answers handles import errors gracefully."""
     samples = [EvalSample(id="1", question="Q", human_answer="A", llm_answer=None)]
 
     with patch("evaluation.evaluate.logger") as mock_logger:
@@ -1295,7 +1297,10 @@ def test_fill_llm_answers_import_error():
 
     assert result == samples
     assert mock_logger.error.called
+
+
 def test_fill_llm_answers_rag_exception():
+    """Verify fill_llm_answers returns None when RAG raises an exception."""
     samples = [EvalSample(id="1", question="Q", human_answer="A", llm_answer=None)]
 
     def fake_ask(*args, **kwargs):
@@ -1307,9 +1312,11 @@ def test_fill_llm_answers_rag_exception():
     with patch.dict("sys.modules", {"hybrid_search": mock_module}):
         result = _fill_llm_answers(samples, live=True)
 
-    assert result[0].llm_answer is None  
+    assert result[0].llm_answer is None
+
 
 def test_fill_llm_answers_success():
+    """Verify fill_llm_answers populates llm_answer on success."""
     samples = [EvalSample(id="1", question="Q", human_answer="A", llm_answer=None)]
 
     mock_module = MagicMock()
@@ -1319,9 +1326,13 @@ def test_fill_llm_answers_success():
         result = _fill_llm_answers(samples, live=True)
 
     assert result[0].llm_answer == "LLM"
-from evaluation.evaluate import _build_report
+
+
+from evaluation.evaluate import _build_report  # noqa: E402, F811
+
 
 def test_build_report_empty_metrics():
+    """Verify build_report handles empty metric results."""
     report = _build_report(
         dataset_path="test.json",
         samples=[],
@@ -1331,10 +1342,13 @@ def test_build_report_empty_metrics():
 
     assert report.evaluated_samples == 0
     assert report.skipped_samples == 2
-    
-from evaluation.evaluate import _print_report, EvaluationReport
+
+
+from evaluation.evaluate import EvaluationReport, _print_report  # noqa: E402, F811
+
 
 def test_print_report_no_samples(capsys):
+    """Verify print_report outputs no-breakdown message for zero samples."""
     report = EvaluationReport(
         dataset_path="test.json",
         total_samples=1,
@@ -1347,12 +1361,16 @@ def test_print_report_no_samples(capsys):
 
     captured = capsys.readouterr()
     assert "No per-sample breakdown" in captured.out
-    
-from evaluation.evaluate import _save_report_csv, EvaluationReport
-from evaluation.dataset import EvalSample
-from pathlib import Path
+
+
+from pathlib import Path  # noqa: E402
+
+from evaluation.dataset import EvalSample  # noqa: E402, F811
+from evaluation.evaluate import EvaluationReport, _save_report_csv  # noqa: E402, F811
+
 
 def test_save_report_csv(tmp_path):
+    """Verify save_report_csv writes an xlsx file to disk."""
     report = EvaluationReport(
         dataset_path="test.json",
         total_samples=1,
@@ -1384,24 +1402,27 @@ def test_save_report_csv(tmp_path):
     _save_report_csv(report, samples, output)
 
     assert output.with_suffix(".xlsx").exists()
-    
-from evaluation.evaluate import run_evaluation
+
+
+from evaluation.evaluate import run_evaluation  # noqa: E402, F811
+
 
 def test_run_evaluation_empty_dataset():
+    """Verify run_evaluation handles an empty dataset."""
     with patch("evaluation.evaluate.load_dataset", return_value=[]):
         report = run_evaluation("fake.json")
 
     assert report.total_samples == 0
-    
-from evaluation.evaluate import main
-import sys
+
+
+import sys  # noqa: E402
+
+from evaluation.evaluate import main  # noqa: E402, F811
+
 
 def test_main_cli(monkeypatch):
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["prog", "--dataset", "test.json"]
-    )
+    """Verify main CLI parses arguments and calls run_evaluation."""
+    monkeypatch.setattr(sys, "argv", ["prog", "--dataset", "test.json"])
 
     with patch("evaluation.evaluate.run_evaluation") as mock_run:
         main()

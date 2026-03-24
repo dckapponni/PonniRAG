@@ -1,8 +1,7 @@
 """Test the qdrant_indexer module."""
 
 import json
-from unittest.mock import Mock, patch,MagicMock
-
+from unittest.mock import MagicMock, Mock, patch
 
 from db.qdrant_indexer import (
     chunk_text,
@@ -1084,10 +1083,12 @@ class TestLoadAuthorsEdgeCases:
         # Should handle missing authors field gracefully
         assert authors == []
 
+
 @patch("db.qdrant_indexer.load_documents_from_s3")
 @patch("db.qdrant_indexer.QdrantClient")
 @patch("db.qdrant_indexer.logger")
 def test_do_full_index_no_documents(mock_logger, mock_client_class, mock_docs):
+    """Test full index with no documents."""
     mock_client = MagicMock()
     mock_client.collection_exists.return_value = False
     mock_client_class.return_value = mock_client
@@ -1099,15 +1100,16 @@ def test_do_full_index_no_documents(mock_logger, mock_client_class, mock_docs):
     _do_full_index(mock_client)
 
     assert mock_logger.warning.called
-    
-import pytest
+
+
+import pytest  # noqa: E402
+
 
 @patch("db.qdrant_indexer.load_documents_from_s3")
 @patch("db.qdrant_indexer.with_qdrant_retry")
 def test_do_full_index_exception(mock_retry, mock_docs):
-    mock_docs.return_value = [
-        {"id": "1", "text": "test", "metadata": {"chunk_id": 0}}
-    ]
+    """Test full index with exception handling."""
+    mock_docs.return_value = [{"id": "1", "text": "test", "metadata": {"chunk_id": 0}}]
 
     mock_retry.side_effect = Exception("fail")
 
@@ -1118,46 +1120,56 @@ def test_do_full_index_exception(mock_retry, mock_docs):
 
     with pytest.raises(Exception):
         _do_full_index(mock_client)
-        
+
+
 @patch("db.qdrant_indexer._save_snapshot_and_metadata")
 @patch("db.qdrant_indexer._do_full_index")
 @patch("db.qdrant_indexer.QdrantClient")
 def test_main_force_reindex(mock_client_class, mock_index, mock_save):
+    """Test main flow with force reindex flag."""
     mock_client = Mock()
     mock_client_class.return_value = mock_client
 
     from db.qdrant_indexer import main
+
     main(force_reindex=True)
 
     assert mock_index.called
     assert mock_save.called
 
+
 @patch("db.qdrant_indexer.needs_reindex", return_value=(False, "no change"))
 @patch("db.qdrant_indexer.QdrantClient")
 def test_main_no_reindex_collection_exists(mock_client_class, mock_needs):
+    """Test main skips reindex when collection exists."""
     mock_client = Mock()
     mock_client.collection_exists.return_value = True
     mock_client.get_collection.return_value = Mock(points_count=10)
     mock_client_class.return_value = mock_client
 
     from db.qdrant_indexer import main
+
     main()
 
     assert mock_client.get_collection.called
-    
+
+
 @patch("db.qdrant_indexer.restore_snapshot_from_s3", return_value=True)
 @patch("db.qdrant_indexer.needs_reindex", return_value=(False, "no change"))
 @patch("db.qdrant_indexer.QdrantClient")
 def test_main_restore_success(mock_client_class, mock_needs, mock_restore):
+    """Test main flow with successful restore."""
     mock_client = Mock()
     mock_client.collection_exists.return_value = False
     mock_client.get_collection.return_value = Mock(points_count=5)
     mock_client_class.return_value = mock_client
 
     from db.qdrant_indexer import main
+
     main()
 
     assert mock_restore.called
+
 
 @patch("db.qdrant_indexer.restore_snapshot_from_s3", return_value=False)
 @patch("db.qdrant_indexer.needs_reindex", return_value=(False, "no change"))
@@ -1166,34 +1178,39 @@ def test_main_restore_success(mock_client_class, mock_needs, mock_restore):
 def test_main_restore_fallback_to_reindex(
     mock_client_class, mock_index, mock_needs, mock_restore
 ):
+    """Test main flow restore fails and falls back to reindex."""
     mock_client = Mock()
     mock_client.collection_exists.return_value = False
     mock_client_class.return_value = mock_client
 
     from db.qdrant_indexer import main
+
     main()
 
     assert mock_index.called
-    
+
+
 @patch("db.qdrant_indexer.needs_reindex", return_value=(True, "changed"))
 @patch("db.qdrant_indexer._do_full_index")
 @patch("db.qdrant_indexer._save_snapshot_and_metadata")
 @patch("db.qdrant_indexer.QdrantClient")
-def test_main_reindex_needed(
-    mock_client_class, mock_save, mock_index, mock_needs
-):
+def test_main_reindex_needed(mock_client_class, mock_save, mock_index, mock_needs):
+    """Test main flow when reindex is needed."""
     mock_client = Mock()
     mock_client_class.return_value = mock_client
 
     from db.qdrant_indexer import main
+
     main()
 
     assert mock_index.called
     assert mock_save.called
-    
+
+
 @patch("db.qdrant_indexer.save_snapshot_to_s3", side_effect=Exception("fail"))
 @patch("db.qdrant_indexer.QdrantClient")
 def test_save_snapshot_failure(mock_client_class, mock_save):
+    """Test snapshot save failure handling."""
     mock_client = Mock()
     mock_client.get_collection.return_value = Mock(points_count=10)
 
@@ -1202,11 +1219,13 @@ def test_save_snapshot_failure(mock_client_class, mock_save):
     with patch("db.qdrant_indexer.logger") as mock_logger:
         _save_snapshot_and_metadata(mock_client, Mock())
         assert mock_logger.error.called
-        
-from db.qdrant_indexer import _deterministic_token_hash
+
+
+from db.qdrant_indexer import _deterministic_token_hash  # noqa: E402
+
 
 def test_deterministic_token_hash():
+    """Test deterministic token hash output."""
     h1 = _deterministic_token_hash("test")
     h2 = _deterministic_token_hash("test")
     assert h1 == h2
-

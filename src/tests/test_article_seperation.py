@@ -562,9 +562,7 @@ class TestParseTamilDocumentCSVFirst:
             "Content",
         ]
 
-        result = parse_tamil_document(
-            lines_with_markers, {}, sample_csv_df, "test.txt"
-        )
+        result = parse_tamil_document(lines_with_markers, {}, sample_csv_df, "test.txt")
 
         assert "articles" in result
         assert "doc_id" in result
@@ -611,9 +609,7 @@ class TestParseTamilDocumentCSVFirst:
         """Test handling when document info extraction returns NA values."""
         mock_csv.return_value = {"articles": []}
 
-        result = parse_tamil_document(
-            sample_lines, {}, sample_csv_df, "test.txt"
-        )
+        result = parse_tamil_document(sample_lines, {}, sample_csv_df, "test.txt")
 
         assert "doc_id" in result
         assert "doc_issue" in result
@@ -659,9 +655,7 @@ class TestParseTamilDocumentCSVFirst:
 
         lines_with_intro = ["மலர் 1", "", "முன்னுரை", "Content"]
 
-        result = parse_tamil_document(
-            lines_with_intro, {}, sample_csv_df, "test.txt"
-        )
+        result = parse_tamil_document(lines_with_intro, {}, sample_csv_df, "test.txt")
 
         assert any(a["title"] == "முன்னுரை" for a in result["articles"])
 
@@ -701,9 +695,7 @@ class TestParseTamilDocumentCSVFirst:
 
         lines_with_intro = ["மலர் 1", "", "முன்னுரை", "Short"]
 
-        result = parse_tamil_document(
-            lines_with_intro, {}, sample_csv_df, "test.txt"
-        )
+        result = parse_tamil_document(lines_with_intro, {}, sample_csv_df, "test.txt")
 
         assert not any(a["title"] == "முன்னுரை" for a in result["articles"])
 
@@ -740,9 +732,7 @@ class TestParseTamilDocumentCSVFirst:
             {"heading": "Remaining", "author": "Author", "content": "Content"}
         ]
 
-        result = parse_tamil_document(
-            sample_lines, {}, sample_csv_df, "test.txt"
-        )
+        result = parse_tamil_document(sample_lines, {}, sample_csv_df, "test.txt")
 
         assert any(a["title"] == "Remaining" for a in result["articles"])
 
@@ -778,9 +768,7 @@ class TestParseTamilDocumentCSVFirst:
         mock_remaining.side_effect = Exception("Remaining error")
 
         with pytest.raises(Exception):
-            parse_tamil_document(
-                sample_lines, {}, sample_csv_df, "test.txt"
-            )
+            parse_tamil_document(sample_lines, {}, sample_csv_df, "test.txt")
 
     @patch("data_extraction.article_seperation.extract_articles_from_csv")
     def test_critical_exception(self, mock_csv, sample_lines, sample_csv_df):
@@ -823,9 +811,7 @@ class TestParseTamilDocumentCSVFirst:
 
         lines_with_intro = ["மலர் 1", "முன்னுரை", "Content"]
 
-        result = parse_tamil_document(
-            lines_with_intro, {}, sample_csv_df, "test.txt"
-        )
+        result = parse_tamil_document(lines_with_intro, {}, sample_csv_df, "test.txt")
 
         assert "articles" in result
 

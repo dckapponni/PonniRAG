@@ -582,7 +582,7 @@ class TestRenderVolumeCard:
         """Test volume card with no cover URL shows placeholder."""
         mock_st.session_state.language = "en"
 
-        volume = {"id": 1, "desc": "1947","year":"1947", "cover_url": None}
+        volume = {"id": 1, "desc": "1947", "year": "1947", "cover_url": None}
 
         from streamlit_app import render_volume_card
 
@@ -712,7 +712,7 @@ class TestLoadVolumeIssues:
     )
     def test_load_volume_issues_success(self):
         """Test loading volume issues successfully."""
-        test_folder = Path("/test/volume 1 cover images")
+        _ = Path("/test/volume 1 cover images")
 
         with patch.object(Path, "exists", return_value=True), patch.object(
             Path, "glob"
@@ -732,7 +732,7 @@ class TestLoadVolumeIssues:
 
     def test_load_volume_issues_missing_folder(self):
         """Test loading issues from non-existent folder."""
-        test_folder = Path("/nonexistent/folder")
+        _ = Path("/nonexistent/folder")
 
         with patch.object(Path, "exists", return_value=False):
             from streamlit_app import load_volume_issues
@@ -744,7 +744,7 @@ class TestLoadVolumeIssues:
     @patch("streamlit_app.PDF_LINKS", {"vol_2_issue_1": "url1"})
     def test_load_volume_issues_multiple_extensions(self):
         """Test loading issues with different image extensions."""
-        test_folder = Path("/test/volume 2 cover images")
+        _ = Path("/test/volume 2 cover images")
 
         with patch.object(Path, "exists", return_value=True), patch.object(
             Path, "glob"
@@ -1309,8 +1309,10 @@ class TestMainFunction:
 
         mock_render_about.assert_called_once()
 
+
 @patch("streamlit_app.st")
 def test_render_tags_page_default(mock_st):
+    """Test default tags page rendering."""
     mock_st.query_params = {}
 
     mock_st.session_state = MagicMock()
@@ -1338,15 +1340,20 @@ def test_render_tags_page_default(mock_st):
 
     render_tags_page()
 
-    assert mock_st.markdown.called  
+    assert mock_st.markdown.called
+
+
 def test_tag_display_name():
+    """Test tag display name resolution."""
     from streamlit_app import _tag_display_name
 
     result = _tag_display_name("unknown_tag", "en")
     assert result == "unknown_tag"
 
+
 @patch("streamlit_app.get_qdrant_client")
 def test_fetch_issue_articles_empty(mock_client):
+    """Test fetching issue articles when empty."""
     mock_client.return_value = MagicMock()
 
     from streamlit_app import fetch_issue_articles
@@ -1355,8 +1362,10 @@ def test_fetch_issue_articles_empty(mock_client):
 
     assert isinstance(result, list)
 
+
 @patch("streamlit_app.get_qdrant_client")
 def test_fetch_tag_articles_empty(mock_client):
+    """Test fetching tag articles when empty."""
     mock_client.return_value = MagicMock()
 
     from streamlit_app import fetch_tag_articles
@@ -1364,9 +1373,11 @@ def test_fetch_tag_articles_empty(mock_client):
     result = fetch_tag_articles("politics")
 
     assert isinstance(result, list)
-    
+
+
 @patch("streamlit_app.get_qdrant_client")
 def test_fetch_article_content_none(mock_client):
+    """Test article content fetch returning None."""
     mock_client.return_value = MagicMock()
 
     from streamlit_app import fetch_article_content
@@ -1375,8 +1386,10 @@ def test_fetch_article_content_none(mock_client):
 
     assert result is None or isinstance(result, dict)
 
+
 @patch("streamlit_app._load_s3_image")
 def test_get_issue_thumbnail(mock_load):
+    """Test issue thumbnail loading."""
     mock_load.return_value = None
 
     from streamlit_app import _get_issue_thumbnail_base64
@@ -1385,17 +1398,24 @@ def test_get_issue_thumbnail(mock_load):
 
     assert result is None
 
+
 def test_flatten_author_list():
+    """Test flattening author list to string."""
     from streamlit_app import _flatten_author
+
     assert _flatten_author(["A", "B"]) == "A, B"
 
 
 def test_author_matches_search():
+    """Test author search matching."""
     from streamlit_app import _author_matches_search
+
     assert _author_matches_search(["John"], "john") is True
+
 
 @patch("streamlit_app.st")
 def test_render_tags_page_article_selected(mock_st):
+    """Test tags page with article selected."""
     mock_st.query_params = {
         "volume": "1",
         "issue": "1",
@@ -1415,8 +1435,10 @@ def test_render_tags_page_article_selected(mock_st):
 
     assert mock_st.markdown.called
 
+
 @patch("streamlit_app.st")
 def test_render_tags_page_sidebar_closed(mock_st):
+    """Test tags page with sidebar collapsed."""
     mock_st.query_params = {}
 
     mock_st.session_state = MagicMock()
@@ -1431,8 +1453,10 @@ def test_render_tags_page_sidebar_closed(mock_st):
 
     assert mock_st.markdown.called
 
+
 @patch("streamlit_app.get_qdrant_client")
 def test_fetch_issue_articles_with_data(mock_client):
+    """Test fetching issue articles with data."""
     mock = MagicMock()
     mock.scroll.return_value = ([MagicMock(payload={"title": "Test"})], None)
     mock_client.return_value = mock
@@ -1443,17 +1467,21 @@ def test_fetch_issue_articles_with_data(mock_client):
 
     assert len(result) >= 0
 
+
 @patch("streamlit_app.logger")
 def test_fetch_article_content_exception(mock_logger):
+    """Test article content fetch on exception."""
     from streamlit_app import fetch_article_content
 
     result = fetch_article_content(None, None, None)
 
     assert result is None
 
+
 @patch("streamlit_app.st")
 @patch("streamlit_app.fetch_issue_articles")
 def test_render_tags_sidebar_with_filters(mock_fetch, mock_st):
+    """Test tags sidebar with active filters."""
     mock_st.session_state = MagicMock()
     mock_st.session_state.language = "en"
     mock_st.session_state.tags_cat_filter = "All Categories"
@@ -1473,9 +1501,11 @@ def test_render_tags_sidebar_with_filters(mock_fetch, mock_st):
 
     assert mock_st.markdown.called
 
+
 @patch("streamlit_app.st")
 @patch("streamlit_app.fetch_article_content")
 def test_render_tags_page_with_article(mock_fetch, mock_st):
+    """Test tags page with article detail view."""
     mock_st.query_params = {
         "volume": "1",
         "issue": "1",
@@ -1504,9 +1534,11 @@ def test_render_tags_page_with_article(mock_fetch, mock_st):
 
     assert mock_st.markdown.called
 
+
 @patch("streamlit_app.st")
 @patch("streamlit_app.load_volume_issues")
 def test_render_sidebar_no_issues(mock_load, mock_st):
+    """Test sidebar rendering with no issues."""
     mock_load.return_value = []
 
     mock_st.markdown = MagicMock()
