@@ -1,19 +1,23 @@
-import re
-import io
-import logging
-import pandas as pd
-from pathlib import Path
-from difflib import SequenceMatcher
+"""CSV fuzzy matching utilities for Tamil document article extraction."""
 
-logger = logging.getLogger('TamilDocProcessor.csv_fuzzy_matcher')
+import logging
+import re
+from difflib import SequenceMatcher
+from pathlib import Path
+
+import pandas as pd
+
+logger = logging.getLogger("TamilDocProcessor.csv_fuzzy_matcher")
+
 
 def load_csv(csv_path):
-    """
-    Load CSV file where multi-author fields are wrapped in double quotes:
+    """Load CSV file where multi-author fields are wrapped in double quotes.
+
     "[பாண்டியன், நா. வேத்தரசன், வணங்காமுடி]"
     pandas needs quotechar='"' to read them as a single field.
     """
-    return pd.read_csv(csv_path, encoding='utf-8', quotechar='"')
+    return pd.read_csv(csv_path, encoding="utf-8", quotechar='"')
+
 
 def calculate_similarity(str1, str2):
     """
@@ -44,8 +48,8 @@ def remove_symbols(text):
     if pd.isna(text):
         return ""
     text = str(text).strip()
-    text = re.sub(r'[^\w\s]', '', text, flags=re.UNICODE)
-    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r"[^\w\s]", "", text, flags=re.UNICODE)
+    text = re.sub(r"\s+", " ", text)
     return text.strip()
 
 
@@ -56,7 +60,8 @@ def parse_author_field(author_val):
     Handles:
     - NA                                         -> []
     - [நக்கீரன்]                                  -> ['நக்கீரன்']
-    - [பாண்டியன், நா. வேத்தரசன், வணங்காமுடி]    -> ['பாண்டியன்', 'நா. வேத்தரசன்', 'வணங்காமுடி']
+    - [பாண்டியன், நா. வேத்தரசன், வணங்காமுடி]
+      -> ['பாண்டியன்', 'நா. வேத்தரசன்', 'வணங்காமுடி']
     - நக்கீரன் (no brackets, legacy)              -> ['நக்கீரன்']
 
     Args:
@@ -68,21 +73,21 @@ def parse_author_field(author_val):
     if pd.isna(author_val):
         return []
     raw = str(author_val).strip()
-    if not raw or raw == 'NA':
+    if not raw or raw == "NA":
         return []
 
     # Strip outer brackets if present
-    if raw.startswith('[') and raw.endswith(']'):
+    if raw.startswith("[") and raw.endswith("]"):
         raw = raw[1:-1].strip()
 
     # Split by comma for multiple authors
-    authors = [a.strip() for a in raw.split(',') if a.strip()]
+    authors = [a.strip() for a in raw.split(",") if a.strip()]
     return authors
 
 
 def normalize_csv_value(val):
-    """
-    Normalize CSV values for consistent comparison.
+    """Normalize CSV values for consistent comparison.
+
     Converts "1.0" -> "1", strips whitespace.
 
     Args:
@@ -92,14 +97,14 @@ def normalize_csv_value(val):
         str: Normalized string
     """
     if pd.isna(val):
-        return ''
+        return ""
     val_str = str(val).strip()
-    if '.' in val_str:
+    if "." in val_str:
         try:
             float_val = float(val_str)
             if float_val == int(float_val):
                 return str(int(float_val))
-        except:
+        except (ValueError, OverflowError):
             pass
     return val_str
 
@@ -127,54 +132,50 @@ def extract_malar_ithal_from_filename(filename):
 
         # Pattern 1: VOL5-7-1951 (numeric இதழ்)
         vol_match = re.search(
-            r'VOL\s*[-_]?\s*(\d+)\s*[-_]\s*(\d+)\s*[-_]\s*(\d{4})',
-            name, re.IGNORECASE
+            r"VOL\s*[-_]?\s*(\d+)\s*[-_]\s*(\d+)\s*[-_]\s*(\d{4})", name, re.IGNORECASE
         )
         if vol_match:
             malar = str(int(vol_match.group(1)))
             ithal = str(int(vol_match.group(2)))
-            year  = vol_match.group(3)
+            year = vol_match.group(3)
             logger.info(f"VOL pattern: மலர்={malar}, இதழ்={ithal}, year={year}")
             return malar, ithal, year
 
         # Pattern 2: VOL1-PONGAL-1948 (text இதழ்)
         vol_text_match = re.search(
-            r'VOL\s*[-_]?\s*(\d+)\s*[-_]\s*([A-Za-z]+)\s*[-_]\s*(\d{4})',
-            name, re.IGNORECASE
+            r"VOL\s*[-_]?\s*(\d+)\s*[-_]\s*([A-Za-z]+)\s*[-_]\s*(\d{4})",
+            name,
+            re.IGNORECASE,
         )
         if vol_text_match:
-            malar      = str(int(vol_text_match.group(1)))
+            malar = str(int(vol_text_match.group(1)))
             ithal_text = vol_text_match.group(2).upper()
-            year       = vol_text_match.group(3)
+            year = vol_text_match.group(3)
 
-            ITHAL_MAP = {
-                'PONGAL': 'பொங்கல் மலர்'
-            }
+            ITHAL_MAP = {"PONGAL": "பொங்கல் மலர்"}
             ithal = ITHAL_MAP.get(ithal_text, ithal_text)
             logger.info(f"VOL-TEXT pattern: மலர்={malar}, இதழ்={ithal}, year={year}")
             return malar, ithal, year
 
         # Pattern 3: vol_X_issue_Y_YYYY
         vol_issue_match = re.search(
-            r'vol[-_\s]*(\d+)[-_\s]*(?:issue)?[-_\s]*(\d+)[-_\s]*(\d{4})?',
-            name, re.IGNORECASE
+            r"vol[-_\s]*(\d+)[-_\s]*(?:issue)?[-_\s]*(\d+)[-_\s]*(\d{4})?",
+            name,
+            re.IGNORECASE,
         )
         if vol_issue_match:
             malar = str(int(vol_issue_match.group(1)))
             ithal = str(int(vol_issue_match.group(2)))
-            year  = vol_issue_match.group(3) if vol_issue_match.group(3) else None
+            year = vol_issue_match.group(3) if vol_issue_match.group(3) else None
             logger.info(f"vol_issue pattern: மலர்={malar}, இதழ்={ithal}, year={year}")
             return malar, ithal, year
 
         # Pattern 4: plain X-Y-YYYY
-        plain_match = re.search(
-            r'(\d+)\s*[-_]\s*(\d+)\s*[-_]\s*(\d{4})',
-            name
-        )
+        plain_match = re.search(r"(\d+)\s*[-_]\s*(\d+)\s*[-_]\s*(\d{4})", name)
         if plain_match:
             malar = str(int(plain_match.group(1)))
             ithal = str(int(plain_match.group(2)))
-            year  = plain_match.group(3)
+            year = plain_match.group(3)
             logger.info(f"Plain pattern: மலர்={malar}, இதழ்={ithal}, year={year}")
             return malar, ithal, year
 
@@ -187,8 +188,8 @@ def extract_malar_ithal_from_filename(filename):
 
 
 def extract_malar_ithal_from_text(lines):
-    """
-    Extract மலர் and இதழ் from document text as fallback.
+    """Extract malar and ithal from document text as fallback.
+
     Used only when filename parsing fails.
 
     Args:
@@ -199,33 +200,33 @@ def extract_malar_ithal_from_text(lines):
     """
     try:
         search_lines = lines[:50]
-        text = '\n'.join(search_lines)
+        text = "\n".join(search_lines)
 
         malar = None
         ithal = None
-        year  = None
+        year = None
 
         # Check for பொங்கல் மலர் (special issue)
-        pongal_match = re.search(r'பொங்கல்\s*மலர்', text)
+        pongal_match = re.search(r"பொங்கல்\s*மலர்", text)
         if pongal_match:
-            malar = 'பொங்கல்'
-            ithal = 'பொங்கல் மலர்'
+            malar = "பொங்கல்"
+            ithal = "பொங்கல் மலர்"
             logger.info("Found பொங்கல் மலர் in text")
 
         # Extract year
-        year_match = re.search(r'(19|20)\d{2}', text)
+        year_match = re.search(r"(19|20)\d{2}", text)
         if year_match:
             year = year_match.group(0)
 
         # Extract numeric மலர்
         if not malar:
-            malar_match = re.search(r'மலர்\s*[:—\-]?\s*(\d+)', text)
+            malar_match = re.search(r"மலர்\s*[:—\-]?\s*(\d+)", text)
             if malar_match:
                 malar = str(int(malar_match.group(1)))
 
         # Extract இதழ்
         if not ithal:
-            ithal_match = re.search(r'இதழ்\s*[:—\-]?\s*(\d+)', text)
+            ithal_match = re.search(r"இதழ்\s*[:—\-]?\s*(\d+)", text)
             if ithal_match:
                 ithal = str(int(ithal_match.group(1)))
 
@@ -262,21 +263,18 @@ def match_csv_rows(csv_df, malar, ithal):
     ithal_norm = normalize_csv_value(ithal).strip()
 
     csv_df = csv_df.copy()
-    csv_df['மலர்_norm'] = csv_df['மலர்'].apply(
-        lambda x: normalize_csv_value(x).strip()
-    )
-    csv_df['இதழ்_norm'] = csv_df['இதழ்'].apply(
-        lambda x: normalize_csv_value(x).strip()
-    )
+    csv_df["மலர்_norm"] = csv_df["மலர்"].apply(lambda x: normalize_csv_value(x).strip())
+    csv_df["இதழ்_norm"] = csv_df["இதழ்"].apply(lambda x: normalize_csv_value(x).strip())
 
     # Exact match first
     exact = csv_df[
-        (csv_df['மலர்_norm'] == malar_norm) &
-        (csv_df['இதழ்_norm'] == ithal_norm)
+        (csv_df["மலர்_norm"] == malar_norm) & (csv_df["இதழ்_norm"] == ithal_norm)
     ]
     if not exact.empty:
-        logger.info(f"Exact CSV match: {len(exact)} rows for "
-                    f"மலர்={malar_norm}, இதழ்={ithal_norm}")
+        logger.info(
+            f"Exact CSV match: {len(exact)} rows for "
+            f"மலர்={malar_norm}, இதழ்={ithal_norm}"
+        )
         return exact
 
     # Fuzzy match on இதழ் — handles பொங்கல் vs பொங்கல் மலர்
@@ -286,20 +284,18 @@ def match_csv_rows(csv_df, malar, ithal):
         return calculate_similarity(ithal_norm, csv_ithal) >= 80
 
     fuzzy = csv_df[
-        (csv_df['மலர்_norm'] == malar_norm) &
-        (csv_df['இதழ்_norm'].apply(ithal_similar))
+        (csv_df["மலர்_norm"] == malar_norm) & (csv_df["இதழ்_norm"].apply(ithal_similar))
     ]
     if not fuzzy.empty:
         logger.info(
-            f"Fuzzy CSV match: {len(fuzzy)} rows "
-            f"('{ithal_norm}' ~ CSV இதழ் values)"
+            f"Fuzzy CSV match: {len(fuzzy)} rows " f"('{ithal_norm}' ~ CSV இதழ் values)"
         )
         return fuzzy
 
     # Debug: show what the CSV actually has for this மலர்
-    malar_only = csv_df[csv_df['மலர்_norm'] == malar_norm]
+    malar_only = csv_df[csv_df["மலர்_norm"] == malar_norm]
     if not malar_only.empty:
-        unique_ithal = list(malar_only['இதழ்_norm'].unique())
+        unique_ithal = list(malar_only["இதழ்_norm"].unique())
         logger.warning(
             f"No இதழ் match. மலர்={malar_norm} exists in CSV with "
             f"இதழ் values: {unique_ithal}. Looking for: '{ithal_norm}'"
@@ -355,7 +351,7 @@ def find_article_boundary_fuzzy(lines, title, next_title=None):
         candidates = []
 
         for i, line in enumerate(lines):
-            stripped   = line.strip()
+            stripped = line.strip()
             line_clean = remove_symbols(stripped)
 
             if not line_clean:
@@ -371,9 +367,7 @@ def find_article_boundary_fuzzy(lines, title, next_title=None):
                 )
 
         if not candidates:
-            logger.warning(
-                f"Title not found (no candidates): '{title[:50]}'"
-            )
+            logger.warning(f"Title not found (no candidates): '{title[:50]}'")
             return None, -1, -1
 
         # --- PASS 2: prefer standalone (near-exact) match ---
@@ -401,10 +395,10 @@ def find_article_boundary_fuzzy(lines, title, next_title=None):
 
         if next_title:
             next_title_clean = remove_symbols(next_title)
-            next_candidates  = []
+            next_candidates = []
 
             for i in range(start_line + 1, len(lines)):
-                stripped   = lines[i].strip()
+                stripped = lines[i].strip()
                 line_clean = remove_symbols(stripped)
 
                 if not line_clean:
@@ -435,14 +429,11 @@ def find_article_boundary_fuzzy(lines, title, next_title=None):
         while content_lines and not content_lines[-1].strip():
             content_lines.pop()
 
-        content = '\n'.join(content_lines).strip()
+        content = "\n".join(content_lines).strip()
         return content, start_line, end_line
 
     except Exception as e:
-        logger.error(
-            f"Error in find_article_boundary_fuzzy "
-            f"for '{title[:40]}': {e}"
-        )
+        logger.error("Error in find_article_boundary_fuzzy " f"for '{title[:40]}': {e}")
         return None, -1, -1
 
 
@@ -504,23 +495,18 @@ def extract_articles_from_csv(lines, csv_df, file_path):
     # ----------------------------------------------------------------
     # STEP 1: Extract மலர்/இதழ் from FILENAME
     # ----------------------------------------------------------------
-    malar, ithal, year_from_file = extract_malar_ithal_from_filename(
-        source_document
-    )
+    malar, ithal, year_from_file = extract_malar_ithal_from_filename(source_document)
 
     # ----------------------------------------------------------------
     # STEP 1b: Fallback to document TEXT if filename fails
     # ----------------------------------------------------------------
     if not malar or not ithal:
-        logger.warning(
-            "Filename parse failed — trying document text for மலர்/இதழ்"
-        )
+        logger.warning("Filename parse failed — trying document text for மலர்/இதழ்")
         malar, ithal, year_from_file = extract_malar_ithal_from_text(lines)
 
     if not malar or not ithal:
         logger.error(
-            "Cannot find மலர்/இதழ் from filename or text. "
-            "CSV extraction skipped."
+            "Cannot find மலர்/இதழ் from filename or text. " "CSV extraction skipped."
         )
         return None
 
@@ -543,22 +529,21 @@ def extract_articles_from_csv(lines, csv_df, file_path):
     # STEP 3: Extract content for each CSV title
     # Search FULL document — standalone title preferred over TOC
     # ----------------------------------------------------------------
-    articles              = []
-    article_no            = 1
+    articles = []
+    article_no = 1
     extracted_line_ranges = []
 
     for idx_pos, (idx, row) in enumerate(matched_articles.iterrows()):
-
         # Title from CSV
-        title = str(row['தலைப்பு']) if pd.notna(row['தலைப்பு']) else ""
+        title = str(row["தலைப்பு"]) if pd.notna(row["தலைப்பு"]) else ""
 
         # Parse author field — strips brackets, splits multiple authors
-        author_names = parse_author_field(row['ஆசிரியர்'])
+        author_names = parse_author_field(row["ஆசிரியர்"])
 
         # Year from CSV row, fallback to filename year
         year = (
-            str(int(row['ஆண்டு']))
-            if pd.notna(row['ஆண்டு'])
+            str(int(row["ஆண்டு"]))
+            if pd.notna(row["ஆண்டு"])
             else (year_from_file or "Unknown")
         )
 
@@ -569,16 +554,13 @@ def extract_articles_from_csv(lines, csv_df, file_path):
         # Get next title for boundary detection
         next_title = None
         if idx_pos + 1 < len(matched_articles):
-            next_row   = matched_articles.iloc[idx_pos + 1]
+            next_row = matched_articles.iloc[idx_pos + 1]
             next_title = (
-                str(next_row['தலைப்பு'])
-                if pd.notna(next_row['தலைப்பு'])
-                else None
+                str(next_row["தலைப்பு"]) if pd.notna(next_row["தலைப்பு"]) else None
             )
 
         logger.info(
-            f"[{idx_pos + 1}/{len(matched_articles)}] "
-            f"Searching: '{title[:50]}'"
+            f"[{idx_pos + 1}/{len(matched_articles)}] " f"Searching: '{title[:50]}'"
         )
 
         # Search FULL document — standalone title auto-preferred
@@ -587,16 +569,18 @@ def extract_articles_from_csv(lines, csv_df, file_path):
         )
 
         if content and len(content) > 100:
-            articles.append({
-                "doc_id":          malar_norm,
-                "doc_issue":       ithal_norm,
-                "article_no":      article_no,
-                "author_name":     author_names if author_names else ["NA"],
-                "title":           title,
-                "content":         content,
-                "year":            year,
-                "source_document": source_document
-            })
+            articles.append(
+                {
+                    "doc_id": malar_norm,
+                    "doc_issue": ithal_norm,
+                    "article_no": article_no,
+                    "author_name": author_names if author_names else ["NA"],
+                    "title": title,
+                    "content": content,
+                    "year": year,
+                    "source_document": source_document,
+                }
+            )
             article_no += 1
 
             if start_line != -1 and end_line != -1:
@@ -607,36 +591,38 @@ def extract_articles_from_csv(lines, csv_df, file_path):
                     f"({len(content)} chars)"
                 )
         else:
-            logger.warning(
-                f"  ✗ Could not extract '{title[:40]}' — "
-                f"{'not found' if not content else f'only {len(content)} chars (too short)'}"
+            reason = (
+                "not found" if not content else f"only {len(content)} chars (too short)"
             )
+            logger.warning(f"  Could not extract '{title[:40]}' " f"- {reason}")
 
     # ----------------------------------------------------------------
     # Build authors_list — one entry per unique author across all rows
     # ----------------------------------------------------------------
-    authors_list   = []
+    authors_list = []
     unique_authors = set()
 
     for _, row in matched_articles.iterrows():
-        for author_name in parse_author_field(row['ஆசிரியர்']):
+        for author_name in parse_author_field(row["ஆசிரியர்"]):
             if author_name not in unique_authors:
                 unique_authors.add(author_name)
-                authors_list.append({
-                    "doc_id":      malar_norm,
-                    "doc_issue":   ithal_norm,
-                    "author_name": author_name
-                })
+                authors_list.append(
+                    {
+                        "doc_id": malar_norm,
+                        "doc_issue": ithal_norm,
+                        "author_name": author_name,
+                    }
+                )
 
     logger.info(
-        f"CSV extraction complete: "
+        "CSV extraction complete: "
         f"{len(articles)}/{len(matched_articles)} articles extracted"
     )
 
     return {
-        "articles":              articles,
-        "authors_list":          authors_list,
-        "doc_id":                malar_norm,
-        "doc_issue":             ithal_norm,
-        "extracted_line_ranges": extracted_line_ranges
+        "articles": articles,
+        "authors_list": authors_list,
+        "doc_id": malar_norm,
+        "doc_issue": ithal_norm,
+        "extracted_line_ranges": extracted_line_ranges,
     }
