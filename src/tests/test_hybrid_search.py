@@ -2029,12 +2029,1475 @@ def test_stream_no_results(
     )
 
 
+# ============================================================================
+# NEW TESTS — Coverage improvements for hybrid_search.py and search.py
+# ============================================================================
+
+
+def _make_merged_doc(
+    content="தமிழ் மொழி விவரம் " * 30,
+    volume="vol1",
+    heading="தமிழ்",
+    doc_issue="1",
+    word_count=100,
+    chunk_count=2,
+    score=0.95,
+    author_name="",
+    tags=None,
+):
+    """Return a standard merged-doc dict for test reuse."""
+    return {
+        "content": content,
+        "volume": volume,
+        "heading": heading,
+        "doc_issue": doc_issue,
+        "word_count": word_count,
+        "chunk_count": chunk_count,
+        "score": score,
+        "author_name": author_name,
+        "tags": tags or [],
+    }
+
+
+class TestVerifyFiles:
+    """Test verify_files function."""
+
+    @patch("hybrid_search.CSV_PATH")
+    def test_verify_files_csv_exists(self, mock_path):
+        """Test verify_files when CSV exists."""
+        mock_path.exists.return_value = True
+        mock_stat = MagicMock()
+        mock_stat.st_size = 2048
+        mock_path.stat.return_value = mock_stat
+        hs.verify_files()  # line 62
+
+    @patch("hybrid_search.CSV_PATH")
+    def test_verify_files_csv_missing(self, mock_path):
+        """Test verify_files when CSV is missing."""
+        mock_path.exists.return_value = False
+        hs.verify_files()  # line 66
+
+
+class TestMsgHelper:
+    """Test the _msg language helper."""
+
+    def test_msg_english(self):
+        """Test _msg returns English text for en."""
+        assert hs._msg("en", "ta_text", "en_text") == "en_text"
+
+    def test_msg_tamil(self):
+        """Test _msg returns Tamil text for ta."""
+        assert hs._msg("ta", "ta_text", "en_text") == "ta_text"
+
+
+class TestQueryHasMeaningfulContent:
+    """Test _query_has_meaningful_content."""
+
+    def test_only_punctuation_returns_false(self):
+        """Test that punctuation-only query is not meaningful."""
+        assert hs._query_has_meaningful_content("@@@!!!") is False
+
+    def test_tamil_chars_return_true(self):
+        """Test that Tamil characters are meaningful."""
+        assert hs._query_has_meaningful_content("தமிழ்") is True  # 196
+
+
+class TestAnswerIndicatesNoData:
+    """Test _answer_indicates_no_data patterns."""
+
+    def test_empty_answer_returns_false(self):
+        """Test that empty answer returns False."""
+        assert hs._answer_indicates_no_data("") is False
+
+    def test_tamil_no_data_pattern(self):
+        """Test Tamil no-data pattern detection."""
+        assert hs._answer_indicates_no_data("தகவல்கள் கிடைக்கவில்லை") is True
+
+    def test_english_no_data_pattern(self):
+        """Test English no-data pattern detection."""
+        assert hs._answer_indicates_no_data("no relevant information available") is True
+
+    def test_normal_answer_returns_false(self):
+        """Test that a normal answer returns False."""
+        assert (
+            hs._answer_indicates_no_data(
+                "This is a valid answer about Tamil literature."
+            )
+            is False
+        )
+
+
+class TestCheckContextRelevance:
+    """Test _check_context_relevance edge cases."""
+
+    def test_empty_docs_returns_false(self):
+        """Test empty docs list returns False."""
+        assert hs._check_context_relevance("test", []) is False
+
+    def test_generic_query_returns_true(self):
+        """Test generic query with no key terms returns True."""
+        docs = [
+            {
+                "content": "x",
+                "heading": "",
+                "doc_issue": "",
+                "volume": "",
+                "author_name": "",
+            }
+        ]
+        result = hs._check_context_relevance("பொன்னி இதழ்", docs)
+        assert result is True  # line 326, 329
+
+    def test_year_found_in_docs(self):
+        """Test year found in document content."""
+        docs = [
+            {
+                "content": "published in 1950",
+                "heading": "",
+                "doc_issue": "",
+                "volume": "",
+                "author_name": "",
+            }
+        ]
+        result = hs._check_context_relevance("1950 articles", docs)
+        assert result is True
+
+    def test_year_not_found_returns_false(self):
+        """Test year not found returns False."""
+        docs = [
+            {
+                "content": "no year here",
+                "heading": "",
+                "doc_issue": "",
+                "volume": "",
+                "author_name": "",
+            }
+        ]
+        result = hs._check_context_relevance("1999 articles", docs)
+        assert result is False  # line 348->359
+
+    def test_tamil_stem_match(self):
+        """Test Tamil agglutinative stem matching."""
+        docs = [
+            {
+                "content": "சுராதாவின் கவிதைகள்",
+                "heading": "",
+                "doc_issue": "",
+                "volume": "",
+                "author_name": "",
+            }
+        ]
+        result = hs._check_context_relevance("சுராதா கவிதை", docs)
+        assert result is True  # lines 368, 379, 382
+
+    def test_no_key_terms_matched_returns_false(self):
+        """Test no key terms matched returns False."""
+        docs = [
+            {
+                "content": "completely unrelated text",
+                "heading": "",
+                "doc_issue": "",
+                "volume": "",
+                "author_name": "",
+            }
+        ]
+        result = hs._check_context_relevance("uniqueterm1234", docs)
+        assert result is False  # line 360->392
+
+    def test_english_term_found_via_substring(self):
+        """Test English term found via substring match."""
+        docs = [
+            {
+                "content": "literature and poetry",
+                "heading": "",
+                "doc_issue": "",
+                "volume": "",
+                "author_name": "",
+            }
+        ]
+        result = hs._check_context_relevance("literature topic", docs)
+        assert result is True
+
+    def test_short_tamil_stem_skipped(self):
+        """Test that very short Tamil stems are skipped."""
+        docs = [
+            {
+                "content": "ab",
+                "heading": "",
+                "doc_issue": "",
+                "volume": "",
+                "author_name": "",
+            }
+        ]
+        result = hs._check_context_relevance("uniqueXYZ", docs)
+        assert result is False
+
+
+class TestAskQuestionEnglishLanguage:
+    """Test ask_question with language=en."""
+
+    def test_no_meaningful_content_english(self):
+        """Test meaningless query returns English msg."""
+        result = hs.ask_question("@@@", language="en")
+        assert "valid question" in result["answer"].lower()  # 470
+
+    @patch("hybrid_search.detect_injection")
+    def test_injection_english(self, mock_inj):
+        """Test injection detected returns English msg."""
+        mock_inj.return_value = (True, "high")
+        result = hs.ask_question("test", language="en")
+        assert "cannot be processed" in result["answer"].lower()  # 481
+
+    @patch("hybrid_search.check_qdrant_health")
+    def test_unhealthy_db_formatted(self, mock_health):
+        """Test unhealthy DB with return_formatted=True."""
+        mock_health.return_value = {"healthy": False}
+        result = hs.ask_question("test", return_formatted=True)
+        assert isinstance(result, str)  # 496
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search._response_cache")
+    def test_cache_hit_formatted(self, mock_cache, mock_health):
+        """Test cache hit with return_formatted=True."""
+        mock_health.return_value = {"healthy": True, "points_count": 1000}
+        mock_cache.get.return_value = {
+            "answer": "cached answer",
+            "sources": [],
+        }
+        mock_cache.check_version = MagicMock()
+        result = hs.ask_question("cache test", return_formatted=True)
+        assert isinstance(result, str)  # 510
+
+
+class TestAskQuestionCSVPath:
+    """Test CSV query paths in ask_question."""
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.handle_author_query")
+    @patch("hybrid_search.generate_llm_answer")
+    def test_csv_gemini_unhealthy(
+        self, mock_llm, mock_handle, mock_gemini, mock_health
+    ):
+        """Test CSV path when Gemini is unhealthy."""
+        mock_health.return_value = {"healthy": True, "points_count": 1000}
+        mock_handle.return_value = (True, "CSV data here")
+        mock_gemini.return_value = {"healthy": False}
+
+        result = hs.ask_question("எழுத்தாளர்கள் யார்?")
+        assert "CSV data here" in result["answer"]  # 520-521
+        mock_llm.assert_not_called()
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.handle_author_query")
+    @patch("hybrid_search.generate_llm_answer")
+    def test_csv_llm_returns_short(
+        self, mock_llm, mock_handle, mock_gemini, mock_health
+    ):
+        """Test CSV path when LLM returns short answer."""
+        mock_health.return_value = {"healthy": True, "points_count": 1000}
+        mock_handle.return_value = (True, "CSV data")
+        mock_gemini.return_value = {"healthy": True}
+        mock_llm.return_value = "hi"  # < 5 chars
+
+        result = hs.ask_question("எழுத்தாளர்கள் யார்?")
+        assert "CSV data" in result["answer"]  # 540, 543-544
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.handle_author_query")
+    @patch("hybrid_search.generate_llm_answer")
+    def test_csv_result_formatted(
+        self, mock_llm, mock_handle, mock_gemini, mock_health
+    ):
+        """Test CSV result with return_formatted=True."""
+        mock_health.return_value = {"healthy": True, "points_count": 1000}
+        mock_handle.return_value = (True, "CSV data")
+        mock_gemini.return_value = {"healthy": True}
+        mock_llm.return_value = "A good summary " * 20
+
+        result = hs.ask_question(
+            "எழுத்தாளர்கள் யார்?",
+            return_formatted=True,
+        )
+        assert isinstance(result, str)  # 554, 557-558
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.handle_author_query")
+    @patch("hybrid_search.generate_llm_answer")
+    def test_csv_with_history_skips_cache(
+        self, mock_llm, mock_handle, mock_gemini, mock_health
+    ):
+        """Test CSV result with history skips cache put."""
+        mock_health.return_value = {"healthy": True, "points_count": 1000}
+        mock_handle.return_value = (True, "CSV data")
+        mock_gemini.return_value = {"healthy": True}
+        mock_llm.return_value = "A good summary " * 20
+        history = [
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "content": "a"},
+        ]
+        result = hs.ask_question("எழுத்தாளர்கள் யார்?", history=history)
+        assert result["query_type"] == "author_csv"  # 554
+
+
+class TestAskQuestionVectorPath:
+    """Test vector search paths in ask_question."""
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search.get_qdrant_client")
+    @patch("hybrid_search.HybridQdrantSearch")
+    @patch("hybrid_search.merge_consecutive_chunks")
+    def test_no_results_formatted(
+        self, mock_merge, mock_search_cls, mock_client, mock_health
+    ):
+        """Test no results with return_formatted=True."""
+        mock_health.return_value = {"healthy": True, "points_count": 1000}
+        mock_client.return_value = MagicMock()
+        mock_searcher = MagicMock()
+        mock_searcher.search.return_value = []
+        mock_search_cls.return_value = mock_searcher
+        result = hs.ask_question("test question", return_formatted=True)
+        assert isinstance(result, str)  # 581, 584-585
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search.get_qdrant_client")
+    @patch("hybrid_search.HybridQdrantSearch")
+    @patch("hybrid_search.merge_consecutive_chunks")
+    def test_empty_merged_docs_formatted(
+        self, mock_merge, mock_search_cls, mock_client, mock_health
+    ):
+        """Test empty merged docs with return_formatted."""
+        mock_health.return_value = {"healthy": True, "points_count": 1000}
+        mock_client.return_value = MagicMock()
+        mock_searcher = MagicMock()
+        mock_searcher.search.return_value = [MagicMock()]
+        mock_search_cls.return_value = mock_searcher
+        mock_merge.return_value = []
+        result = hs.ask_question("test question", return_formatted=True)
+        assert isinstance(result, str)  # 597, 600-601
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.get_qdrant_client")
+    @patch("hybrid_search.HybridQdrantSearch")
+    @patch("hybrid_search.merge_consecutive_chunks")
+    @patch("hybrid_search.generate_llm_answer")
+    def test_no_data_answer_suppresses_sources(
+        self,
+        mock_llm,
+        mock_merge,
+        mock_search_cls,
+        mock_client,
+        mock_gemini,
+        mock_health,
+    ):
+        """Test no-data answer suppresses sources."""
+        mock_health.return_value = {"healthy": True, "points_count": 1000}
+        mock_gemini.return_value = {"healthy": True}
+        mock_client.return_value = MagicMock()
+        mock_searcher = MagicMock()
+        mock_searcher.search.return_value = [MagicMock()]
+        mock_search_cls.return_value = mock_searcher
+        mock_merge.return_value = [_make_merged_doc()]
+        mock_llm.return_value = "தகவல்கள் கிடைக்கவில்லை " * 20
+        result = hs.ask_question("test")
+        assert result["sources"] == []  # 650-653
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.get_qdrant_client")
+    @patch("hybrid_search.HybridQdrantSearch")
+    @patch("hybrid_search.merge_consecutive_chunks")
+    @patch("hybrid_search.generate_llm_answer")
+    def test_fallback_reason_in_result(
+        self,
+        mock_llm,
+        mock_merge,
+        mock_search_cls,
+        mock_client,
+        mock_gemini,
+        mock_health,
+    ):
+        """Test fallback_reason is added to result."""
+        mock_health.return_value = {"healthy": True, "points_count": 1000}
+        mock_gemini.return_value = {"healthy": True}
+        mock_client.return_value = MagicMock()
+        mock_searcher = MagicMock()
+        mock_searcher.search.return_value = [MagicMock()]
+        mock_search_cls.return_value = mock_searcher
+        mock_merge.return_value = [_make_merged_doc()]
+        mock_llm.return_value = ""  # triggers fallback
+
+        result = hs.ask_question("test")
+        assert "fallback_reason" in result  # 674
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.get_qdrant_client")
+    @patch("hybrid_search.HybridQdrantSearch")
+    @patch("hybrid_search.merge_consecutive_chunks")
+    @patch("hybrid_search.generate_llm_answer")
+    def test_success_with_history_skips_cache(
+        self,
+        mock_llm,
+        mock_merge,
+        mock_search_cls,
+        mock_client,
+        mock_gemini,
+        mock_health,
+    ):
+        """Test successful result with history skips cache."""
+        mock_health.return_value = {"healthy": True, "points_count": 1000}
+        mock_gemini.return_value = {"healthy": True}
+        mock_client.return_value = MagicMock()
+        mock_searcher = MagicMock()
+        mock_searcher.search.return_value = [MagicMock()]
+        mock_search_cls.return_value = mock_searcher
+        mock_merge.return_value = [_make_merged_doc()]
+        mock_llm.return_value = "Valid answer " * 30
+        history = [
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "content": "a"},
+        ]
+        result = hs.ask_question("test", history=history)
+        assert "answer" in result  # 674, 681
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.get_qdrant_client")
+    @patch("hybrid_search.HybridQdrantSearch")
+    @patch("hybrid_search.merge_consecutive_chunks")
+    @patch("hybrid_search.generate_llm_answer")
+    def test_success_return_formatted(
+        self,
+        mock_llm,
+        mock_merge,
+        mock_search_cls,
+        mock_client,
+        mock_gemini,
+        mock_health,
+    ):
+        """Test successful result with return_formatted."""
+        mock_health.return_value = {"healthy": True, "points_count": 1000}
+        mock_gemini.return_value = {"healthy": True}
+        mock_client.return_value = MagicMock()
+        mock_searcher = MagicMock()
+        mock_searcher.search.return_value = [MagicMock()]
+        mock_search_cls.return_value = mock_searcher
+        mock_merge.return_value = [_make_merged_doc()]
+        mock_llm.return_value = "Valid answer " * 30
+        result = hs.ask_question("test question", return_formatted=True)
+        assert isinstance(result, str)  # 678
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search.get_qdrant_client")
+    def test_exception_return_formatted(self, mock_client, mock_health):
+        """Test exception path with return_formatted."""
+        mock_health.return_value = {"healthy": True, "points_count": 1000}
+        mock_client.side_effect = Exception("boom")
+        result = hs.ask_question("test", return_formatted=True)
+        assert isinstance(result, str)  # 684-685
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.get_qdrant_client")
+    @patch("hybrid_search.HybridQdrantSearch")
+    @patch("hybrid_search.merge_consecutive_chunks")
+    def test_gemini_unhealthy_triggers_fallback(
+        self, mock_merge, mock_search_cls, mock_client, mock_gemini, mock_health
+    ):
+        """Test Gemini unhealthy triggers extractive fallback."""
+        mock_health.return_value = {"healthy": True, "points_count": 1000}
+        mock_gemini.return_value = {"healthy": False}
+        mock_client.return_value = MagicMock()
+        mock_searcher = MagicMock()
+        mock_searcher.search.return_value = [MagicMock()]
+        mock_search_cls.return_value = mock_searcher
+        mock_merge.return_value = [_make_merged_doc()]
+        result = hs.ask_question("test")
+        assert "answer" in result
+        assert "fallback_reason" in result
+
+
+class TestAskQuestionAsync:
+    """Test ask_question_async missing lines."""
+
+    @pytest.mark.asyncio
+    async def test_async_no_meaningful_content(self):
+        """Test async rejects meaningless query."""
+        result = await hs.ask_question_async("@@@", language="en")
+        assert "valid question" in result["answer"].lower()
+        # 705-716
+
+    @pytest.mark.asyncio
+    async def test_async_no_meaningful_formatted(self):
+        """Test async meaningless query formatted."""
+        result = await hs.ask_question_async("@@@", return_formatted=True)
+        assert isinstance(result, str)  # 714-715
+
+    @pytest.mark.asyncio
+    @patch("hybrid_search.detect_injection")
+    async def test_async_injection_detected(self, mock_inj):
+        """Test async injection detection."""
+        mock_inj.return_value = (True, "high")
+        result = await hs.ask_question_async("test", language="en")
+        assert "cannot be processed" in result["answer"].lower()
+        # 716-723
+
+    @pytest.mark.asyncio
+    @patch("hybrid_search.detect_injection")
+    async def test_async_injection_formatted(self, mock_inj):
+        """Test async injection with return_formatted."""
+        mock_inj.return_value = (True, "high")
+        result = await hs.ask_question_async("test", return_formatted=True)
+        assert isinstance(result, str)  # 725-726
+
+    @pytest.mark.asyncio
+    @patch("hybrid_search.check_qdrant_health")
+    async def test_async_unhealthy_formatted(self, mock_h):
+        """Test async unhealthy DB with return_formatted."""
+        mock_h.return_value = {"healthy": False}
+        result = await hs.ask_question_async("test", return_formatted=True)
+        assert isinstance(result, str)  # 733, 736-737
+
+    @pytest.mark.asyncio
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search._response_cache")
+    async def test_async_cache_hit(self, mock_cache, mock_h):
+        """Test async cache hit returns cached result."""
+        mock_h.return_value = {"healthy": True, "points_count": 1000}
+        mock_cache.get.return_value = {
+            "answer": "cached",
+            "sources": [],
+        }
+        mock_cache.check_version = MagicMock()
+        result = await hs.ask_question_async("test")
+        assert result["answer"] == "cached"  # 748
+
+    @pytest.mark.asyncio
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search._response_cache")
+    async def test_async_cache_hit_formatted(self, mock_cache, mock_h):
+        """Test async cache hit with return_formatted."""
+        mock_h.return_value = {"healthy": True, "points_count": 1000}
+        mock_cache.get.return_value = {
+            "answer": "cached",
+            "sources": [],
+        }
+        mock_cache.check_version = MagicMock()
+        result = await hs.ask_question_async("test", return_formatted=True)
+        assert isinstance(result, str)  # 752
+
+    @pytest.mark.asyncio
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.handle_author_query")
+    @patch(
+        "hybrid_search.generate_llm_answer_async",
+        new_callable=AsyncMock,
+    )
+    async def test_async_csv_path(
+        self, mock_llm, mock_handle, mock_gemini, mock_health
+    ):
+        """Test async CSV query path."""
+        mock_health.return_value = {"healthy": True, "points_count": 1000}
+        mock_handle.return_value = (True, "CSV data")
+        mock_gemini.return_value = {"healthy": True}
+        mock_llm.return_value = "Summary " * 20
+
+        result = await hs.ask_question_async("எழுத்தாளர்கள் யார்?")
+        assert result["query_type"] == "author_csv"
+        # 760-802
+
+    @pytest.mark.asyncio
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.handle_author_query")
+    @patch(
+        "hybrid_search.generate_llm_answer_async",
+        new_callable=AsyncMock,
+    )
+    async def test_async_csv_gemini_unhealthy(
+        self, mock_llm, mock_handle, mock_gemini, mock_health
+    ):
+        """Test async CSV path when Gemini unhealthy."""
+        mock_health.return_value = {"healthy": True, "points_count": 1000}
+        mock_handle.return_value = (True, "CSV data")
+        mock_gemini.return_value = {"healthy": False}
+
+        result = await hs.ask_question_async("எழுத்தாளர்கள் யார்?")
+        assert "CSV data" in result["answer"]
+        mock_llm.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.handle_author_query")
+    @patch(
+        "hybrid_search.generate_llm_answer_async",
+        new_callable=AsyncMock,
+    )
+    async def test_async_csv_formatted(
+        self, mock_llm, mock_handle, mock_gemini, mock_health
+    ):
+        """Test async CSV path with return_formatted."""
+        mock_health.return_value = {"healthy": True, "points_count": 1000}
+        mock_handle.return_value = (True, "CSV data")
+        mock_gemini.return_value = {"healthy": True}
+        mock_llm.return_value = "Summary " * 20
+
+        result = await hs.ask_question_async(
+            "எழுத்தாளர்கள் யார்?",
+            return_formatted=True,
+        )
+        assert isinstance(result, str)  # 802
+
+    @pytest.mark.asyncio
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search.get_qdrant_client")
+    @patch("hybrid_search.HybridQdrantSearch")
+    async def test_async_no_results(self, mock_search_cls, mock_client, mock_h):
+        """Test async with no search results."""
+        mock_h.return_value = {"healthy": True, "points_count": 1000}
+        mock_client.return_value = MagicMock()
+        mock_searcher = MagicMock()
+        mock_searcher.search.return_value = []
+        mock_search_cls.return_value = mock_searcher
+        result = await hs.ask_question_async("test")
+        assert "sources" in result
+        assert result["sources"] == []  # 820-827
+
+    @pytest.mark.asyncio
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search.get_qdrant_client")
+    @patch("hybrid_search.HybridQdrantSearch")
+    @patch("hybrid_search.merge_consecutive_chunks")
+    async def test_async_empty_merged(
+        self, mock_merge, mock_search_cls, mock_client, mock_h
+    ):
+        """Test async with empty merged docs."""
+        mock_h.return_value = {"healthy": True, "points_count": 1000}
+        mock_client.return_value = MagicMock()
+        mock_searcher = MagicMock()
+        mock_searcher.search.return_value = [MagicMock()]
+        mock_search_cls.return_value = mock_searcher
+        mock_merge.return_value = []
+        result = await hs.ask_question_async("test")
+        assert "answer" in result  # 837-844
+
+    @pytest.mark.asyncio
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.get_qdrant_client")
+    @patch("hybrid_search.HybridQdrantSearch")
+    @patch("hybrid_search.merge_consecutive_chunks")
+    @patch(
+        "hybrid_search.generate_llm_answer_async",
+        new_callable=AsyncMock,
+    )
+    async def test_async_llm_short_fallback(
+        self,
+        mock_llm,
+        mock_merge,
+        mock_search_cls,
+        mock_client,
+        mock_gemini,
+        mock_health,
+    ):
+        """Test async LLM short answer triggers fallback."""
+        mock_health.return_value = {"healthy": True, "points_count": 1000}
+        mock_gemini.return_value = {"healthy": True}
+        mock_client.return_value = MagicMock()
+        mock_searcher = MagicMock()
+        mock_searcher.search.return_value = [MagicMock()]
+        mock_search_cls.return_value = mock_searcher
+        mock_merge.return_value = [_make_merged_doc()]
+        mock_llm.return_value = ""  # triggers fallback
+
+        result = await hs.ask_question_async("test")
+        assert "fallback_reason" in result
+        # 884->890, 894-898
+
+    @pytest.mark.asyncio
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.get_qdrant_client")
+    @patch("hybrid_search.HybridQdrantSearch")
+    @patch("hybrid_search.merge_consecutive_chunks")
+    @patch(
+        "hybrid_search.generate_llm_answer_async",
+        new_callable=AsyncMock,
+    )
+    async def test_async_no_data_suppresses_sources(
+        self,
+        mock_llm,
+        mock_merge,
+        mock_search_cls,
+        mock_client,
+        mock_gemini,
+        mock_health,
+    ):
+        """Test async no-data answer suppresses sources."""
+        mock_health.return_value = {"healthy": True, "points_count": 1000}
+        mock_gemini.return_value = {"healthy": True}
+        mock_client.return_value = MagicMock()
+        mock_searcher = MagicMock()
+        mock_searcher.search.return_value = [MagicMock()]
+        mock_search_cls.return_value = mock_searcher
+        mock_merge.return_value = [_make_merged_doc()]
+        mock_llm.return_value = "data is not available " * 20
+        result = await hs.ask_question_async("test")
+        assert result["sources"] == []  # 894-898
+
+    @pytest.mark.asyncio
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.get_qdrant_client")
+    @patch("hybrid_search.HybridQdrantSearch")
+    @patch("hybrid_search.merge_consecutive_chunks")
+    @patch(
+        "hybrid_search.generate_llm_answer_async",
+        new_callable=AsyncMock,
+    )
+    async def test_async_with_history(
+        self,
+        mock_llm,
+        mock_merge,
+        mock_search_cls,
+        mock_client,
+        mock_gemini,
+        mock_health,
+    ):
+        """Test async with history skips cache store."""
+        mock_health.return_value = {"healthy": True, "points_count": 1000}
+        mock_gemini.return_value = {"healthy": True}
+        mock_client.return_value = MagicMock()
+        mock_searcher = MagicMock()
+        mock_searcher.search.return_value = [MagicMock()]
+        mock_search_cls.return_value = mock_searcher
+        mock_merge.return_value = [_make_merged_doc()]
+        mock_llm.return_value = "Valid answer " * 30
+        history = [
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "content": "a"},
+        ]
+        result = await hs.ask_question_async("test", history=history)
+        assert "answer" in result  # 915->917, 921
+
+    @pytest.mark.asyncio
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.get_qdrant_client")
+    @patch("hybrid_search.HybridQdrantSearch")
+    @patch("hybrid_search.merge_consecutive_chunks")
+    @patch(
+        "hybrid_search.generate_llm_answer_async",
+        new_callable=AsyncMock,
+    )
+    async def test_async_return_formatted(
+        self,
+        mock_llm,
+        mock_merge,
+        mock_search_cls,
+        mock_client,
+        mock_gemini,
+        mock_health,
+    ):
+        """Test async return_formatted=True."""
+        mock_health.return_value = {"healthy": True, "points_count": 1000}
+        mock_gemini.return_value = {"healthy": True}
+        mock_client.return_value = MagicMock()
+        mock_searcher = MagicMock()
+        mock_searcher.search.return_value = [MagicMock()]
+        mock_search_cls.return_value = mock_searcher
+        mock_merge.return_value = [_make_merged_doc()]
+        mock_llm.return_value = "Valid answer " * 30
+        result = await hs.ask_question_async("test", return_formatted=True)
+        assert isinstance(result, str)  # 925-929
+
+    @pytest.mark.asyncio
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search.get_qdrant_client")
+    async def test_async_exception_path(self, mock_client, mock_health):
+        """Test async exception returns safe error."""
+        mock_health.return_value = {"healthy": True, "points_count": 1000}
+        mock_client.side_effect = Exception("boom")
+        result = await hs.ask_question_async("test")
+        assert "error" in result or "answer" in result
+
+    @pytest.mark.asyncio
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search.get_qdrant_client")
+    async def test_async_exception_formatted(self, mock_client, mock_health):
+        """Test async exception with return_formatted."""
+        mock_health.return_value = {"healthy": True, "points_count": 1000}
+        mock_client.side_effect = Exception("boom")
+        result = await hs.ask_question_async("test", return_formatted=True)
+        assert isinstance(result, str)
+
+
+class TestAskQuestionStream:
+    """Test ask_question_stream missing lines."""
+
+    @patch("hybrid_search.detect_injection")
+    def test_stream_injection_detected(self, mock_inj):
+        """Test streaming rejects injection."""
+        mock_inj.return_value = (True, "high")
+        output = list(hs.ask_question_stream("test"))
+        assert output[0]["type"] == "token"
+        assert output[-1]["type"] == "sources"
+        # 963-976
+
+    @patch("hybrid_search.check_qdrant_health")
+    def test_stream_unhealthy_db(self, mock_h):
+        """Test streaming with unhealthy DB."""
+        mock_h.return_value = {"healthy": False}
+        output = list(hs.ask_question_stream("test"))
+        assert output[-1]["type"] == "sources"
+        # 977-987
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search._response_cache")
+    def test_stream_cache_hit(self, mock_cache, mock_h):
+        """Test streaming cache hit."""
+        mock_h.return_value = {"healthy": True, "points_count": 1000}
+        mock_cache.get.return_value = {
+            "answer": "cached answer",
+            "sources": [{"heading": "src"}],
+        }
+        mock_cache.check_version = MagicMock()
+        output = list(hs.ask_question_stream("test"))
+        tokens = [o["content"] for o in output if o["type"] == "token"]
+        assert "cached answer" in tokens
+        # 991-998
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search._response_cache")
+    @patch("hybrid_search.CSV_PATH")
+    @patch("hybrid_search.handle_author_query")
+    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.generate_llm_answer_stream")
+    def test_stream_csv_success(
+        self, mock_stream_llm, mock_gemini, mock_handle, mock_csv, mock_cache, mock_h
+    ):
+        """Test streaming CSV query success path."""
+        mock_h.return_value = {"healthy": True, "points_count": 1000}
+        mock_cache.get.return_value = None
+        mock_cache.check_version = MagicMock()
+        mock_cache.put = MagicMock()
+        mock_csv.exists.return_value = True
+        mock_handle.return_value = (True, "CSV data")
+        mock_gemini.return_value = {"healthy": True}
+        mock_stream_llm.return_value = iter(["token1 ", "token2 ", "token3 "] * 10)
+
+        output = list(hs.ask_question_stream("test"))
+        tokens = [o["content"] for o in output if o["type"] == "token"]
+        assert len(tokens) > 0
+        # 1002-1070
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search._response_cache")
+    @patch("hybrid_search.CSV_PATH")
+    @patch("hybrid_search.handle_author_query")
+    @patch("hybrid_search.check_gemini_health")
+    def test_stream_csv_gemini_unhealthy(
+        self, mock_gemini, mock_handle, mock_csv, mock_cache, mock_h
+    ):
+        """Test streaming CSV when Gemini is unhealthy."""
+        mock_h.return_value = {"healthy": True, "points_count": 1000}
+        mock_cache.get.return_value = None
+        mock_cache.check_version = MagicMock()
+        mock_csv.exists.return_value = True
+        mock_handle.return_value = (True, "CSV data")
+        mock_gemini.return_value = {"healthy": False}
+
+        output = list(hs.ask_question_stream("test"))
+        tokens = [o["content"] for o in output if o["type"] == "token"]
+        assert len(tokens) > 0
+        # 1008-1018
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search._response_cache")
+    @patch("hybrid_search.CSV_PATH")
+    @patch("hybrid_search.handle_author_query")
+    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.generate_llm_answer_stream")
+    @patch("hybrid_search.generate_llm_answer")
+    def test_stream_csv_short_gist_sync_fallback(
+        self,
+        mock_sync_llm,
+        mock_stream_llm,
+        mock_gemini,
+        mock_handle,
+        mock_csv,
+        mock_cache,
+        mock_h,
+    ):
+        """Test CSV streaming short gist sync fallback."""
+        mock_h.return_value = {"healthy": True, "points_count": 1000}
+        mock_cache.get.return_value = None
+        mock_cache.check_version = MagicMock()
+        mock_cache.put = MagicMock()
+        mock_csv.exists.return_value = True
+        mock_handle.return_value = (True, "CSV data")
+        mock_gemini.return_value = {"healthy": True}
+        mock_stream_llm.return_value = iter(["hi"])
+        mock_sync_llm.return_value = "A good sync fallback"
+
+        output = list(hs.ask_question_stream("test"))
+        tokens = [o["content"] for o in output if o["type"] == "token"]
+        assert any("A good sync fallback" in t for t in tokens)
+        # 1039-1052
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search._response_cache")
+    @patch("hybrid_search.CSV_PATH")
+    @patch("hybrid_search.handle_author_query")
+    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.generate_llm_answer_stream")
+    @patch("hybrid_search.generate_llm_answer")
+    def test_stream_csv_both_fallbacks_fail(
+        self,
+        mock_sync_llm,
+        mock_stream_llm,
+        mock_gemini,
+        mock_handle,
+        mock_csv,
+        mock_cache,
+        mock_h,
+    ):
+        """Test CSV streaming both LLM fallbacks fail."""
+        mock_h.return_value = {"healthy": True, "points_count": 1000}
+        mock_cache.get.return_value = None
+        mock_cache.check_version = MagicMock()
+        mock_cache.put = MagicMock()
+        mock_csv.exists.return_value = True
+        mock_handle.return_value = (True, "CSV data")
+        mock_gemini.return_value = {"healthy": True}
+        mock_stream_llm.return_value = iter(["hi"])
+        mock_sync_llm.return_value = ""
+
+        output = list(hs.ask_question_stream("test"))
+        tokens = [o["content"] for o in output if o["type"] == "token"]
+        assert len(tokens) > 0
+        # 1053-1060
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search._response_cache")
+    @patch("hybrid_search.CSV_PATH")
+    @patch("hybrid_search.get_qdrant_client")
+    @patch("hybrid_search.HybridQdrantSearch")
+    @patch("hybrid_search.merge_consecutive_chunks")
+    def test_stream_empty_merged(
+        self, mock_merge, mock_search_cls, mock_client, mock_csv, mock_cache, mock_h
+    ):
+        """Test streaming with empty merged docs."""
+        mock_h.return_value = {"healthy": True, "points_count": 1000}
+        mock_cache.get.return_value = None
+        mock_cache.check_version = MagicMock()
+        mock_csv.exists.return_value = False
+        mock_client.return_value = MagicMock()
+        mock_searcher = MagicMock()
+        mock_searcher.search.return_value = [MagicMock()]
+        mock_search_cls.return_value = mock_searcher
+        mock_merge.return_value = []
+
+        output = list(hs.ask_question_stream("test"))
+        tokens = [o["content"] for o in output if o["type"] == "token"]
+        assert any("போதுமான" in t or "Insufficient" in t for t in tokens)
+        # 1096-1109
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search._response_cache")
+    @patch("hybrid_search.CSV_PATH")
+    @patch("hybrid_search.get_qdrant_client")
+    @patch("hybrid_search.HybridQdrantSearch")
+    @patch("hybrid_search.merge_consecutive_chunks")
+    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.extract_key_facts")
+    @patch("hybrid_search.generate_extractive_answer")
+    def test_stream_gemini_unhealthy_extractive(
+        self,
+        mock_extract,
+        mock_facts,
+        mock_gemini,
+        mock_merge,
+        mock_search_cls,
+        mock_client,
+        mock_csv,
+        mock_cache,
+        mock_h,
+    ):
+        """Test streaming with unhealthy Gemini uses extractive."""
+        mock_h.return_value = {"healthy": True, "points_count": 1000}
+        mock_cache.get.return_value = None
+        mock_cache.check_version = MagicMock()
+        mock_csv.exists.return_value = False
+        mock_client.return_value = MagicMock()
+        mock_searcher = MagicMock()
+        mock_searcher.search.return_value = [MagicMock()]
+        mock_search_cls.return_value = mock_searcher
+        mock_merge.return_value = [_make_merged_doc()]
+        mock_gemini.return_value = {"healthy": False}
+        mock_facts.return_value = [{"sentence": "fact", "score": 10}]
+        mock_extract.return_value = "extractive answer"
+
+        output = list(hs.ask_question_stream("test"))
+        tokens = [o["content"] for o in output if o["type"] == "token"]
+        assert "extractive answer" in tokens
+        # 1126-1141
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search._response_cache")
+    @patch("hybrid_search.CSV_PATH")
+    @patch("hybrid_search.get_qdrant_client")
+    @patch("hybrid_search.HybridQdrantSearch")
+    @patch("hybrid_search.merge_consecutive_chunks")
+    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.extract_key_facts")
+    @patch("hybrid_search.generate_extractive_answer")
+    def test_stream_gemini_unhealthy_no_extractive(
+        self,
+        mock_extract,
+        mock_facts,
+        mock_gemini,
+        mock_merge,
+        mock_search_cls,
+        mock_client,
+        mock_csv,
+        mock_cache,
+        mock_h,
+    ):
+        """Test streaming Gemini unhealthy no extractive."""
+        mock_h.return_value = {"healthy": True, "points_count": 1000}
+        mock_cache.get.return_value = None
+        mock_cache.check_version = MagicMock()
+        mock_csv.exists.return_value = False
+        mock_client.return_value = MagicMock()
+        mock_searcher = MagicMock()
+        mock_searcher.search.return_value = [MagicMock()]
+        mock_search_cls.return_value = mock_searcher
+        mock_merge.return_value = [_make_merged_doc()]
+        mock_gemini.return_value = {"healthy": False}
+        mock_facts.return_value = []
+        mock_extract.return_value = ""
+
+        output = list(hs.ask_question_stream("test"))
+        tokens = [o["content"] for o in output if o["type"] == "token"]
+        assert any("LLM" in t or "unavailable" in t.lower() for t in tokens)
+        # 1135-1143
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search._response_cache")
+    @patch("hybrid_search.CSV_PATH")
+    @patch("hybrid_search.get_qdrant_client")
+    @patch("hybrid_search.HybridQdrantSearch")
+    @patch("hybrid_search.merge_consecutive_chunks")
+    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.generate_llm_answer_stream")
+    def test_stream_few_tokens_fallback(
+        self,
+        mock_stream_llm,
+        mock_gemini,
+        mock_merge,
+        mock_search_cls,
+        mock_client,
+        mock_csv,
+        mock_cache,
+        mock_h,
+    ):
+        """Test streaming few tokens triggers fallback."""
+        mock_h.return_value = {"healthy": True, "points_count": 1000}
+        mock_cache.get.return_value = None
+        mock_cache.check_version = MagicMock()
+        mock_cache.put = MagicMock()
+        mock_csv.exists.return_value = False
+        mock_client.return_value = MagicMock()
+        mock_searcher = MagicMock()
+        mock_searcher.search.return_value = [MagicMock()]
+        mock_search_cls.return_value = mock_searcher
+        mock_merge.return_value = [_make_merged_doc()]
+        mock_gemini.return_value = {"healthy": True}
+        mock_stream_llm.return_value = iter(["a", "b"])
+
+        output = list(hs.ask_question_stream("test"))
+        types = [o["type"] for o in output]
+        assert "fallback" in types or "token" in types
+        # 1154-1156, 1160->1168, 1170->1174
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search._response_cache")
+    @patch("hybrid_search.CSV_PATH")
+    @patch("hybrid_search.get_qdrant_client")
+    @patch("hybrid_search.HybridQdrantSearch")
+    @patch("hybrid_search.merge_consecutive_chunks")
+    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.generate_llm_answer_stream")
+    @patch(
+        "hybrid_search._answer_indicates_no_data",
+        return_value=True,
+    )
+    def test_stream_no_data_suppresses_sources(
+        self,
+        mock_no_data,
+        mock_stream_llm,
+        mock_gemini,
+        mock_merge,
+        mock_search_cls,
+        mock_client,
+        mock_csv,
+        mock_cache,
+        mock_h,
+    ):
+        """Test streaming no-data suppresses sources."""
+        mock_h.return_value = {"healthy": True, "points_count": 1000}
+        mock_cache.get.return_value = None
+        mock_cache.check_version = MagicMock()
+        mock_cache.put = MagicMock()
+        mock_csv.exists.return_value = False
+        mock_client.return_value = MagicMock()
+        mock_searcher = MagicMock()
+        mock_searcher.search.return_value = [MagicMock()]
+        mock_search_cls.return_value = mock_searcher
+        mock_merge.return_value = [_make_merged_doc()]
+        mock_gemini.return_value = {"healthy": True}
+        mock_stream_llm.return_value = iter([f"token{i} " for i in range(20)])
+
+        output = list(hs.ask_question_stream("test"))
+        src_events = [o for o in output if o["type"] == "sources"]
+        assert src_events[-1]["sources"] == []
+        # 1179-1183, 1186->1193, 1194
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search._response_cache")
+    @patch("hybrid_search.CSV_PATH")
+    @patch("hybrid_search.get_qdrant_client")
+    @patch("hybrid_search.HybridQdrantSearch")
+    @patch("hybrid_search.merge_consecutive_chunks")
+    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.generate_llm_answer_stream")
+    def test_stream_caches_long_answer(
+        self,
+        mock_stream_llm,
+        mock_gemini,
+        mock_merge,
+        mock_search_cls,
+        mock_client,
+        mock_csv,
+        mock_cache,
+        mock_h,
+    ):
+        """Test streaming caches answer when long enough."""
+        mock_h.return_value = {"healthy": True, "points_count": 1000}
+        mock_cache.get.return_value = None
+        mock_cache.check_version = MagicMock()
+        mock_cache.put = MagicMock()
+        mock_csv.exists.return_value = False
+        mock_client.return_value = MagicMock()
+        mock_searcher = MagicMock()
+        mock_searcher.search.return_value = [MagicMock()]
+        mock_search_cls.return_value = mock_searcher
+        mock_merge.return_value = [_make_merged_doc()]
+        mock_gemini.return_value = {"healthy": True}
+        long_tokens = [f"word{i} " for i in range(50)]
+        mock_stream_llm.return_value = iter(long_tokens)
+
+        list(hs.ask_question_stream("test"))
+        mock_cache.put.assert_called_once()
+        # 1197-1199
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search._response_cache")
+    @patch("hybrid_search.CSV_PATH")
+    @patch("hybrid_search.get_qdrant_client")
+    def test_stream_exception_path(self, mock_client, mock_csv, mock_cache, mock_h):
+        """Test streaming exception returns error."""
+        mock_h.return_value = {"healthy": True, "points_count": 1000}
+        mock_cache.get.return_value = None
+        mock_cache.check_version = MagicMock()
+        mock_csv.exists.return_value = False
+        mock_client.side_effect = Exception("boom")
+
+        output = list(hs.ask_question_stream("test"))
+        assert output[-1]["type"] == "sources"
+        assert output[-1]["sources"] == []
+        # 1199-1205
+
+    @patch("hybrid_search.check_qdrant_health")
+    @patch("hybrid_search._response_cache")
+    @patch("hybrid_search.CSV_PATH")
+    @patch("hybrid_search.get_qdrant_client")
+    @patch("hybrid_search.HybridQdrantSearch")
+    @patch("hybrid_search.merge_consecutive_chunks")
+    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.generate_llm_answer_stream")
+    def test_stream_with_history_skips_cache(
+        self,
+        mock_stream_llm,
+        mock_gemini,
+        mock_merge,
+        mock_search_cls,
+        mock_client,
+        mock_csv,
+        mock_cache,
+        mock_h,
+    ):
+        """Test streaming with history skips cache store."""
+        mock_h.return_value = {"healthy": True, "points_count": 1000}
+        mock_cache.get.return_value = None
+        mock_cache.check_version = MagicMock()
+        mock_cache.put = MagicMock()
+        mock_csv.exists.return_value = False
+        mock_client.return_value = MagicMock()
+        mock_searcher = MagicMock()
+        mock_searcher.search.return_value = [MagicMock()]
+        mock_search_cls.return_value = mock_searcher
+        mock_merge.return_value = [_make_merged_doc()]
+        mock_gemini.return_value = {"healthy": True}
+        long_tokens = [f"word{i} " for i in range(50)]
+        mock_stream_llm.return_value = iter(long_tokens)
+        history = [
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "content": "a"},
+        ]
+        list(hs.ask_question_stream("test", history=history))
+        mock_cache.put.assert_not_called()
+
+
+# ============================================================================
+# search.py coverage tests
+# ============================================================================
+
+import search as search_mod  # noqa: E402
+
+
+class TestSearchMergeConsecutiveChunks:
+    """Test merge_consecutive_chunks from search.py."""
+
+    def test_non_article_type_skipped(self):
+        """Test that non-article type points are skipped."""
+        client = MagicMock()
+        point = MagicMock()
+        point.payload = {"type": "intro", "content": "x"}
+        result = search_mod.merge_consecutive_chunks(client, [point])
+        assert result == []  # line 63 -> continue
+
+    def test_empty_chunks_skipped(self):
+        """Test that empty chunks from scroll are skipped."""
+        client = MagicMock()
+        client.scroll.return_value = ([], None)
+        point = MagicMock()
+        point.score = 0.9
+        point.payload = {
+            "type": "article",
+            "metadata": {
+                "doc_id": "d1",
+                "doc_issue": "1",
+                "volume": "v1",
+            },
+        }
+        result = search_mod.merge_consecutive_chunks(client, [point])
+        assert result == []  # line 85 -> continue
+
+    def test_short_content_skipped(self):
+        """Test that short content below threshold is skipped."""
+        client = MagicMock()
+        chunk = MagicMock()
+        chunk.payload = {
+            "content": "short text",
+            "chunk_id": 0,
+        }
+        client.scroll.return_value = ([chunk], None)
+        point = MagicMock()
+        point.score = 0.9
+        point.payload = {
+            "type": "article",
+            "metadata": {
+                "doc_id": "d1",
+                "doc_issue": "1",
+                "volume": "v1",
+            },
+        }
+        result = search_mod.merge_consecutive_chunks(client, [point])
+        assert result == []  # line 104 -> continue
+
+
+class TestSelectRelevantDocs:
+    """Test _select_relevant_docs from search.py."""
+
+    def test_empty_input(self):
+        """Test empty input returns empty list."""
+        assert search_mod._select_relevant_docs([]) == []
+        # line 181
+
+    def test_floor_cutoff(self):
+        """Test floor cutoff excludes low scorers."""
+        docs = [
+            _make_merged_doc(content=f"unique {i}", score=s)
+            for i, s in enumerate([1.0, 0.3])
+        ]
+        result = search_mod._select_relevant_docs(docs)
+        assert len(result) == 1  # 0.3 < 0.35 floor
+
+    def test_gap_cutoff(self):
+        """Test gap detection excludes sharp drops."""
+        docs = [
+            _make_merged_doc(content=f"unique {i}", score=s)
+            for i, s in enumerate([1.0, 0.9, 0.3])
+        ]
+        result = search_mod._select_relevant_docs(docs)
+        assert len(result) == 2  # 0.3 < floor
+
+    def test_dedup_by_content(self):
+        """Test deduplication by content prefix hash."""
+        docs = [
+            _make_merged_doc(content="same content", score=0.9),
+            _make_merged_doc(content="same content", score=0.85),
+        ]
+        result = search_mod._select_relevant_docs(docs)
+        assert len(result) == 1  # deduped
+
+    def test_log_output(self):
+        """Test that selection logs info about docs."""
+        docs = [_make_merged_doc(score=0.9)]
+        result = search_mod._select_relevant_docs(docs)
+        assert len(result) == 1  # line 216->223
+
+
+class TestExtractRelevantExcerpt:
+    """Test _extract_relevant_excerpt from search.py."""
+
+    def test_short_content_returned_as_is(self):
+        """Test short content returned unchanged."""
+        result = search_mod._extract_relevant_excerpt("short", "q", 100)
+        assert result == "short"
+
+    def test_no_keywords_returns_prefix(self):
+        """Test no keywords returns content prefix."""
+        content = "x" * 200
+        result = search_mod._extract_relevant_excerpt(content, "பொன்னி இதழ்", 50)
+        assert result == "x" * 50  # line 254-255
+
+    def test_keyword_found_centres_excerpt(self):
+        """Test keyword match centres the excerpt window."""
+        prefix = "a" * 500
+        target = "சுராதா கவிதை " * 10
+        suffix = "b" * 500
+        content = prefix + target + suffix
+        result = search_mod._extract_relevant_excerpt(content, "சுராதா", 200)
+        assert "சுராதா" in result  # 237-274
+
+    def test_no_keyword_match_returns_prefix(self):
+        """Test no keyword match falls back to prefix."""
+        content = "a" * 500
+        result = search_mod._extract_relevant_excerpt(content, "uniqueterm", 100)
+        assert result == "a" * 100  # line 271-272
+
+
+class TestBuildContextFromDocs:
+    """Test build_context_from_docs from search.py."""
+
+    def test_empty_docs(self):
+        """Test empty docs returns empty string."""
+        ctx, n = search_mod.build_context_from_docs([])
+        assert ctx == ""
+        assert n == 0  # line 295
+
+    def test_single_doc(self):
+        """Test context built from single doc."""
+        docs = [_make_merged_doc()]
+        ctx, n = search_mod.build_context_from_docs(docs, "test")
+        assert n == 1
+        assert "ஆவணம் 1/1" in ctx  # line 307
+
+    def test_doc_with_heading(self):
+        """Test context includes heading when present."""
+        docs = [_make_merged_doc(heading="My Title")]
+        ctx, n = search_mod.build_context_from_docs(docs, "test")
+        assert "My Title" in ctx  # line 307-308
+
+    def test_caps_at_max_context_docs(self):
+        """Test context caps at max_context_docs."""
+        docs = [
+            _make_merged_doc(
+                content=f"unique doc {i}",
+                score=0.9 - i * 0.01,
+            )
+            for i in range(20)
+        ]
+        ctx, n = search_mod.build_context_from_docs(docs, "test", max_context_docs=5)
+        assert n == 5
+
+
+class TestFormatAnswerOutput:
+    """Test format_answer_output from search.py."""
+
+    def test_no_sources(self):
+        """Test format with no sources."""
+        result = search_mod.format_answer_output("answer", [])
+        assert "பதில்:" in result
+        assert "ஆதாரங்கள்" not in result  # 352->371
+
+    def test_with_sources(self):
+        """Test format with sources includes details."""
+        sources = [
+            {
+                "doc_issue": "1",
+                "volume": "v1",
+                "heading": "Title",
+                "word_count": 50,
+                "score": 0.9,
+                "content": "text",
+            }
+        ]
+        result = search_mod.format_answer_output("answer", sources)
+        assert "ஆதாரங்கள்" in result
+        assert "Title" in result  # 360->362
+
+    def test_source_without_heading(self):
+        """Test format with source missing heading."""
+        sources = [
+            {
+                "doc_issue": "1",
+                "volume": "v1",
+                "heading": "",
+                "word_count": 50,
+                "score": 0.9,
+                "content": "text",
+            }
+        ]
+        result = search_mod.format_answer_output("answer", sources)
+        assert "தலைப்பு" not in result  # 360 branch
+
+
+class TestFormatSources:
+    """Test format_sources from search.py."""
+
+    def test_format_sources_with_tags(self):
+        """Test format_sources includes tags field."""
+        docs = [_make_merged_doc(tags=["poetry", "classic"])]
+        sources = search_mod.format_sources(docs)
+        assert sources[0]["tags"] == ["poetry", "classic"]
+        # line 337
+
+    def test_format_sources_author_name(self):
+        """Test format_sources includes author_name."""
+        docs = [_make_merged_doc(author_name="Author")]
+        sources = search_mod.format_sources(docs)
+        assert sources[0]["author_name"] == "Author"
+        # line 332
+
+
 if __name__ == "__main__":
     pytest.main(
         [
             __file__,
             "-v",
             "--cov=hybrid_search",
+            "--cov=search",
             "--cov-report=html",
             "--cov-report=term-missing",
             "--cov-fail-under=90",

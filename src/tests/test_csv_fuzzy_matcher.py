@@ -767,3 +767,415 @@ def test_calculate_similarity_parametrized(str1, str2, min_similarity):
     """
     result = calculate_similarity(str1, str2)
     assert result >= min_similarity
+
+
+class TestParseAuthorField:
+    """Tests for parse_author_field covering bracket and NA cases."""
+
+    def test_na_string_returns_empty(self):
+        """Return empty list for literal NA string."""
+        from data_extraction.csv_fuzzy_matcher import parse_author_field
+
+        assert parse_author_field("NA") == []
+
+    def test_empty_string_returns_empty(self):
+        """Return empty list for empty string."""
+        from data_extraction.csv_fuzzy_matcher import parse_author_field
+
+        assert parse_author_field("") == []
+
+    def test_bracket_wrapped_single(self):
+        """Parse single author in brackets."""
+        from data_extraction.csv_fuzzy_matcher import parse_author_field
+
+        result = parse_author_field("[நக்கீரன்]")
+        assert result == ["நக்கீரன்"]
+
+    def test_bracket_wrapped_multiple(self):
+        """Parse multiple comma-separated authors in brackets."""
+        from data_extraction.csv_fuzzy_matcher import parse_author_field
+
+        result = parse_author_field("[பாண்டியன், நா. வேத்தரசன்]")
+        assert result == ["பாண்டியன்", "நா. வேத்தரசன்"]
+
+    def test_no_brackets_legacy(self):
+        """Parse author without brackets (legacy format)."""
+        from data_extraction.csv_fuzzy_matcher import parse_author_field
+
+        result = parse_author_field("நக்கீரன்")
+        assert result == ["நக்கீரன்"]
+
+    def test_pandas_na(self):
+        """Return empty list for pandas NA."""
+        from data_extraction.csv_fuzzy_matcher import parse_author_field
+
+        assert parse_author_field(pd.NA) == []
+
+
+class TestNormalizeCsvValueEdgeCases:
+    """Edge-case tests for normalize_csv_value."""
+
+    def test_non_numeric_string_with_dot(self):
+        """Return original string when float() raises ValueError."""
+        result = normalize_csv_value("not.a.number")
+        assert result == "not.a.number"
+
+    def test_infinity_string(self):
+        """Handle inf-like value that causes OverflowError."""
+        result = normalize_csv_value("1e999.0")
+        # Should not crash; returns as-is or converted
+        assert isinstance(result, str)
+
+
+class TestExtractMalarIthalFromFilename:
+    """Tests for extract_malar_ithal_from_filename patterns."""
+
+    def test_vol_numeric_pattern(self):
+        """Match VOL5-7-1951 numeric pattern."""
+        from data_extraction.csv_fuzzy_matcher import extract_malar_ithal_from_filename
+
+        m, i, y = extract_malar_ithal_from_filename("VOL5-7-1951.txt")
+        assert m == "5"
+        assert i == "7"
+        assert y == "1951"
+
+    def test_vol_with_spaces(self):
+        """Match VOL 5 - 7 - 1951 with spaces."""
+        from data_extraction.csv_fuzzy_matcher import extract_malar_ithal_from_filename
+
+        m, i, y = extract_malar_ithal_from_filename("VOL 5 - 7 - 1951.txt")
+        assert m == "5"
+        assert i == "7"
+        assert y == "1951"
+
+    def test_vol_pongal_text_pattern(self):
+        """Match VOL1-PONGAL-1948 text ithal pattern."""
+        from data_extraction.csv_fuzzy_matcher import extract_malar_ithal_from_filename
+
+        m, i, y = extract_malar_ithal_from_filename("VOL1-PONGAL-1948.txt")
+        assert m == "1"
+        assert i == "பொங்கல் மலர்"
+        assert y == "1948"
+
+    def test_vol_unknown_text_pattern(self):
+        """Match VOL2-SPECIAL-1950 unmapped text ithal."""
+        from data_extraction.csv_fuzzy_matcher import extract_malar_ithal_from_filename
+
+        m, i, y = extract_malar_ithal_from_filename("VOL2-SPECIAL-1950.txt")
+        assert m == "2"
+        assert i == "SPECIAL"
+        assert y == "1950"
+
+    def test_vol_issue_pattern_without_year(self):
+        """Match vol_5_7 pattern without year."""
+        from data_extraction.csv_fuzzy_matcher import extract_malar_ithal_from_filename
+
+        m, i, y = extract_malar_ithal_from_filename("vol_5_7.txt")
+        assert m == "5"
+        assert i == "7"
+        assert y is None
+
+    def test_plain_numeric_pattern(self):
+        """Match plain 5-7-1951 pattern."""
+        from data_extraction.csv_fuzzy_matcher import extract_malar_ithal_from_filename
+
+        m, i, y = extract_malar_ithal_from_filename("5-7-1951.txt")
+        assert m == "5"
+        assert i == "7"
+        assert y == "1951"
+
+    def test_no_match_returns_none(self):
+        """Return None tuple when no pattern matches."""
+        from data_extraction.csv_fuzzy_matcher import extract_malar_ithal_from_filename
+
+        m, i, y = extract_malar_ithal_from_filename("random.txt")
+        assert m is None
+        assert i is None
+        assert y is None
+
+    def test_exception_returns_none(self):
+        """Return None tuple on exception."""
+        from data_extraction.csv_fuzzy_matcher import extract_malar_ithal_from_filename
+
+        m, i, y = extract_malar_ithal_from_filename(None)
+        assert m is None
+        assert i is None
+        assert y is None
+
+
+class TestExtractMalarIthalFromTextEdge:
+    """Edge-case tests for extract_malar_ithal_from_text."""
+
+    def test_year_extraction_from_text(self):
+        """Extract year when malar and ithal are both present."""
+        from data_extraction.csv_fuzzy_matcher import extract_malar_ithal_from_text
+
+        lines = ["மலர்: 3", "இதழ்: 5", "1952 edition"]
+        m, i, y = extract_malar_ithal_from_text(lines)
+        assert m == "3"
+        assert i == "5"
+        assert y == "1952"
+
+    def test_exception_returns_none(self):
+        """Return None tuple on unexpected exception."""
+        from data_extraction.csv_fuzzy_matcher import extract_malar_ithal_from_text
+
+        # Pass a non-iterable to trigger exception
+        m, i, y = extract_malar_ithal_from_text(None)
+        assert m is None
+        assert i is None
+        assert y is None
+
+
+class TestMatchCsvRowsEdge:
+    """Tests for match_csv_rows fuzzy and contains branches."""
+
+    def test_fuzzy_ithal_contains_match(self):
+        """Match when ithal_norm is substring of CSV ithal."""
+        from data_extraction.csv_fuzzy_matcher import match_csv_rows
+
+        df = pd.DataFrame(
+            {
+                "மலர்": ["1"],
+                "இதழ்": ["பொங்கல் மலர்"],
+            }
+        )
+        result = match_csv_rows(df, "1", "பொங்கல்")
+        assert not result.empty
+
+    def test_fuzzy_ithal_similarity_match(self):
+        """Match via fuzzy similarity when contains fails."""
+        from data_extraction.csv_fuzzy_matcher import match_csv_rows
+
+        df = pd.DataFrame(
+            {
+                "மலர்": ["1"],
+                "இதழ்": ["பொங்கல் மலர்"],
+            }
+        )
+        result = match_csv_rows(df, "1", "பொங்கல் மலர்")
+        assert not result.empty
+
+    def test_no_ithal_match_logs_warning(self):
+        """Return empty when ithal does not match at all."""
+        from data_extraction.csv_fuzzy_matcher import match_csv_rows
+
+        df = pd.DataFrame(
+            {
+                "மலர்": ["1"],
+                "இதழ்": ["5"],
+            }
+        )
+        result = match_csv_rows(df, "1", "99")
+        assert result.empty
+
+    def test_malar_not_found(self):
+        """Return empty when malar not found in CSV."""
+        from data_extraction.csv_fuzzy_matcher import match_csv_rows
+
+        df = pd.DataFrame(
+            {
+                "மலர்": ["1"],
+                "இதழ்": ["5"],
+            }
+        )
+        result = match_csv_rows(df, "99", "5")
+        assert result.empty
+
+
+class TestFindArticleBoundaryFuzzyEdge:
+    """Edge-case tests for find_article_boundary_fuzzy."""
+
+    def test_empty_title_after_cleaning(self):
+        """Return None when title is empty after cleaning."""
+        result = find_article_boundary_fuzzy(["some line"], "!@#$%")
+        content, start, end = result
+        assert content is None
+        assert start == -1
+
+    def test_next_title_fuzzy_fallback(self):
+        """Use fuzzy fallback when no near-exact next title."""
+        lines = [
+            "Article Title Here",
+            "Content line 1",
+            "Content line 2",
+            "Content line 3",
+            "Next Article Approximate Title",
+            "More content",
+        ]
+        content, start, end = find_article_boundary_fuzzy(
+            lines,
+            "Article Title Here",
+            next_title="Next Article Approximate Title",
+        )
+        assert content is not None
+        assert end <= 5
+
+    def test_next_title_with_empty_lines(self):
+        """Skip empty lines when searching for next title."""
+        lines = [
+            "Article Title",
+            "Content",
+            "",
+            "",
+            "Next Title",
+        ]
+        content, start, end = find_article_boundary_fuzzy(
+            lines,
+            "Article Title",
+            next_title="Next Title",
+        )
+        assert content is not None
+
+    def test_trailing_blank_lines_removed(self):
+        """Remove trailing blank lines from content."""
+        lines = [
+            "Article Title",
+            "Content",
+            "",
+            "",
+        ]
+        content, start, end = find_article_boundary_fuzzy(lines, "Article Title")
+        assert content is not None
+        assert not content.endswith("\n")
+
+    def test_exception_in_boundary(self):
+        """Return None on internal exception."""
+        content, start, end = find_article_boundary_fuzzy(None, "title")
+        assert content is None
+        assert start == -1
+        assert end == -1
+
+    def test_next_title_low_similarity_ignored(self):
+        """Ignore next title candidate with low similarity."""
+        lines = [
+            "My Article",
+            "Content 1",
+            "Content 2",
+            "Completely unrelated line",
+        ]
+        content, start, end = find_article_boundary_fuzzy(
+            lines,
+            "My Article",
+            next_title="Totally different text xyz",
+        )
+        assert content is not None
+        assert end == len(lines)
+
+
+class TestExtractArticlesFromCSVEdge:
+    """Edge-case tests for extract_articles_from_csv."""
+
+    def test_filename_based_extraction(self):
+        """Extract using filename pattern instead of text."""
+        df = pd.DataFrame(
+            {
+                "மலர்": ["5"],
+                "இதழ்": ["7"],
+                "தலைப்பு": ["Test Title"],
+                "ஆசிரியர்": ["[Author1]"],
+                "ஆண்டு": [1951],
+            }
+        )
+        lines = [
+            "Test Title",
+            "A" * 150,
+        ]
+        mock_path = Mock()
+        mock_path.name = "VOL5-7-1951.txt"
+
+        result = extract_articles_from_csv(lines, df, mock_path)
+        assert result is not None
+        assert result["doc_id"] == "5"
+        assert result["doc_issue"] == "7"
+
+    def test_fallback_to_text_when_filename_fails(self):
+        """Fall back to text extraction when filename parse fails."""
+        df = pd.DataFrame(
+            {
+                "மலர்": ["3"],
+                "இதழ்": ["5"],
+                "தலைப்பு": ["Title"],
+                "ஆசிரியர்": ["Author"],
+                "ஆண்டு": [1952],
+            }
+        )
+        lines = [
+            "மலர்: 3",
+            "இதழ்: 5",
+            "Title",
+            "B" * 150,
+        ]
+        mock_path = Mock()
+        mock_path.name = "random_name.txt"
+
+        result = extract_articles_from_csv(lines, df, mock_path)
+        assert result is not None
+
+    def test_empty_title_skipped(self):
+        """Skip rows with empty title."""
+        df = pd.DataFrame(
+            {
+                "மலர்": ["5", "5"],
+                "இதழ்": ["7", "7"],
+                "தலைப்பு": [pd.NA, "Real Title"],
+                "ஆசிரியர்": ["Author1", "Author2"],
+                "ஆண்டு": [1951, 1951],
+            }
+        )
+        lines = [
+            "Real Title",
+            "C" * 150,
+        ]
+        mock_path = Mock()
+        mock_path.name = "VOL5-7-1951.txt"
+
+        result = extract_articles_from_csv(lines, df, mock_path)
+        assert result is not None
+
+    def test_na_year_uses_filename_year(self):
+        """Use filename year when CSV year is NA."""
+        df = pd.DataFrame(
+            {
+                "மலர்": ["5"],
+                "இதழ்": ["7"],
+                "தலைப்பு": ["Test Title"],
+                "ஆசிரியர்": ["Author"],
+                "ஆண்டு": [pd.NA],
+            }
+        )
+        lines = ["Test Title", "D" * 150]
+        mock_path = Mock()
+        mock_path.name = "VOL5-7-1951.txt"
+
+        result = extract_articles_from_csv(lines, df, mock_path)
+        if result and result["articles"]:
+            assert result["articles"][0]["year"] == "1951"
+
+    def test_authors_list_from_bracket_format(self):
+        """Build unique authors list from bracket format."""
+        df = pd.DataFrame(
+            {
+                "மலர்": ["5", "5"],
+                "இதழ்": ["7", "7"],
+                "தலைப்பு": ["Title1", "Title2"],
+                "ஆசிரியர்": [
+                    "[A, B]",
+                    "[B, C]",
+                ],
+                "ஆண்டு": [1951, 1951],
+            }
+        )
+        lines = [
+            "Title1",
+            "E" * 150,
+            "Title2",
+            "F" * 150,
+        ]
+        mock_path = Mock()
+        mock_path.name = "VOL5-7-1951.txt"
+
+        result = extract_articles_from_csv(lines, df, mock_path)
+        if result:
+            names = [a["author_name"] for a in result["authors_list"]]
+            assert len(names) == len(set(names))

@@ -1154,6 +1154,706 @@ class TestEdgeCasesAndIntegration:
         assert saved_data[0]["authors"] == authors
 
 
+class TestFindTocBoundaries:
+    """Tests for find_toc_boundaries function."""
+
+    def test_toc_found(self):
+        """Detect TOC start and end markers."""
+        from data_extraction.article_seperation import find_toc_boundaries
+
+        lines = [
+            "intro",
+            "பொருளடக்கம்",
+            "Author1",
+            "ஆகியோரின் எழுத்தோவியங்கள்",
+            "content",
+        ]
+        start, end = find_toc_boundaries(lines)
+        assert start == 1
+        assert end == 3
+
+    def test_toc_start_only(self):
+        """Detect TOC start without end marker."""
+        from data_extraction.article_seperation import find_toc_boundaries
+
+        lines = ["பொருளடக்கம்", "Author1", "content"]
+        start, end = find_toc_boundaries(lines)
+        assert start == 0
+        assert end == -1
+
+    def test_no_toc(self):
+        """Return -1,-1 when no TOC markers found."""
+        from data_extraction.article_seperation import find_toc_boundaries
+
+        lines = ["content1", "content2"]
+        start, end = find_toc_boundaries(lines)
+        assert start == -1
+        assert end == -1
+
+
+class TestExtractAuthorsFromTocSection:
+    """Tests for extract_authors_from_toc_section."""
+
+    def test_extract_authors_from_toc_range(self):
+        """Extract valid author names from TOC range."""
+        from data_extraction.article_seperation import extract_authors_from_toc_section
+
+        lines = [
+            "பொருளடக்கம்",
+            "நக்கீரன்",
+            "பாண்டியன்",
+            "123",
+            "ஆகியோரின்",
+        ]
+        orig, norm = extract_authors_from_toc_section(lines, 0, 4)
+        assert "நக்கீரன்" in orig
+        assert "பாண்டியன்" in orig
+        assert len(orig) == 2
+
+    def test_toc_section_skips_digits_and_dots(self):
+        """Skip lines that are just digits or dots."""
+        from data_extraction.article_seperation import extract_authors_from_toc_section
+
+        lines = [
+            "header",
+            "123",
+            "...",
+            "AuthorName",
+            "end",
+        ]
+        orig, norm = extract_authors_from_toc_section(lines, 0, 4)
+        assert "AuthorName" in orig
+
+    def test_toc_section_index_beyond_lines(self):
+        """Handle toc_end beyond line count gracefully."""
+        from data_extraction.article_seperation import extract_authors_from_toc_section
+
+        lines = ["header", "Author"]
+        orig, norm = extract_authors_from_toc_section(lines, 0, 10)
+        assert "Author" in orig
+
+
+class TestExtractAuthorsFromContent:
+    """Tests for extract_authors_from_content."""
+
+    def test_dash_pattern_author(self):
+        """Detect author after dash prefix."""
+        from data_extraction.article_seperation import extract_authors_from_content
+
+        lines = [
+            "Title line",
+            "Content here",
+            "— நாரா நாச்சியப்பன்",
+        ]
+        orig, norm = extract_authors_from_content(lines)
+        assert "நாரா நாச்சியப்பன்" in orig
+
+    def test_en_dash_pattern(self):
+        """Detect author after en-dash prefix."""
+        from data_extraction.article_seperation import extract_authors_from_content
+
+        lines = ["Title", "– AuthorName"]
+        orig, norm = extract_authors_from_content(lines)
+        assert "AuthorName" in orig
+
+    def test_position_pattern_author(self):
+        """Detect author via short-line position pattern."""
+        from data_extraction.article_seperation import extract_authors_from_content
+
+        lines = [
+            "Short Title",
+            "நக்கீரன்",
+            "Long content line that is more than 25 chars",
+        ]
+        with patch(
+            "data_extraction.article_seperation." "is_valid_author_name",
+            return_value=True,
+        ):
+            orig, norm = extract_authors_from_content(lines)
+            assert "நக்கீரன்" in orig
+
+    def test_no_authors_found(self):
+        """Return empty lists when no authors detected."""
+        from data_extraction.article_seperation import extract_authors_from_content
+
+        lines = [
+            "A very long line that is certainly more" " than twenty five characters",
+            "Another very long line that is certainly"
+            " more than twenty five characters",
+        ]
+        orig, norm = extract_authors_from_content(lines)
+        assert orig == []
+        assert norm == []
+
+
+class TestRunPatternExtraction:
+    """Tests for run_pattern_extraction."""
+
+    @patch("data_extraction.article_seperation." "extract_pattern_a_forward")
+    @patch("data_extraction.article_seperation." "extract_pattern_b_forward")
+    @patch("data_extraction.article_seperation." "extract_pattern_c_reverse")
+    @patch("data_extraction.article_seperation." "extract_intro_content_phase1")
+    @patch("data_extraction.article_seperation." "get_intro_keywords")
+    @patch("data_extraction.article_seperation." "extract_remaining_content")
+    def test_pattern_a_articles_returned(
+        self,
+        mock_remaining,
+        mock_keywords,
+        mock_intro,
+        mock_c,
+        mock_b,
+        mock_a,
+    ):
+        """Return articles from pattern A extraction."""
+        from data_extraction.article_seperation import run_pattern_extraction
+
+        mock_a.return_value = [
+            {
+                "author": "Auth",
+                "heading": "Title",
+                "content": "Content",
+            }
+        ]
+        mock_b.return_value = []
+        mock_c.return_value = []
+        mock_keywords.return_value = []
+        mock_intro.return_value = ("", 0, None)
+        mock_remaining.return_value = []
+
+        lines = ["", "Content line"]
+        processed = [False, False]
+
+        result = run_pattern_extraction(
+            lines,
+            0,
+            processed,
+            ["Auth"],
+            ["auth"],
+            "1",
+            "1",
+            "1951",
+            "test.txt",
+            1,
+        )
+        assert len(result) == 1
+        assert result[0]["title"] == "Title"
+
+    @patch("data_extraction.article_seperation." "extract_pattern_a_forward")
+    @patch("data_extraction.article_seperation." "extract_pattern_b_forward")
+    @patch("data_extraction.article_seperation." "extract_pattern_c_reverse")
+    @patch("data_extraction.article_seperation." "get_intro_keywords")
+    @patch("data_extraction.article_seperation." "extract_remaining_content")
+    def test_pattern_c_articles_returned(
+        self,
+        mock_remaining,
+        mock_keywords,
+        mock_c,
+        mock_b,
+        mock_a,
+    ):
+        """Return articles from pattern C extraction."""
+        from data_extraction.article_seperation import run_pattern_extraction
+
+        mock_a.return_value = []
+        mock_b.return_value = []
+        mock_c.return_value = [
+            {
+                "author": "Auth",
+                "heading": "Title C",
+                "content": "Content",
+            }
+        ]
+        mock_keywords.return_value = []
+        mock_remaining.return_value = []
+
+        lines = ["", "Content"]
+        processed = [False, False]
+
+        result = run_pattern_extraction(
+            lines,
+            0,
+            processed,
+            [],
+            [],
+            "1",
+            "1",
+            "1951",
+            "test.txt",
+            1,
+        )
+        assert any(a["title"] == "Title C" for a in result)
+
+    @patch("data_extraction.article_seperation." "extract_pattern_a_forward")
+    @patch("data_extraction.article_seperation." "extract_pattern_b_forward")
+    @patch("data_extraction.article_seperation." "extract_pattern_c_reverse")
+    @patch("data_extraction.article_seperation." "get_intro_keywords")
+    @patch("data_extraction.article_seperation." "extract_remaining_content")
+    def test_no_remaining_lines(
+        self,
+        mock_remaining,
+        mock_keywords,
+        mock_c,
+        mock_b,
+        mock_a,
+    ):
+        """Return empty when all lines are processed."""
+        from data_extraction.article_seperation import run_pattern_extraction
+
+        mock_a.return_value = []
+        mock_b.return_value = []
+        mock_c.return_value = []
+        mock_keywords.return_value = []
+        mock_remaining.return_value = []
+
+        lines = ["line1"]
+        processed = [True]
+
+        result = run_pattern_extraction(
+            lines,
+            0,
+            processed,
+            [],
+            [],
+            "1",
+            "1",
+            "1951",
+            "test.txt",
+            1,
+        )
+        assert result == []
+
+    @patch("data_extraction.article_seperation." "extract_pattern_a_forward")
+    @patch("data_extraction.article_seperation." "extract_pattern_b_forward")
+    @patch("data_extraction.article_seperation." "extract_pattern_c_reverse")
+    @patch("data_extraction.article_seperation." "get_intro_keywords")
+    @patch("data_extraction.article_seperation." "extract_remaining_content")
+    def test_remaining_content_appended(
+        self,
+        mock_remaining,
+        mock_keywords,
+        mock_c,
+        mock_b,
+        mock_a,
+    ):
+        """Append remaining content articles."""
+        from data_extraction.article_seperation import run_pattern_extraction
+
+        mock_a.return_value = []
+        mock_b.return_value = []
+        mock_c.return_value = []
+        mock_keywords.return_value = []
+        mock_remaining.return_value = [
+            {
+                "heading": "Leftover",
+                "author": "NA",
+                "content": "Leftover content",
+            }
+        ]
+
+        lines = ["", "Content"]
+        processed = [False, False]
+
+        result = run_pattern_extraction(
+            lines,
+            0,
+            processed,
+            [],
+            [],
+            "1",
+            "1",
+            "1951",
+            "test.txt",
+            1,
+        )
+        assert any(a["title"] == "Leftover" for a in result)
+
+
+class TestParseTamilDocumentAdditional:
+    """Additional tests for parse_tamil_document branches."""
+
+    @patch("data_extraction.article_seperation." "extract_articles_from_csv")
+    @patch("data_extraction.article_seperation." "extract_authors_from_toc")
+    @patch("data_extraction.article_seperation." "get_shared_authors")
+    @patch("data_extraction.article_seperation." "extract_authors_alternative")
+    @patch("data_extraction.article_seperation." "extract_pattern_a_forward")
+    @patch("data_extraction.article_seperation." "extract_pattern_b_forward")
+    @patch("data_extraction.article_seperation." "extract_pattern_c_reverse")
+    @patch("data_extraction.article_seperation." "extract_remaining_content")
+    @patch("data_extraction.article_seperation." "get_intro_keywords")
+    def test_toc_start_without_end_marker(
+        self,
+        mock_kw,
+        mock_rem,
+        mock_c,
+        mock_b,
+        mock_a,
+        mock_alt,
+        mock_shared,
+        mock_toc_parse,
+        mock_csv,
+        sample_csv_df,
+    ):
+        """Mark fallback range when TOC start but no end."""
+        mock_csv.return_value = {"articles": []}
+        mock_toc_parse.return_value = (-1, -1, ["Auth"], ["auth"], [])
+        mock_shared.return_value = ([], [])
+        mock_alt.return_value = ([], [])
+        mock_a.return_value = []
+        mock_b.return_value = []
+        mock_c.return_value = []
+        mock_kw.return_value = []
+        mock_rem.return_value = []
+
+        lines = [
+            "பொருளடக்கம்",
+            "Author1",
+            "Content",
+        ]
+
+        result = parse_tamil_document(lines, {}, sample_csv_df, "test.txt")
+        assert "articles" in result
+
+    @patch("data_extraction.article_seperation." "extract_articles_from_csv")
+    @patch("data_extraction.article_seperation." "extract_authors_from_toc")
+    @patch("data_extraction.article_seperation." "get_shared_authors")
+    @patch("data_extraction.article_seperation." "extract_authors_alternative")
+    @patch("data_extraction.article_seperation." "extract_pattern_a_forward")
+    @patch("data_extraction.article_seperation." "extract_pattern_b_forward")
+    @patch("data_extraction.article_seperation." "extract_pattern_c_reverse")
+    @patch("data_extraction.article_seperation." "extract_remaining_content")
+    @patch("data_extraction.article_seperation." "get_intro_keywords")
+    def test_author_fallback_toc_parse(
+        self,
+        mock_kw,
+        mock_rem,
+        mock_c,
+        mock_b,
+        mock_a,
+        mock_alt,
+        mock_shared,
+        mock_toc_parse,
+        mock_csv,
+        sample_csv_df,
+    ):
+        """Fall back to TOC parse for authors."""
+        mock_csv.return_value = {"articles": []}
+        mock_toc_parse.return_value = (
+            -1,
+            -1,
+            ["TOCAuthor"],
+            ["tocauthor"],
+            [],
+        )
+        mock_shared.return_value = ([], [])
+        mock_alt.return_value = ([], [])
+        mock_a.return_value = []
+        mock_b.return_value = []
+        mock_c.return_value = []
+        mock_kw.return_value = []
+        mock_rem.return_value = []
+
+        lines = ["மலர் 1", "Content"]
+
+        result = parse_tamil_document(lines, {}, sample_csv_df, "test.txt")
+        assert any(a["author_name"] == "TOCAuthor" for a in result["authors_list"])
+
+    @patch("data_extraction.article_seperation." "extract_articles_from_csv")
+    @patch("data_extraction.article_seperation." "extract_authors_from_toc")
+    @patch("data_extraction.article_seperation." "get_shared_authors")
+    @patch("data_extraction.article_seperation." "extract_authors_alternative")
+    @patch("data_extraction.article_seperation." "extract_pattern_a_forward")
+    @patch("data_extraction.article_seperation." "extract_pattern_b_forward")
+    @patch("data_extraction.article_seperation." "extract_pattern_c_reverse")
+    @patch("data_extraction.article_seperation." "extract_remaining_content")
+    @patch("data_extraction.article_seperation." "get_intro_keywords")
+    def test_author_fallback_alternative(
+        self,
+        mock_kw,
+        mock_rem,
+        mock_c,
+        mock_b,
+        mock_a,
+        mock_alt,
+        mock_shared,
+        mock_toc_parse,
+        mock_csv,
+        sample_csv_df,
+    ):
+        """Fall back to alternative author extraction."""
+        mock_csv.return_value = {"articles": []}
+        mock_toc_parse.return_value = (
+            -1,
+            -1,
+            [],
+            [],
+            [],
+        )
+        mock_shared.return_value = ([], [])
+        mock_alt.return_value = (["AltAuthor"], ["altauthor"])
+        mock_a.return_value = []
+        mock_b.return_value = []
+        mock_c.return_value = []
+        mock_kw.return_value = []
+        mock_rem.return_value = []
+
+        lines = ["மலர் 1", "Content"]
+
+        result = parse_tamil_document(lines, {}, sample_csv_df, "test.txt")
+        assert any(a["author_name"] == "AltAuthor" for a in result["authors_list"])
+
+    @patch("data_extraction.article_seperation." "extract_articles_from_csv")
+    @patch("data_extraction.article_seperation." "extract_authors_from_toc")
+    @patch("data_extraction.article_seperation." "get_shared_authors")
+    @patch("data_extraction.article_seperation." "extract_authors_alternative")
+    @patch("data_extraction.article_seperation." "extract_pattern_a_forward")
+    @patch("data_extraction.article_seperation." "extract_pattern_b_forward")
+    @patch("data_extraction.article_seperation." "extract_pattern_c_reverse")
+    @patch("data_extraction.article_seperation." "extract_remaining_content")
+    @patch("data_extraction.article_seperation." "get_intro_keywords")
+    @patch("data_extraction.article_seperation." "normalize_text")
+    def test_csv_authors_merged_into_patterns(
+        self,
+        mock_norm_text,
+        mock_kw,
+        mock_rem,
+        mock_c,
+        mock_b,
+        mock_a,
+        mock_alt,
+        mock_shared,
+        mock_toc_parse,
+        mock_csv,
+        sample_csv_df,
+    ):
+        """Merge CSV authors into pattern author list."""
+        mock_csv.return_value = {
+            "articles": [
+                {
+                    "title": "T",
+                    "content": "C",
+                    "year": "1951",
+                    "source_document": "test.txt",
+                }
+            ],
+            "authors_list": [
+                {"author_name": "CSVAuthor"},
+            ],
+            "extracted_line_ranges": [(0, 2)],
+        }
+        mock_toc_parse.return_value = (
+            -1,
+            -1,
+            [],
+            [],
+            [],
+        )
+        mock_shared.return_value = ([], [])
+        mock_alt.return_value = ([], [])
+        mock_a.return_value = []
+        mock_b.return_value = []
+        mock_c.return_value = []
+        mock_kw.return_value = []
+        mock_rem.return_value = []
+        mock_norm_text.return_value = "csvauthor"
+
+        lines = [
+            "பொருளடக்கம்",
+            "ஆகியோரின்",
+            "Content line",
+        ]
+
+        result = parse_tamil_document(
+            lines,
+            {},
+            sample_csv_df,
+            "extracted_text/VOL1-1-1947.txt",
+        )
+        assert any(a["author_name"] == "CSVAuthor" for a in result["authors_list"])
+
+    @patch("data_extraction.article_seperation." "extract_articles_from_csv")
+    @patch("data_extraction.article_seperation." "extract_authors_from_toc")
+    @patch("data_extraction.article_seperation." "get_shared_authors")
+    @patch("data_extraction.article_seperation." "extract_authors_alternative")
+    @patch("data_extraction.article_seperation." "extract_pattern_a_forward")
+    @patch("data_extraction.article_seperation." "extract_pattern_b_forward")
+    @patch("data_extraction.article_seperation." "extract_pattern_c_reverse")
+    @patch("data_extraction.article_seperation." "extract_remaining_content")
+    @patch("data_extraction.article_seperation." "get_intro_keywords")
+    def test_no_malar_ithal_skips_csv(
+        self,
+        mock_kw,
+        mock_rem,
+        mock_c,
+        mock_b,
+        mock_a,
+        mock_alt,
+        mock_shared,
+        mock_toc_parse,
+        mock_csv,
+        sample_csv_df,
+    ):
+        """Skip CSV extraction when malar/ithal not found."""
+        mock_toc_parse.return_value = (
+            -1,
+            -1,
+            [],
+            [],
+            [],
+        )
+        mock_shared.return_value = ([], [])
+        mock_alt.return_value = ([], [])
+        mock_a.return_value = []
+        mock_b.return_value = []
+        mock_c.return_value = []
+        mock_kw.return_value = []
+        mock_rem.return_value = []
+
+        lines = ["No metadata", "Content"]
+
+        result = parse_tamil_document(lines, {}, sample_csv_df, "nodata.txt")
+        assert result["doc_id"] == "NA"
+        assert result["doc_issue"] == "NA"
+        mock_csv.assert_not_called()
+
+    @patch("data_extraction.article_seperation." "extract_articles_from_csv")
+    @patch("data_extraction.article_seperation." "extract_authors_from_toc")
+    @patch("data_extraction.article_seperation." "get_shared_authors")
+    @patch("data_extraction.article_seperation." "extract_authors_alternative")
+    @patch("data_extraction.article_seperation." "extract_pattern_a_forward")
+    @patch("data_extraction.article_seperation." "extract_pattern_b_forward")
+    @patch("data_extraction.article_seperation." "extract_pattern_c_reverse")
+    @patch("data_extraction.article_seperation." "extract_remaining_content")
+    @patch("data_extraction.article_seperation." "get_intro_keywords")
+    def test_content_based_author_fallback(
+        self,
+        mock_kw,
+        mock_rem,
+        mock_c,
+        mock_b,
+        mock_a,
+        mock_alt,
+        mock_shared,
+        mock_toc_parse,
+        mock_csv,
+        sample_csv_df,
+    ):
+        """Fall back to content-based author extraction."""
+        mock_csv.return_value = {"articles": []}
+        mock_toc_parse.return_value = (
+            -1,
+            -1,
+            [],
+            [],
+            [],
+        )
+        mock_shared.return_value = ([], [])
+        mock_alt.return_value = ([], [])
+        mock_a.return_value = []
+        mock_b.return_value = []
+        mock_c.return_value = []
+        mock_kw.return_value = []
+        mock_rem.return_value = []
+
+        lines = [
+            "மலர் 1",
+            "— ContentAuthor",
+            "Content line",
+        ]
+
+        result = parse_tamil_document(lines, {}, sample_csv_df, "test.txt")
+        # content-based extraction runs on actual lines
+        assert "articles" in result
+
+    @patch("data_extraction.article_seperation." "extract_articles_from_csv")
+    @patch("data_extraction.article_seperation." "extract_authors_from_toc")
+    @patch("data_extraction.article_seperation." "get_shared_authors")
+    @patch("data_extraction.article_seperation." "extract_authors_alternative")
+    @patch("data_extraction.article_seperation." "extract_pattern_a_forward")
+    @patch("data_extraction.article_seperation." "extract_pattern_b_forward")
+    @patch("data_extraction.article_seperation." "extract_pattern_c_reverse")
+    @patch("data_extraction.article_seperation." "extract_remaining_content")
+    @patch("data_extraction.article_seperation." "get_intro_keywords")
+    def test_year_fallback_to_s3_key(
+        self,
+        mock_kw,
+        mock_rem,
+        mock_c,
+        mock_b,
+        mock_a,
+        mock_alt,
+        mock_shared,
+        mock_toc_parse,
+        mock_csv,
+        sample_csv_df,
+    ):
+        """Use S3 key year when filename/text have none."""
+        mock_csv.return_value = {"articles": []}
+        mock_toc_parse.return_value = (
+            -1,
+            -1,
+            [],
+            [],
+            [],
+        )
+        mock_shared.return_value = ([], [])
+        mock_alt.return_value = ([], [])
+        mock_a.return_value = []
+        mock_b.return_value = []
+        mock_c.return_value = []
+        mock_kw.return_value = []
+        mock_rem.return_value = []
+
+        lines = ["No metadata", "Content"]
+
+        result = parse_tamil_document(
+            lines,
+            {},
+            sample_csv_df,
+            "extracted_text/1949/test.txt",
+        )
+        assert "articles" in result
+
+
+class TestProcessS3FilesAdditional:
+    """Additional process_s3_files tests."""
+
+    @patch("data_extraction.article_seperation." "load_csv_from_local")
+    @patch("data_extraction.article_seperation.list_files")
+    @patch("data_extraction.article_seperation." "build_shared_authors_dict_s3")
+    @patch("data_extraction.article_seperation." "is_file_already_processed")
+    @patch("data_extraction.article_seperation." "read_text_from_s3")
+    @patch("data_extraction.article_seperation." "parse_tamil_document")
+    @patch("data_extraction.article_seperation." "upload_json")
+    @patch("data_extraction.article_seperation." "save_authors_to_s3")
+    def test_output_key_with_nested_path(
+        self,
+        mock_save,
+        mock_upload,
+        mock_parse,
+        mock_read,
+        mock_is_processed,
+        mock_build,
+        mock_list,
+        mock_load,
+    ):
+        """Compute output key prefix from nested path."""
+        mock_load.return_value = pd.DataFrame()
+        mock_list.return_value = ["extracted_text/vol1/file.txt"]
+        mock_build.return_value = {}
+        mock_is_processed.return_value = False
+        mock_read.return_value = "line1\nline2"
+        mock_parse.return_value = {
+            "articles": [{"title": "T"}],
+            "authors_list": [],
+            "doc_id": "1",
+            "doc_issue": "1",
+        }
+
+        process_s3_files(force_reprocess=True)
+
+        mock_save.assert_called_once()
+
+
 if __name__ == "__main__":
     pytest.main(
         [

@@ -534,3 +534,699 @@ def test_llm_stream(mock_retry):
     result = list(generate_llm_answer_stream("q", "c", ""))
 
     assert isinstance(result, list)
+
+
+# ============================================================================
+# TRUNCATE AT SENTENCE BOUNDARY TESTS (lines 245-261)
+# ============================================================================
+
+
+class TestTruncateAtSentenceBoundary:
+    """Tests for _truncate_at_sentence_boundary helper."""
+
+    def test_empty_string_returns_empty(self):
+        """Return empty string unchanged."""
+        from llm import _truncate_at_sentence_boundary
+
+        assert _truncate_at_sentence_boundary("") == ""
+
+    def test_none_returns_none(self):
+        """Return None unchanged."""
+        from llm import _truncate_at_sentence_boundary
+
+        assert _truncate_at_sentence_boundary(None) is None
+
+    def test_complete_sentence_unchanged(self):
+        """Return text ending with period unchanged."""
+        from llm import _truncate_at_sentence_boundary
+
+        text = "This is complete."
+        assert _truncate_at_sentence_boundary(text) == text
+
+    def test_question_mark_ending(self):
+        """Return text ending with question mark unchanged."""
+        from llm import _truncate_at_sentence_boundary
+
+        text = "Is this complete?"
+        assert _truncate_at_sentence_boundary(text) == text
+
+    def test_exclamation_ending(self):
+        """Return text ending with exclamation unchanged."""
+        from llm import _truncate_at_sentence_boundary
+
+        assert _truncate_at_sentence_boundary("Done!") == "Done!"
+
+    def test_tamil_danda_ending(self):
+        """Return text ending with Tamil danda unchanged."""
+        from llm import _truncate_at_sentence_boundary
+
+        assert _truncate_at_sentence_boundary("text\u0964") == "text\u0964"
+
+    def test_truncates_at_last_period(self):
+        """Truncate at last sentence boundary when text is incomplete."""
+        from llm import _truncate_at_sentence_boundary
+
+        text = "First sentence. Second sentence. Incomplete"
+        result = _truncate_at_sentence_boundary(text)
+        assert result.endswith(".")
+        assert "Incomplete" not in result
+
+    def test_returns_stripped_when_no_boundary_found(self):
+        """Return stripped text when no sentence boundary past midpoint."""
+        from llm import _truncate_at_sentence_boundary
+
+        text = "no boundaries here at all"
+        result = _truncate_at_sentence_boundary(text)
+        assert result == text.rstrip()
+
+    def test_trailing_whitespace_stripped(self):
+        """Strip trailing whitespace before checking boundary."""
+        from llm import _truncate_at_sentence_boundary
+
+        text = "Complete sentence.   "
+        assert _truncate_at_sentence_boundary(text) == "Complete sentence."
+
+
+# ============================================================================
+# GET GEMINI CLIENT TESTS (lines 270-271)
+# ============================================================================
+
+
+class TestGetGeminiClient:
+    """Tests for _get_gemini_client singleton."""
+
+    def test_raises_when_no_api_key(self):
+        """Raise ValueError when GEMINI_API_KEY is not set."""
+        from llm import _get_gemini_client
+
+        with patch("llm.GEMINI_API_KEY", None):
+            with patch("llm._gemini_client", None):
+                with pytest.raises(ValueError, match="GEMINI_API_KEY"):
+                    _get_gemini_client()
+
+    @patch("llm.genai")
+    def test_creates_client_with_api_key(self, mock_genai):
+        """Create a Gemini client when API key is set."""
+        from llm import _get_gemini_client
+
+        mock_genai.Client.return_value = MagicMock()
+        with patch("llm.GEMINI_API_KEY", "test-key"):
+            with patch("llm._gemini_client", None):
+                client = _get_gemini_client()
+        mock_genai.Client.assert_called_once_with(api_key="test-key")
+        assert client is not None
+
+
+# ============================================================================
+# GENERATION CONFIG TESTS (line 371)
+# ============================================================================
+
+
+class TestGeminiGenerationConfig:
+    """Tests for _gemini_generation_config helper."""
+
+    def test_disable_thinking_sets_budget_zero(self):
+        """Set thinking_budget=0 when disable_thinking is True."""
+        from llm import _gemini_generation_config
+
+        config = _gemini_generation_config(
+            system_instruction="test", disable_thinking=True
+        )
+        assert config.thinking_config is not None
+        assert config.thinking_config.thinking_budget == 0
+
+    def test_default_thinking_is_none(self):
+        """Leave thinking_config None by default."""
+        from llm import _gemini_generation_config
+
+        config = _gemini_generation_config(system_instruction="test")
+        assert config.thinking_config is None
+
+
+# ============================================================================
+# SYSTEM PROMPT SELECTION TESTS (lines 412, 419)
+# ============================================================================
+
+
+class TestSystemPromptSelection:
+    """Tests for language-based prompt selection."""
+
+    def test_get_system_prompt_english(self):
+        """Return English prompt when language is en."""
+        from llm import ENGLISH_ANSWER_SYSTEM_PROMPT, _get_system_prompt
+
+        assert _get_system_prompt("en") == ENGLISH_ANSWER_SYSTEM_PROMPT
+
+    def test_get_system_prompt_tamil_default(self):
+        """Return Tamil prompt by default."""
+        from llm import TAMIL_ANSWER_SYSTEM_PROMPT, _get_system_prompt
+
+        assert _get_system_prompt("ta") == TAMIL_ANSWER_SYSTEM_PROMPT
+
+    def test_get_csv_system_prompt_english(self):
+        """Return English CSV prompt when language is en."""
+        from llm import _CSV_SYSTEM_PROMPT_EN, _get_csv_system_prompt
+
+        result = _get_csv_system_prompt("en")
+        assert result == _CSV_SYSTEM_PROMPT_EN
+
+    def test_get_csv_system_prompt_tamil_default(self):
+        """Return Tamil CSV prompt by default."""
+        from llm import _CSV_SYSTEM_PROMPT, _get_csv_system_prompt
+
+        assert _get_csv_system_prompt("ta") == _CSV_SYSTEM_PROMPT
+
+
+# ============================================================================
+# BUILD USER CONTENT TESTS (lines 450-487)
+# ============================================================================
+
+
+class TestBuildUserContent:
+    """Tests for _build_user_content prompt builder."""
+
+    def test_omits_empty_context(self):
+        """Omit document context section when context is empty."""
+        from llm import _build_user_content
+
+        result = _build_user_content("question", "", "csv data")
+        assert "CSV" in result
+        assert "Document Context" not in result
+        assert "ஆவண சூழல்" not in result
+
+    def test_omits_empty_csv(self):
+        """Omit CSV section when csv_context is empty."""
+        from llm import _build_user_content
+
+        result = _build_user_content("question", "doc ctx", "")
+        assert "CSV" not in result
+
+    def test_english_wh_question_closing(self):
+        """Use English wh-question closing instruction."""
+        from llm import _build_user_content
+
+        result = _build_user_content("who wrote this?", "ctx", "csv", language="en")
+        assert "direct answer clearly" in result
+
+    def test_tamil_wh_question_closing(self):
+        """Use Tamil wh-question closing instruction."""
+        from llm import _build_user_content
+
+        result = _build_user_content("யார் எழுதினார்?", "ctx", "csv", language="ta")
+        assert "நேரடியான பதிலை" in result
+
+    def test_english_non_wh_closing(self):
+        """Use English detailed answer closing for non-wh questions."""
+        from llm import _build_user_content
+
+        result = _build_user_content("describe ponni", "ctx", "csv", language="en")
+        assert "Detailed answer" in result
+
+    def test_multi_doc_english_closing(self):
+        """Add multi-document instruction in English."""
+        from llm import _build_user_content
+
+        result = _build_user_content(
+            "who wrote?",
+            "ctx",
+            "csv",
+            context_doc_count=3,
+            language="en",
+        )
+        assert "3 documents" in result
+        assert "Integrate" in result
+
+    def test_multi_doc_tamil_closing(self):
+        """Add multi-document instruction in Tamil."""
+        from llm import _build_user_content
+
+        result = _build_user_content(
+            "யார்?",
+            "ctx",
+            "csv",
+            context_doc_count=2,
+            language="ta",
+        )
+        assert "2 ஆவணங்கள்" in result
+
+    def test_english_labels(self):
+        """Use English labels when language is en."""
+        from llm import _build_user_content
+
+        result = _build_user_content("test", "doc", "csv", language="en")
+        assert "Question:" in result
+        assert "Document Context:" in result
+
+
+# ============================================================================
+# BUILD CSV USER CONTENT TESTS (lines 533-561)
+# ============================================================================
+
+
+class TestBuildCsvUserContent:
+    """Tests for _build_csv_user_content prompt builder."""
+
+    def test_yes_no_english(self):
+        """Use English yes/no closing for yes/no question."""
+        from llm import _build_csv_user_content
+
+        # Use Tamil yes/no pattern with English output
+        result = _build_csv_user_content("எழுதியுள்ளாரா ponni?", "data", language="en")
+        assert "Yes" in result and "No" in result
+
+    def test_yes_no_tamil(self):
+        """Use Tamil yes/no closing for Tamil yes/no question."""
+        from llm import _build_csv_user_content
+
+        result = _build_csv_user_content("எழுதியுள்ளாரா?", "data", language="ta")
+        assert "ஆம்" in result
+
+    def test_wh_english(self):
+        """Use English wh closing for wh question."""
+        from llm import _build_csv_user_content
+
+        result = _build_csv_user_content("who is the author?", "data", language="en")
+        assert "direct answer" in result
+
+    def test_wh_tamil(self):
+        """Use Tamil wh closing for Tamil wh question."""
+        from llm import _build_csv_user_content
+
+        result = _build_csv_user_content("யார் எழுதினார்?", "data", language="ta")
+        assert "நேரடியான பதிலை" in result
+
+    def test_default_english(self):
+        """Use English summary closing for generic question."""
+        from llm import _build_csv_user_content
+
+        result = _build_csv_user_content("tell me about ponni", "data", language="en")
+        assert "Summarize" in result
+
+    def test_default_tamil(self):
+        """Use Tamil summary closing for generic Tamil question."""
+        from llm import _build_csv_user_content
+
+        result = _build_csv_user_content("பொன்னி பற்றி கூறுக", "data", language="ta")
+        assert "சுருக்கமாக" in result
+
+    def test_contains_data_block(self):
+        """Include the CSV data in the output."""
+        from llm import _build_csv_user_content
+
+        result = _build_csv_user_content("test", "my csv data here", language="ta")
+        assert "my csv data here" in result
+
+
+# ============================================================================
+# BUILD MULTI-TURN CONTENTS TESTS (lines 586-591)
+# ============================================================================
+
+
+class TestBuildMultiTurnContents:
+    """Tests for _build_multi_turn_contents helper."""
+
+    def test_maps_assistant_to_model_role(self):
+        """Map assistant role to Gemini model role."""
+        from llm import _build_multi_turn_contents
+
+        history = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ]
+        result = _build_multi_turn_contents(history, "new q")
+        assert result[0]["role"] == "user"
+        assert result[1]["role"] == "model"
+        assert result[2]["role"] == "user"
+        assert result[2]["parts"][0]["text"] == "new q"
+
+    def test_empty_history(self):
+        """Handle empty history with just current content."""
+        from llm import _build_multi_turn_contents
+
+        result = _build_multi_turn_contents([], "current")
+        assert len(result) == 1
+        assert result[0]["parts"][0]["text"] == "current"
+
+
+# ============================================================================
+# GENERATE LLM ANSWER WITH HISTORY / OVERRIDES (lines 613-651)
+# ============================================================================
+
+
+class TestGenerateLlmAnswerOverrides:
+    """Tests for generate_llm_answer with overrides and history."""
+
+    @patch("llm.with_gemini_retry")
+    @patch("llm._get_gemini_client")
+    def test_uses_custom_system_prompt(self, mock_client, mock_retry):
+        """Use provided system_prompt instead of default."""
+        mock_resp = MagicMock()
+        mock_resp.text = "answer"
+        mock_resp.candidates = []
+        mock_retry.return_value = mock_resp
+
+        result = generate_llm_answer("q", "ctx", "", system_prompt="custom prompt")
+        assert result != ""
+        # Verify config was called with custom prompt
+        call_kwargs = mock_retry.call_args
+        config = call_kwargs.kwargs["config"]
+        assert "custom prompt" in config.system_instruction
+
+    @patch("llm.with_gemini_retry")
+    @patch("llm._get_gemini_client")
+    def test_uses_custom_user_content(self, mock_client, mock_retry):
+        """Use provided user_content instead of building it."""
+        mock_resp = MagicMock()
+        mock_resp.text = "answer"
+        mock_resp.candidates = []
+        mock_retry.return_value = mock_resp
+
+        result = generate_llm_answer("q", "ctx", "", user_content="my custom content")
+        assert result != ""
+        call_kwargs = mock_retry.call_args
+        assert call_kwargs.kwargs["contents"] == "my custom content"
+
+    @patch("llm.with_gemini_retry")
+    @patch("llm._get_gemini_client")
+    def test_uses_history_for_multi_turn(self, mock_client, mock_retry):
+        """Build multi-turn contents when history is provided."""
+        mock_resp = MagicMock()
+        mock_resp.text = "answer"
+        mock_resp.candidates = []
+        mock_retry.return_value = mock_resp
+
+        history = [
+            {"role": "user", "content": "prev q"},
+            {"role": "assistant", "content": "prev a"},
+        ]
+        result = generate_llm_answer("new q", "ctx", "csv", history=history)
+        assert result != ""
+        call_kwargs = mock_retry.call_args
+        contents = call_kwargs.kwargs["contents"]
+        assert isinstance(contents, list)
+        assert len(contents) == 3
+
+    @patch("llm.with_gemini_retry")
+    @patch("llm._get_gemini_client")
+    def test_english_language_selects_english_prompt(self, mock_client, mock_retry):
+        """Select English system prompt when language=en."""
+        mock_resp = MagicMock()
+        mock_resp.text = "answer"
+        mock_resp.candidates = []
+        mock_retry.return_value = mock_resp
+
+        generate_llm_answer("q", "ctx", "", language="en")
+        call_kwargs = mock_retry.call_args
+        config = call_kwargs.kwargs["config"]
+        assert "English" in config.system_instruction
+
+    @patch("llm.with_gemini_retry")
+    @patch("llm._get_gemini_client")
+    def test_max_tokens_truncation(self, mock_client, mock_retry):
+        """Truncate at sentence boundary when MAX_TOKENS reached."""
+        mock_resp = MagicMock()
+        mock_resp.text = "First sentence. Second sentence. Incompl"
+        candidate = MagicMock()
+        candidate.finish_reason = "MAX_TOKENS"
+        mock_resp.candidates = [candidate]
+        mock_retry.return_value = mock_resp
+
+        result = generate_llm_answer("q", "ctx", "")
+        assert result.endswith(".")
+        assert "Incompl" not in result
+
+
+# ============================================================================
+# ASYNC GENERATE WITH HISTORY / MAX_TOKENS (lines 685-722)
+# ============================================================================
+
+
+class TestGenerateLlmAnswerAsyncOverrides:
+    """Tests for generate_llm_answer_async with overrides."""
+
+    @pytest.mark.asyncio
+    async def test_async_uses_history(self):
+        """Build multi-turn contents in async path."""
+        mock_resp = MagicMock()
+        mock_resp.text = "async answer"
+        mock_resp.candidates = []
+
+        with patch("llm._get_gemini_client"):
+            with patch(
+                "llm.with_gemini_retry_async",
+                new_callable=AsyncMock,
+                return_value=mock_resp,
+            ) as mock_retry:
+                history = [
+                    {"role": "user", "content": "prev"},
+                    {"role": "assistant", "content": "resp"},
+                ]
+                result = await generate_llm_answer_async(
+                    "q", "ctx", "csv", history=history
+                )
+        assert result != ""
+        call_kwargs = mock_retry.call_args
+        contents = call_kwargs.kwargs["contents"]
+        assert isinstance(contents, list)
+
+    @pytest.mark.asyncio
+    async def test_async_english_prompt(self):
+        """Select English prompt in async path."""
+        mock_resp = MagicMock()
+        mock_resp.text = "english answer"
+        mock_resp.candidates = []
+
+        with patch("llm._get_gemini_client"):
+            with patch(
+                "llm.with_gemini_retry_async",
+                new_callable=AsyncMock,
+                return_value=mock_resp,
+            ) as mock_retry:
+                await generate_llm_answer_async("q", "ctx", "", language="en")
+        call_kwargs = mock_retry.call_args
+        config = call_kwargs.kwargs["config"]
+        assert "English" in config.system_instruction
+
+    @pytest.mark.asyncio
+    async def test_async_max_tokens_truncation(self):
+        """Truncate at sentence boundary in async on MAX_TOKENS."""
+        mock_resp = MagicMock()
+        mock_resp.text = "Done. Partial"
+        candidate = MagicMock()
+        candidate.finish_reason = "MAX_TOKENS"
+        mock_resp.candidates = [candidate]
+
+        with patch("llm._get_gemini_client"):
+            with patch(
+                "llm.with_gemini_retry_async",
+                new_callable=AsyncMock,
+                return_value=mock_resp,
+            ):
+                result = await generate_llm_answer_async("q", "ctx", "")
+        assert result.endswith(".")
+        assert "Partial" not in result
+
+
+# ============================================================================
+# STREAMING FULL PATH TESTS (lines 758-791)
+# ============================================================================
+
+
+class TestStreamingFullPath:
+    """Tests for generate_llm_answer_stream full coverage."""
+
+    @patch("llm.with_gemini_retry")
+    @patch("llm._get_gemini_client")
+    def test_stream_with_history(self, mock_client, mock_retry):
+        """Build multi-turn contents in streaming path."""
+        from llm import generate_llm_answer_stream
+
+        chunk1 = MagicMock()
+        chunk1.text = "hello "
+        chunk2 = MagicMock()
+        chunk2.text = "world"
+        mock_retry.return_value = [chunk1, chunk2]
+
+        history = [
+            {"role": "user", "content": "prev"},
+            {"role": "assistant", "content": "resp"},
+        ]
+        tokens = list(generate_llm_answer_stream("q", "ctx", "csv", history=history))
+        assert tokens == ["hello ", "world"]
+        call_kwargs = mock_retry.call_args
+        contents = call_kwargs.kwargs["contents"]
+        assert isinstance(contents, list)
+
+    @patch("llm.with_gemini_retry")
+    @patch("llm._get_gemini_client")
+    def test_stream_with_english_prompt(self, mock_client, mock_retry):
+        """Use English system prompt in streaming path."""
+        from llm import generate_llm_answer_stream
+
+        mock_retry.return_value = []
+        list(generate_llm_answer_stream("q", "ctx", "", language="en"))
+        call_kwargs = mock_retry.call_args
+        config = call_kwargs.kwargs["config"]
+        assert "English" in config.system_instruction
+
+    @patch("llm.with_gemini_retry")
+    @patch("llm._get_gemini_client")
+    def test_stream_with_custom_overrides(self, mock_client, mock_retry):
+        """Use custom user_content and system_prompt in stream."""
+        from llm import generate_llm_answer_stream
+
+        chunk = MagicMock()
+        chunk.text = "token"
+        mock_retry.return_value = [chunk]
+
+        tokens = list(
+            generate_llm_answer_stream(
+                "q",
+                "ctx",
+                "",
+                user_content="custom",
+                system_prompt="sys",
+            )
+        )
+        assert tokens == ["token"]
+        call_kwargs = mock_retry.call_args
+        assert call_kwargs.kwargs["contents"] == "custom"
+
+    @patch("llm._get_gemini_client")
+    def test_stream_skips_none_tokens(self, mock_client):
+        """Skip chunks with None text in streaming."""
+        from llm import generate_llm_answer_stream
+
+        chunk_none = MagicMock()
+        chunk_none.text = None
+        chunk_ok = MagicMock()
+        chunk_ok.text = "ok"
+
+        with patch(
+            "llm.with_gemini_retry",
+            return_value=[chunk_none, chunk_ok],
+        ):
+            tokens = list(generate_llm_answer_stream("q", "ctx", ""))
+        assert tokens == ["ok"]
+
+    @patch("llm._get_gemini_client")
+    def test_stream_error_poisons_cache_on_retryable(self, mock_client):
+        """Poison health cache when streaming hits retryable error."""
+        from llm import generate_llm_answer_stream
+
+        with _gemini_health_lock:
+            _gemini_health_cache["result"] = None
+            _gemini_health_cache["timestamp"] = 0
+
+        with patch(
+            "llm.with_gemini_retry",
+            side_effect=ConnectionError("refused"),
+        ):
+            tokens = list(generate_llm_answer_stream("q", "ctx", ""))
+        assert tokens == []
+        with _gemini_health_lock:
+            cached = _gemini_health_cache["result"]
+        assert cached is not None
+        assert cached["healthy"] is False
+
+
+# ============================================================================
+# VALIDATE GEMINI API TESTS (lines 824-832)
+# ============================================================================
+
+
+class TestValidateGeminiApi:
+    """Tests for validate_gemini_api startup check."""
+
+    @patch("llm.GEMINI_API_KEY", None)
+    def test_warns_when_no_api_key(self, caplog):
+        """Warn and return when API key is not set."""
+        import logging
+
+        from llm import validate_gemini_api
+
+        with caplog.at_level(logging.WARNING):
+            validate_gemini_api()
+        assert "GEMINI_API_KEY not set" in caplog.text
+
+    @patch("llm.check_gemini_health")
+    @patch("llm.GEMINI_API_KEY", "test-key")
+    def test_logs_success_when_healthy(self, mock_health, caplog):
+        """Log success when Gemini API is healthy."""
+        import logging
+
+        from llm import validate_gemini_api
+
+        mock_health.return_value = {
+            "healthy": True,
+            "message": "ok",
+        }
+        with caplog.at_level(logging.INFO):
+            validate_gemini_api()
+        assert "validated successfully" in caplog.text
+
+    @patch("llm.check_gemini_health")
+    @patch("llm.GEMINI_API_KEY", "test-key")
+    def test_warns_when_unhealthy(self, mock_health, caplog):
+        """Warn when Gemini API validation fails."""
+        import logging
+
+        from llm import validate_gemini_api
+
+        mock_health.return_value = {
+            "healthy": False,
+            "message": "API down",
+        }
+        with caplog.at_level(logging.WARNING):
+            validate_gemini_api()
+        assert "validation failed" in caplog.text
+
+
+# ============================================================================
+# EXTRACTIVE ANSWER TESTS
+# ============================================================================
+
+
+class TestExtractiveAnswer:
+    """Tests for generate_extractive_answer."""
+
+    def test_empty_facts_returns_empty(self):
+        """Return empty string when no facts provided."""
+        from llm import generate_extractive_answer
+
+        assert generate_extractive_answer([], "question") == ""
+
+    def test_short_sentences_filtered_out(self):
+        """Filter out sentences shorter than 30 chars."""
+        from llm import generate_extractive_answer
+
+        facts = [{"sentence": "short"}]
+        assert generate_extractive_answer(facts, "q") == ""
+
+    def test_joins_valid_sentences(self):
+        """Join valid sentences with period separator."""
+        from llm import generate_extractive_answer
+
+        facts = [
+            {"sentence": "A" * 40},
+            {"sentence": "B" * 40},
+        ]
+        result = generate_extractive_answer(facts, "q")
+        assert ". " in result
+        assert result.endswith(".")
+
+    def test_cleans_markup_from_sentences(self):
+        """Remove markup patterns from sentences."""
+        from llm import generate_extractive_answer
+
+        facts = [
+            {
+                "sentence": (
+                    "__bold__ பொன்னி களஞ்சியம் actual content "
+                    "that is long enough to pass filter"
+                )
+            }
+        ]
+        result = generate_extractive_answer(facts, "q")
+        assert "__" not in result
+        assert "பொன்னி களஞ்சியம்" not in result

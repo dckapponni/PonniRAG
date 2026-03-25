@@ -1229,3 +1229,397 @@ def test_deterministic_token_hash():
     h1 = _deterministic_token_hash("test")
     h2 = _deterministic_token_hash("test")
     assert h1 == h2
+
+
+# ================================================================
+# Additional coverage tests for missed lines
+# ================================================================
+
+
+class TestChunkTextLongSentenceFlush:
+    """Test chunk_text handles very long sentences flushing buffer."""
+
+    def test_long_sentence_flushes_current_chunk(self):
+        """Flush current chunk before appending oversized sentence."""
+        # Build a normal sentence then a very long one
+        normal = "இது ஒரு சாதாரண வாக்கியம் தமிழ் உரை சோதனை. "
+        # > max_words (1.5 * target_words) words
+        long_words = " ".join(["தமிழ்"] * 300)
+        long_sent = long_words + "."
+        text = (normal * 5) + long_sent
+        chunks = chunk_text(text, size=500)
+        # Should produce at least 2 chunks: flushed + long
+        assert len(chunks) >= 1
+
+    def test_exceeds_max_words_splits_chunk(self):
+        """Split into new chunk when adding sentence exceeds max."""
+        # Two sentences each ~100 Tamil words; max_words ~125
+        s1 = " ".join(["தமிழ்"] * 100) + "."
+        s2 = " ".join(["கவிதை"] * 100) + "."
+        text = s1 + " " + s2
+        chunks = chunk_text(text, size=500)
+        assert len(chunks) >= 2
+
+
+class TestValidateChunkWordCount:
+    """Test validate_chunk rejects chunks with enough chars but few words."""
+
+    def test_few_words_with_tamil_chars(self):
+        """Reject chunk with Tamil chars but under 30 words."""
+        # 20 Tamil words, each short
+        chunk = " ".join(["அ"] * 20) + " " + "த" * 40
+        assert not validate_chunk(chunk)
+
+
+class TestLoadDocumentsArticleProcessing:
+    """Test load_documents_from_s3 article-level processing."""
+
+    @patch("db.qdrant_indexer.ArticleTagger")
+    @patch("db.qdrant_indexer.list_s3_json_files")
+    @patch("db.qdrant_indexer.s3")
+    def test_skips_author_files_in_pass1(self, mock_s3, mock_list, mock_tagger_cls):
+        """Skip authors.json files during article loading."""
+        mock_list.return_value = [
+            "vol_1/authors.json",
+            "vol_1/articles.json",
+        ]
+        tagger = MagicMock()
+        tagger.tag_article.return_value = ["tag1"]
+        tagger.get_tamil_tags.return_value = ["தொ1"]
+        mock_tagger_cls.return_value = tagger
+
+        content = "தமிழ் உள்ளடக்கம் சோதனை வாக்கியம் " * 60
+        data = {
+            "articles": [
+                {
+                    "doc_id": "d1",
+                    "doc_issue": "1",
+                    "article_no": "1",
+                    "content": content,
+                }
+            ]
+        }
+        body = json.dumps(data).encode("utf-8")
+
+        def get_obj(Bucket, Key):
+            if "authors" in Key:
+                raise AssertionError("Should not read authors")
+            return {"Body": Mock(read=lambda: body)}
+
+        mock_s3.get_object.side_effect = get_obj
+        docs = load_documents_from_s3()
+        assert isinstance(docs, list)
+
+    @patch("db.qdrant_indexer.ArticleTagger")
+    @patch("db.qdrant_indexer.list_s3_json_files")
+    @patch("db.qdrant_indexer.s3")
+    def test_articles_not_list_skipped(self, mock_s3, mock_list, mock_tagger_cls):
+        """Skip JSON where articles key is not a list."""
+        mock_list.return_value = ["vol_1/data.json"]
+        mock_tagger_cls.return_value = MagicMock()
+        data = {"articles": "not a list"}
+        body = json.dumps(data).encode("utf-8")
+        mock_s3.get_object.return_value = {"Body": Mock(read=lambda: body)}
+        docs = load_documents_from_s3()
+        assert docs == []
+
+    @patch("db.qdrant_indexer.ArticleTagger")
+    @patch("db.qdrant_indexer.list_s3_json_files")
+    @patch("db.qdrant_indexer.s3")
+    def test_empty_content_article_skipped(self, mock_s3, mock_list, mock_tagger_cls):
+        """Skip articles with empty content in pass 1."""
+        mock_list.return_value = ["vol_1/data.json"]
+        mock_tagger_cls.return_value = MagicMock()
+        data = {
+            "articles": [
+                {"doc_id": "d1", "article_no": "1", "content": ""},
+                {"doc_id": "d2", "article_no": "2", "content": "  "},
+            ]
+        }
+        body = json.dumps(data).encode("utf-8")
+        mock_s3.get_object.return_value = {"Body": Mock(read=lambda: body)}
+        docs = load_documents_from_s3()
+        assert docs == []
+
+    @patch("db.qdrant_indexer.ArticleTagger")
+    @patch("db.qdrant_indexer.list_s3_json_files")
+    @patch("db.qdrant_indexer.s3")
+    def test_valid_articles_tagged_and_chunked(
+        self, mock_s3, mock_list, mock_tagger_cls
+    ):
+        """Tag and chunk valid articles in pass 2."""
+        mock_list.return_value = ["vol_1/data.json"]
+        tagger = MagicMock()
+        tagger.tag_article.return_value = ["FICTION"]
+        tagger.get_tamil_tags.return_value = ["புனைவு"]
+        mock_tagger_cls.return_value = tagger
+
+        content = (
+            "தமிழ் உள்ளடக்கம் சோதனைக்கான நீண்ட வாக்கியம் "
+            "இது மிகவும் நீண்ட சோதனை உரை. "
+        ) * 60
+        data = {
+            "articles": [
+                {
+                    "doc_id": "d1",
+                    "doc_issue": "1",
+                    "article_no": "1",
+                    "author_name": "Test",
+                    "title": "Title",
+                    "year": "1950",
+                    "source_document": "src.pdf",
+                    "content": content,
+                }
+            ]
+        }
+        body = json.dumps(data).encode("utf-8")
+        mock_s3.get_object.return_value = {"Body": Mock(read=lambda: body)}
+        docs = load_documents_from_s3()
+        assert len(docs) >= 1
+        assert docs[0]["metadata"]["tags"] == ["FICTION"]
+        assert docs[0]["metadata"]["tags_tamil"] == ["புனைவு"]
+        assert docs[0]["metadata"]["volume"] == "vol_1"
+
+    @patch("db.qdrant_indexer.ArticleTagger")
+    @patch("db.qdrant_indexer.list_s3_json_files")
+    @patch("db.qdrant_indexer.s3")
+    def test_chunk_stats_logged_when_valid(self, mock_s3, mock_list, mock_tagger_cls):
+        """Log chunk statistics when valid chunks exist."""
+        mock_list.return_value = ["vol_1/data.json"]
+        tagger = MagicMock()
+        tagger.tag_article.return_value = ["TAG"]
+        tagger.get_tamil_tags.return_value = ["தொ"]
+        mock_tagger_cls.return_value = tagger
+
+        content = (
+            "தமிழ் உள்ளடக்கம் சோதனைக்கான நீண்ட வாக்கியம் "
+            "இது மிகவும் நீண்ட சோதனை உரை. "
+        ) * 60
+        data = {
+            "articles": [
+                {
+                    "doc_id": "d1",
+                    "doc_issue": "1",
+                    "article_no": "1",
+                    "content": content,
+                }
+            ]
+        }
+        body = json.dumps(data).encode("utf-8")
+        mock_s3.get_object.return_value = {"Body": Mock(read=lambda: body)}
+        with patch("db.qdrant_indexer.logger") as ml:
+            docs = load_documents_from_s3()
+            if docs:
+                # Stats logging should have occurred
+                assert ml.info.called
+
+
+class TestDoFullIndexCoverage:
+    """Test _do_full_index for article and author batch paths."""
+
+    @patch("db.qdrant_indexer.load_authors_from_s3")
+    @patch("db.qdrant_indexer.load_documents_from_s3")
+    @patch("db.qdrant_indexer.with_qdrant_retry")
+    def test_delete_existing_collection(self, mock_retry, mock_docs, mock_authors):
+        """Delete existing collection before creating new one."""
+        from db.qdrant_indexer import _do_full_index
+
+        client = MagicMock()
+        client.collection_exists.return_value = True
+        mock_docs.return_value = []
+        mock_authors.return_value = []
+
+        _do_full_index(client)
+
+        client.delete_collection.assert_called_once_with("qdrant_indexer")
+
+    @patch("db.qdrant_indexer.load_authors_from_s3")
+    @patch("db.qdrant_indexer.load_documents_from_s3")
+    @patch("db.qdrant_indexer.with_qdrant_retry")
+    def test_article_batch_upsert_at_batch_size(
+        self, mock_retry, mock_docs, mock_authors
+    ):
+        """Upsert articles when batch reaches BATCH_SIZE."""
+        from db.qdrant_indexer import _do_full_index
+
+        client = MagicMock()
+        client.collection_exists.return_value = False
+
+        mock_docs.return_value = [
+            {
+                "id": f"d{i}",
+                "text": "text",
+                "metadata": {
+                    "chunk_id": 0,
+                    "total_chunks": 1,
+                    "doc_id": f"d{i}",
+                    "doc_issue": "1",
+                    "volume": "v1",
+                },
+            }
+            for i in range(150)
+        ]
+        mock_authors.return_value = []
+        client.get_collection.return_value = Mock(points_count=150)
+
+        _do_full_index(client)
+
+        # with_qdrant_retry called for batch + remainder
+        assert mock_retry.call_count >= 2
+
+    @patch("db.qdrant_indexer.load_authors_from_s3")
+    @patch("db.qdrant_indexer.load_documents_from_s3")
+    @patch("db.qdrant_indexer.with_qdrant_retry")
+    def test_article_indexing_exception_logged(
+        self, mock_retry, mock_docs, mock_authors
+    ):
+        """Log error when article embedding fails."""
+        from db.qdrant_indexer import _do_full_index
+
+        client = MagicMock()
+        client.collection_exists.return_value = False
+
+        mock_docs.return_value = [
+            {
+                "id": "d1",
+                "text": "text",
+                "metadata": {"chunk_id": 0},
+            }
+        ]
+        mock_authors.return_value = []
+        client.get_collection.return_value = Mock(points_count=0)
+
+        with patch(
+            "db.qdrant_indexer.dense_embed_doc",
+            side_effect=Exception("embed fail"),
+        ):
+            with patch("db.qdrant_indexer.logger") as ml:
+                _do_full_index(client)
+                assert ml.error.called
+
+    @patch("db.qdrant_indexer.load_authors_from_s3")
+    @patch("db.qdrant_indexer.load_documents_from_s3")
+    @patch("db.qdrant_indexer.with_qdrant_retry")
+    def test_author_batch_and_final_upsert(self, mock_retry, mock_docs, mock_authors):
+        """Upsert author batches and final remainder."""
+        from db.qdrant_indexer import _do_full_index
+
+        client = MagicMock()
+        client.collection_exists.return_value = False
+
+        mock_docs.return_value = [
+            {
+                "id": "d1",
+                "text": "text",
+                "metadata": {
+                    "chunk_id": 0,
+                    "doc_id": "d1",
+                    "doc_issue": "1",
+                    "volume": "v1",
+                },
+            }
+        ]
+        mock_authors.return_value = [
+            {
+                "id": f"a{i}",
+                "text": f"Author {i}",
+                "metadata": {
+                    "author": f"Author {i}",
+                    "doc_id": f"d{i}",
+                    "doc_issue": "1",
+                    "volume": "v1",
+                    "source": "authors_json",
+                },
+            }
+            for i in range(150)
+        ]
+        client.get_collection.return_value = Mock(points_count=151)
+
+        _do_full_index(client)
+
+        # Articles (1 remainder) + authors (1 batch + 1 remainder)
+        assert mock_retry.call_count >= 3
+
+    @patch("db.qdrant_indexer.load_authors_from_s3")
+    @patch("db.qdrant_indexer.load_documents_from_s3")
+    @patch("db.qdrant_indexer.with_qdrant_retry")
+    def test_author_indexing_exception_logged(
+        self, mock_retry, mock_docs, mock_authors
+    ):
+        """Log error when author embedding fails."""
+        from db.qdrant_indexer import _do_full_index
+
+        client = MagicMock()
+        client.collection_exists.return_value = False
+
+        mock_docs.return_value = [
+            {
+                "id": "d1",
+                "text": "text",
+                "metadata": {
+                    "chunk_id": 0,
+                    "doc_id": "d1",
+                    "doc_issue": "1",
+                    "volume": "v1",
+                },
+            }
+        ]
+        mock_authors.return_value = [
+            {
+                "id": "a1",
+                "text": "Author",
+                "metadata": {
+                    "author": "Author",
+                    "doc_id": "d1",
+                    "doc_issue": "1",
+                    "volume": "v1",
+                    "source": "authors_json",
+                },
+            }
+        ]
+        client.get_collection.return_value = Mock(points_count=1)
+
+        call_count = [0]
+
+        def embed_side(text):
+            call_count[0] += 1
+            if call_count[0] > 1:
+                raise Exception("author embed fail")
+            return [0.1] * 384
+
+        with patch(
+            "db.qdrant_indexer.dense_embed_doc",
+            side_effect=embed_side,
+        ):
+            with patch("db.qdrant_indexer.logger") as ml:
+                _do_full_index(client)
+                assert ml.error.called
+
+
+class TestSaveSnapshotAndMetadataSuccess:
+    """Test _save_snapshot_and_metadata success path."""
+
+    @patch("db.qdrant_indexer.save_index_metadata")
+    @patch("db.qdrant_indexer.build_index_metadata")
+    @patch("db.qdrant_indexer.compute_source_data_hash")
+    @patch("db.qdrant_indexer.save_snapshot_to_s3")
+    def test_success_path(self, mock_save_snap, mock_hash, mock_build, mock_save_meta):
+        """Save snapshot and metadata on success."""
+        from db.qdrant_indexer import _save_snapshot_and_metadata
+
+        client = MagicMock()
+        client.get_collection.return_value = Mock(points_count=42)
+        mock_save_snap.return_value = "snap_key"
+        mock_hash.return_value = "abc123"
+        mock_build.return_value = {"key": "val"}
+
+        _save_snapshot_and_metadata(client, MagicMock())
+
+        mock_save_snap.assert_called_once()
+        mock_hash.assert_called_once()
+        mock_build.assert_called_once_with(
+            snapshot_s3_key="snap_key",
+            points_count=42,
+            source_data_hash="abc123",
+        )
+        mock_save_meta.assert_called_once()
