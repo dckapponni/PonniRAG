@@ -367,11 +367,13 @@ async def lifespan(app: FastAPI):
     # Validate Gemini API key (also primes the health check cache)
     gemini_health = check_gemini_health()
     if gemini_health["healthy"]:
-        model = gemini_health["model"]
-        latency = gemini_health["latency_ms"]
+        model = gemini_health.get("model", "unknown")
+        latency = gemini_health.get("latency_ms", "N/A")
         logger.info(f"Gemini API validated (model: {model}," f" latency: {latency}ms)")
     else:
-        logger.warning(f"Gemini API not available: {gemini_health['message']}")
+        logger.warning(
+            f"Gemini API not available: {gemini_health.get('message', 'Unknown error')}"
+        )
 
     yield
 

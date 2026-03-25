@@ -256,7 +256,7 @@ def _truncate_at_sentence_boundary(text: str) -> str:
         stripped.rfind("!"),
         stripped.rfind("।"),
     )
-    if last_boundary > len(stripped) * 0.5:
+    if last_boundary > len(stripped) * 0.3:
         return stripped[: last_boundary + 1].rstrip()
     return stripped
 

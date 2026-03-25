@@ -34,6 +34,11 @@ _author_system_lock = threading.Lock()
 # ============================================================================
 
 
+def load_csv(csv_path) -> pd.DataFrame:
+    """Public alias for _load_csv_safe (backward compatibility)."""
+    return _load_csv_safe(csv_path)
+
+
 def _load_csv_safe(csv_path) -> pd.DataFrame:
     """
     Load CSV using load_csv (primary) then pd.read_csv fallbacks.
@@ -183,9 +188,16 @@ def flexible_author_match(search_name: str, csv_name: str) -> bool:
         if search_normalized == csv_normalized:
             return True
 
-        # 2. Substring
-        if search_normalized in csv_normalized or csv_normalized in search_normalized:
-            return True
+        # 2. Substring (only when lengths are similar — prevents false
+        # matches from unrelated suffixes like "கருணாநிதிxyz")
+        shorter_len = min(len(search_normalized), len(csv_normalized))
+        longer_len = max(len(search_normalized), len(csv_normalized))
+        if longer_len > 0 and shorter_len / longer_len >= 0.8:
+            if (
+                search_normalized in csv_normalized
+                or csv_normalized in search_normalized
+            ):
+                return True
 
         # 3. Special-case aliases
         for key, variations in special_cases.items():
@@ -343,9 +355,10 @@ class EnhancedAuthorQuerySystem:
 
         if any(p in q for p in _PatternBank.LIST_ALL_AUTHORS):
             return "list_all_authors"
-        if any(p in q for p in _PatternBank.TOPIC_AUTHOR):
-            return "topic_author"
 
+        # Check known-author + action BEFORE topic_author patterns,
+        # because author names can contain substrings that falsely match
+        # topic_author patterns (e.g. "பெரியார்" contains "யார்").
         has_known_author = any(a in q for a in _PatternBank.KNOWN_AUTHORS)
         has_initials_name = bool(_RE_INITIALS_NAME.search(q))
         has_author_action = any(p in q for p in _PatternBank.AUTHOR_ACTION)
@@ -356,6 +369,9 @@ class EnhancedAuthorQuerySystem:
             "எழுதிய" in q or "படைப்பு" in q or "இயற்றிய" in q or "படைத்த" in q
         ):
             return "author_topics"
+
+        if any(p in q for p in _PatternBank.TOPIC_AUTHOR):
+            return "topic_author"
 
         topic_content_patterns = [
             "பற்றிய படைப்புகள்",

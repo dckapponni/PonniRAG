@@ -73,10 +73,15 @@ def get_tags_from_qdrant(
     if article_no:
         # article_no may be stored as int or string in Qdrant — try int first
         try:
+            article_no_val = int(article_no)
+        except (ValueError, TypeError):
+            article_no_val = article_no  # Fall back to string match
+
+        try:
             filter_conditions_with_no = filter_conditions + [
                 models.FieldCondition(
                     key="metadata.article_no",
-                    match=models.MatchValue(value=int(article_no)),
+                    match=models.MatchValue(value=article_no_val),
                 )
             ]
             points, _ = client.scroll(
@@ -89,7 +94,7 @@ def get_tags_from_qdrant(
                 metadata = (points[0].payload or {}).get("metadata", {})
                 return metadata.get("tags_tamil", [])
         except Exception as e:
-            logger.debug(f"article_no int match failed: {e}")
+            logger.debug(f"article_no match failed: {e}")
 
     # Fallback: doc_id + doc_issue only (takes first article in that issue)
     points, _ = client.scroll(

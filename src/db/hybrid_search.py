@@ -12,14 +12,34 @@ import time
 from typing import Dict, List
 
 from cache import _response_cache
-from csv_queries import _combine_csv_answer, _csv_data_suffix, handle_author_query
-from embeddings import (
+from csv_queries import (  # noqa: F401 — re-exported for backward compatibility
+    EnhancedAuthorQuerySystem,
+    _author_system_cache,
+    _author_system_lock,
+    _combine_csv_answer,
+    _csv_data_suffix,
+    _load_csv_safe,
+    detect_issue_count_query,
+    flexible_author_match,
+    format_author_list,
+    format_author_topics,
+    format_issue_count,
+    format_topic_authors,
+    get_issue_count,
+    handle_author_query,
+    normalize_author_name,
+)
+from embeddings import (  # noqa: F401 — re-exported for backward compatibility
     CSV_PATH,
     SCORE_THRESHOLD,
     HybridQdrantSearch,
+    _embed_lock,
     check_qdrant_health,
+    dense_embed_query,
+    get_embed_model,
     get_qdrant_client,
     search_csv_semantic,
+    sparse_embed,
 )
 from guardrails import (
     SAFE_ERROR_MESSAGE,
@@ -40,6 +60,7 @@ from llm import (
     generate_llm_answer_stream,
 )
 from search import _select_relevant_docs  # ✅ required
+from search import retrieve_all_chunks_for_document  # noqa: F401 — re-export
 from search import (
     build_context_from_docs,
     extract_key_facts,
@@ -347,11 +368,13 @@ def _check_context_relevance(question: str, relevant_docs: list) -> bool:
 
     # --- Year check ---
     # If the query asks about a specific year, at least one doc must
-    # reference that year in content or metadata.
+    # reference that year in content or metadata.  A year match is strong
+    # enough evidence of relevance on its own.
     if years:
-        if not any(y in all_text for y in years):
-            logger.info(f"[RELEVANCE] Year(s) {years} not found in any document")
-            return False
+        if any(y in all_text for y in years):
+            return True
+        logger.info(f"[RELEVANCE] Year(s) {years} not found in any document")
+        return False
 
     # --- Key-term check ---
     # At least one distinguishing Tamil/English term from the query must
