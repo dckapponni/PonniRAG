@@ -8,15 +8,9 @@ from pathlib import Path
 
 import docx2txt
 
-project_root = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(project_root))
-
 from src.config.config import BUCKET_NAME, EXTRACTED_OUTPUT, INPUT_PREFIX  # noqa: E402
-from src.data_extraction.s3_utils import (  # noqa: E402
-    list_files,
-    read_bytes,
-    upload_text,
-)
+from src.data_extraction.s3_utils import read_bytes  # noqa: E402
+from src.data_extraction.s3_utils import list_files, upload_text
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,6 +18,9 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
+
+project_root = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(project_root))
 
 
 def normalize_key(key: str) -> str:

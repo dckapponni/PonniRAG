@@ -11,30 +11,17 @@ import re as _re
 import time
 from typing import Dict, List
 
-from cache import ResponseCache  # noqa: F401
 from cache import _response_cache
-from embeddings import (  # noqa: F401
-    BASE_DIR,
-    COLLECTION_NAME,
+from csv_queries import _combine_csv_answer, _csv_data_suffix, handle_author_query
+from embeddings import (
     CSV_PATH,
-    DEVICE,
-    EMBEDDING_MODEL,
     SCORE_THRESHOLD,
-    USE_CUDA,
     HybridQdrantSearch,
-    _clear_singletons,
-    _deterministic_token_hash,
-    _embed_lock,
     check_qdrant_health,
-    dense_embed_query,
-    get_csv_dataframe,
-    get_csv_embeddings,
-    get_embed_model,
     get_qdrant_client,
     search_csv_semantic,
-    sparse_embed,
 )
-from guardrails import (  # noqa: F401
+from guardrails import (
     SAFE_ERROR_MESSAGE,
     detect_injection,
     safe_error_message,
@@ -42,6 +29,23 @@ from guardrails import (  # noqa: F401
     sanitize_output,
     sanitize_query,
     validate_history,
+)
+from llm import _build_csv_user_content  # ✅ required
+from llm import _get_csv_system_prompt  # ✅ required
+from llm import (
+    check_gemini_health,
+    generate_extractive_answer,
+    generate_llm_answer,
+    generate_llm_answer_async,
+    generate_llm_answer_stream,
+)
+from search import _select_relevant_docs  # ✅ required
+from search import (
+    build_context_from_docs,
+    extract_key_facts,
+    format_answer_output,
+    format_sources,
+    merge_consecutive_chunks,
 )
 
 from config.config import MAX_QUERY_LENGTH
@@ -1203,82 +1207,3 @@ def ask_question_stream(
             "content": _msg(language, SAFE_ERROR_MESSAGE, safe_error_message("en")),
         }
         yield {"type": "sources", "sources": []}
-
-
-# ============================================================================
-# DEPRECATED RE-EXPORTS — Backward compatibility only.
-# New code should import from the source modules directly:
-#   embeddings, csv_queries, llm, search, tamil_text, cache
-# These re-exports exist because test_hybrid_search.py uses `hs.X` for ~50+
-# names. Do not add new names here.
-# ============================================================================
-
-from csv_queries import EnhancedAuthorQuerySystem  # noqa: E402, F401
-from csv_queries import (  # noqa: E402, F401
-    _author_system_cache,
-    _author_system_lock,
-    _combine_csv_answer,
-    _csv_data_suffix,
-    _csv_source,
-    _find_closest_author,
-    _find_closest_title,
-    detect_issue_count_query,
-    detect_start_year_query,
-    flexible_author_match,
-    format_author_list,
-    format_author_topics,
-    format_issue_count,
-    format_topic_authors,
-    get_issue_count,
-    get_start_year,
-    handle_author_query,
-    normalize_author_name,
-)
-from llm import _CSV_SYSTEM_PROMPT_EN  # noqa: E402, F401
-from llm import (  # noqa: E402, F401
-    _CSV_SYSTEM_PROMPT,
-    _WH_PATTERNS,
-    _YES_NO_PATTERNS,
-    ENGLISH_ANSWER_SYSTEM_PROMPT,
-    GEMINI_API_KEY,
-    GEMINI_MODEL,
-    PONNI_ABOUT_CONTEXT,
-    TAMIL_ANSWER_SYSTEM_PROMPT,
-    _build_csv_user_content,
-    _build_multi_turn_contents,
-    _build_user_content,
-    _gemini_generation_config,
-    _get_csv_system_prompt,
-    _get_gemini_client,
-    _get_system_prompt,
-    _is_wh_question,
-    _is_yes_no_question,
-    _truncate_at_sentence_boundary,
-    check_gemini_health,
-    generate_extractive_answer,
-    generate_llm_answer,
-    generate_llm_answer_async,
-    generate_llm_answer_stream,
-    validate_gemini_api,
-)
-from search import _extract_relevant_excerpt  # noqa: E402, F401
-from search import (  # noqa: E402, F401
-    _select_relevant_docs,
-    build_context_from_docs,
-    extract_key_facts,
-    format_answer_output,
-    format_sources,
-    merge_consecutive_chunks,
-    retrieve_all_chunks_for_document,
-)
-from tamil_text import _RE_TAMIL_WORD  # noqa: E402, F401
-from tamil_text import (  # noqa: E402, F401
-    _RE_INITIALS_NAME,
-    FUZZY_THRESHOLD,
-    TYPO_DISTANCE,
-    _edit_distance_one,
-    _PatternBank,
-    _strip_tamil_possessive_suffix_word,
-    _strip_tamil_possessive_suffixes,
-    fuzzy_match_score,
-)

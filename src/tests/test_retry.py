@@ -45,9 +45,7 @@ class TestQdrantPredicate:
     def test_response_handling_exception(self):
         """Retry on ResponseHandlingException."""
         try:
-            from qdrant_client.http.exceptions import (
-                ResponseHandlingException,
-            )
+            from qdrant_client.http.exceptions import ResponseHandlingException
 
             exc = ResponseHandlingException("bad response")
             assert is_retryable_qdrant(exc) is True
@@ -57,9 +55,7 @@ class TestQdrantPredicate:
     def test_unexpected_response_retryable_status(self):
         """Retry on retryable HTTP status codes."""
         try:
-            from qdrant_client.http.exceptions import (
-                UnexpectedResponse,
-            )
+            from qdrant_client.http.exceptions import UnexpectedResponse
 
             for status in (429, 502, 503, 504):
                 exc = UnexpectedResponse.__new__(UnexpectedResponse)
@@ -73,9 +69,7 @@ class TestQdrantPredicate:
     def test_unexpected_response_non_retryable_status(self):
         """Skip retry for non-retryable HTTP status codes."""
         try:
-            from qdrant_client.http.exceptions import (
-                UnexpectedResponse,
-            )
+            from qdrant_client.http.exceptions import UnexpectedResponse
 
             exc = UnexpectedResponse.__new__(UnexpectedResponse)
             exc.status_code = 400

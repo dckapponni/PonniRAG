@@ -12,33 +12,24 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import boto3
+from article_tagger import TAXONOMY  # noqa: E402
 from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
+from cache import _response_cache  # noqa: E402
+from csv_queries import EnhancedAuthorQuerySystem  # noqa: E402
+from csv_queries import _author_system_cache, _author_system_lock, get_issue_count
+from embeddings import CSV_PATH  # noqa: E402
+from embeddings import COLLECTION_NAME, check_qdrant_health, get_qdrant_client
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field
-
-sys.path.append(str(Path(__file__).resolve().parents[1]))
-
-from article_tagger import TAXONOMY  # noqa: E402
-from cache import _response_cache  # noqa: E402
-from csv_queries import (  # noqa: E402
-    EnhancedAuthorQuerySystem,
-    _author_system_cache,
-    _author_system_lock,
-    get_issue_count,
-)
-from embeddings import (  # noqa: E402
-    COLLECTION_NAME,
-    CSV_PATH,
-    check_qdrant_health,
-    get_qdrant_client,
-)
 from hybrid_search import ask_question_async, ask_question_stream  # noqa: E402
 from llm import check_gemini_health  # noqa: E402
+from pydantic import BaseModel, Field
 from qdrant_client import models  # noqa: E402
 
 from config.config import get_magazine_config  # noqa: E402
+
+sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 # Load magazine registry (single source of truth for volumes/issues/PDFs)
 _magazine = get_magazine_config("ponni")

@@ -11,16 +11,21 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
+from evaluation.dataset import EvalSample, load_dataset, save_dataset  # noqa: E402
+
+# We import evaluate functions here (after conftest adds src/ to sys.path)
+from evaluation.evaluate import EvaluationReport  # noqa: E402
+from evaluation.evaluate import _build_report  # noqa: E402
+from evaluation.evaluate import _fill_llm_answers, run_evaluation
+from evaluation.metrics import MetricsCalculator  # noqa: E402
+from evaluation.metrics import MetricResult, _composite, _normalise  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # Ensure evaluation package is importable (mirrors conftest.py pattern)
 # ---------------------------------------------------------------------------
 _src_dir = Path(__file__).resolve().parents[1]  # src/
 if str(_src_dir) not in sys.path:
     sys.path.insert(0, str(_src_dir))
-
-from evaluation.dataset import EvalSample, load_dataset, save_dataset  # noqa: E402
-from evaluation.metrics import MetricsCalculator  # noqa: E402
-from evaluation.metrics import MetricResult, _composite, _normalise  # noqa: E402
 
 # ===========================================================================
 # Helpers / shared fixtures
@@ -826,14 +831,6 @@ class TestROUGECharacterLevel:
 # ===========================================================================
 # Tests for evaluation/evaluate.py
 # ===========================================================================
-
-# We import evaluate functions here (after conftest adds src/ to sys.path)
-from evaluation.evaluate import _build_report  # noqa: E402
-from evaluation.evaluate import (  # noqa: E402
-    EvaluationReport,
-    _fill_llm_answers,
-    run_evaluation,
-)
 
 
 class TestEvaluationReport:

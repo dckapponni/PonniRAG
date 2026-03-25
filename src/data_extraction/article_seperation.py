@@ -6,48 +6,35 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-current_dir = Path(__file__).resolve().parent
-project_root = current_dir.parent
-sys.path.insert(0, str(project_root))
-
-from article_patterns import (  # noqa: E402
-    extract_pattern_a_forward,
-    extract_pattern_b_forward,
-    extract_pattern_c_reverse,
-)
-from content_extraction import (  # noqa: E402
-    extract_intro_content_phase1,
-    extract_remaining_content,
-)
-from csv_fuzzy_matcher import (  # noqa: E402
-    extract_articles_from_csv,
+from article_patterns import extract_pattern_a_forward  # noqa: E402
+from article_patterns import extract_pattern_b_forward, extract_pattern_c_reverse
+from content_extraction import extract_intro_content_phase1  # noqa: E402
+from content_extraction import extract_remaining_content
+from csv_fuzzy_matcher import extract_articles_from_csv  # noqa: E402
+from csv_fuzzy_matcher import (
     extract_malar_ithal_from_filename,
     extract_malar_ithal_from_text,
     load_csv,
     normalize_csv_value,
 )
-from doc_utils import (  # noqa: E402
-    count_content_lines,
+from doc_utils import count_content_lines  # noqa: E402
+from doc_utils import (
     extract_authors_alternative,
     extract_authors_from_toc,
     get_shared_authors,
     is_valid_author_name,
 )
-from s3_utils import (  # noqa: E402
-    file_exists,
-    list_files,
-    read_text_from_s3,
-    upload_json,
-)
+from s3_utils import read_text_from_s3  # noqa: E402
+from s3_utils import file_exists, list_files, upload_json
 from shared_author import build_shared_authors_dict_s3  # noqa: E402
 from text_processing import get_intro_keywords, normalize_text  # noqa: E402
 
-from config.config import (  # noqa: E402
-    BUCKET_NAME,
-    CSV_PATH,
-    INPUT_PREFIX,
-    OUTPUT_PREFIX,
-)
+from config.config import INPUT_PREFIX  # noqa: E402
+from config.config import BUCKET_NAME, CSV_PATH, OUTPUT_PREFIX
+
+current_dir = Path(__file__).resolve().parent
+project_root = current_dir.parent
+sys.path.insert(0, str(project_root))
 
 
 def setup_logging(log_file="tamil_doc_processing.log"):

@@ -9,18 +9,18 @@ from unittest.mock import MagicMock, patch
 import pytest
 from botocore.exceptions import ClientError
 
-project_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(project_root))
-
-from data_extraction.s3_utils import (  # noqa: E402
+from data_extraction.s3_utils import list_files  # noqa: E402
+from data_extraction.s3_utils import (
     file_exists,
-    list_files,
     read_bytes,
     read_json_from_s3,
     read_text_from_s3,
     upload_json,
     upload_text,
 )
+
+project_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(project_root))
 
 
 class TestListFiles:

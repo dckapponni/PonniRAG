@@ -175,12 +175,8 @@ except ImportError:
     TAXONOMY = {}
 
 try:
-    from hybrid_search import (  # noqa: E402
-        COLLECTION_NAME,
-        ask_question,
-        ask_question_stream,
-        get_qdrant_client,
-    )
+    from hybrid_search import ask_question  # noqa: E402
+    from hybrid_search import COLLECTION_NAME, ask_question_stream, get_qdrant_client
 
     logger.info("Successfully imported hybrid_search module")
 except ImportError as e:

@@ -5,11 +5,8 @@ from pathlib import Path
 
 import pytest
 
-project_root = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(project_root))
-
-from src.data_extraction.doc_utils import (  # noqa: E402
-    count_content_lines,
+from src.data_extraction.doc_utils import count_content_lines  # noqa: E402
+from src.data_extraction.doc_utils import (
     extract_authors_from_toc,
     extract_doc_info,
     find_toc_boundaries,
@@ -19,6 +16,9 @@ from src.data_extraction.doc_utils import (  # noqa: E402
     is_valid_author_name,
     parse_toc_line_robust,
 )
+
+project_root = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(project_root))
 
 
 class TestDocUtilsIntegration:
