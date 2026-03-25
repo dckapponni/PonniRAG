@@ -865,6 +865,8 @@ async def get_author_articles(author_name: str):
             message=result.get("message"),
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting author articles: {e}")
         raise HTTPException(
@@ -903,6 +905,8 @@ async def search_by_topic(
             message=result.get("message"),
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error searching topic: {e}")
         raise HTTPException(
@@ -932,6 +936,8 @@ async def get_issue_statistics():
             message=result.get("message"),
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting issue stats: {e}")
         raise HTTPException(

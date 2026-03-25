@@ -188,15 +188,16 @@ def flexible_author_match(search_name: str, csv_name: str) -> bool:
         if search_normalized == csv_normalized:
             return True
 
-        # 2. Substring (only when lengths are similar — prevents false
-        # matches from unrelated suffixes like "கருணாநிதிxyz")
-        shorter_len = min(len(search_normalized), len(csv_normalized))
-        longer_len = max(len(search_normalized), len(csv_normalized))
-        if longer_len > 0 and shorter_len / longer_len >= 0.8:
-            if (
-                search_normalized in csv_normalized
-                or csv_normalized in search_normalized
-            ):
+        # 2. Substring (reject when non-Tamil/Latin chars are directly
+        # concatenated, e.g. "கருணாநிதிxyz" should not match "கருணாநிதி")
+        if search_normalized in csv_normalized or csv_normalized in search_normalized:
+            if len(search_normalized) <= len(csv_normalized):
+                shorter, longer = search_normalized, csv_normalized
+            else:
+                shorter, longer = csv_normalized, search_normalized
+            idx = longer.index(shorter)
+            extra = longer[:idx] + longer[idx + len(shorter) :]
+            if not extra or not re.search(r"[a-zA-Z]", extra):
                 return True
 
         # 3. Special-case aliases
@@ -217,9 +218,22 @@ def flexible_author_match(search_name: str, csv_name: str) -> bool:
                         return True
 
         # 4. Token-level match (exact tokens, min length 4)
-        search_tokens = [
-            t for t in re.findall(r"[\u0B80-\u0BFF]+", search_normalized) if len(t) >= 4
-        ]
+        # Skip if Tamil+Latin chars are directly concatenated (e.g. "கருணாநிதிxyz")
+        # — extracting only Tamil tokens would ignore the gibberish suffix.
+        mixed_script = re.search(
+            r"[\u0B80-\u0BFF][a-zA-Z]|[a-zA-Z][\u0B80-\u0BFF]", search_normalized
+        ) or re.search(
+            r"[\u0B80-\u0BFF][a-zA-Z]|[a-zA-Z][\u0B80-\u0BFF]", csv_normalized
+        )
+        search_tokens = (
+            [
+                t
+                for t in re.findall(r"[\u0B80-\u0BFF]+", search_normalized)
+                if len(t) >= 4
+            ]
+            if not mixed_script
+            else []
+        )
         csv_tokens = [
             t for t in re.findall(r"[\u0B80-\u0BFF]+", csv_normalized) if len(t) >= 4
         ]
@@ -356,9 +370,21 @@ class EnhancedAuthorQuerySystem:
         if any(p in q for p in _PatternBank.LIST_ALL_AUTHORS):
             return "list_all_authors"
 
-        # Check known-author + action BEFORE topic_author patterns,
-        # because author names can contain substrings that falsely match
-        # topic_author patterns (e.g. "பெரியார்" contains "யார்").
+        # Topic-author patterns (who wrote X?) with word-boundary fix:
+        # "யார்" patterns must match as standalone words, not as suffixes
+        # of author names (e.g. "பெரியார்" ends with "யார்").
+        topic_author_match = False
+        for p in _PatternBank.TOPIC_AUTHOR:
+            if p in q:
+                if "யார்" in p:
+                    yaar_pos = q.index(p) + p.index("யார்")
+                    if yaar_pos > 0 and q[yaar_pos - 1] != " ":
+                        continue  # "யார்" is part of a larger word — skip
+                topic_author_match = True
+                break
+        if topic_author_match:
+            return "topic_author"
+
         has_known_author = any(a in q for a in _PatternBank.KNOWN_AUTHORS)
         has_initials_name = bool(_RE_INITIALS_NAME.search(q))
         has_author_action = any(p in q for p in _PatternBank.AUTHOR_ACTION)
@@ -369,9 +395,6 @@ class EnhancedAuthorQuerySystem:
             "எழுதிய" in q or "படைப்பு" in q or "இயற்றிய" in q or "படைத்த" in q
         ):
             return "author_topics"
-
-        if any(p in q for p in _PatternBank.TOPIC_AUTHOR):
-            return "topic_author"
 
         topic_content_patterns = [
             "பற்றிய படைப்புகள்",
