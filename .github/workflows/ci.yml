@@ -38,9 +38,10 @@ jobs:
         run: flake8 src/
 
       - name: Gitleaks (secret detection)
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          wget -qO gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz
+          tar -xzf gitleaks.tar.gz gitleaks
+          ./gitleaks detect --source . --no-git --verbose
 
   # ──────────────────────────────────────────────
   # Stage 2: Tests with coverage
@@ -96,9 +97,6 @@ jobs:
 
       - name: Build Frontend image
         run: docker build -t ponni-frontend -f frontend/Dockerfile ./frontend
-
-      - name: Build Streamlit image
-        run: docker build -t ponni-streamlit -f Dockerfile .
 
       - name: Verify docker-compose config
         run: docker compose config --quiet

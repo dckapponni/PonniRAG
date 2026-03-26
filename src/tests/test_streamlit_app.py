@@ -1,5 +1,6 @@
 """Test the Ponni Archive Streamlit application."""
 
+import io
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
@@ -995,13 +996,16 @@ class TestLoadImage:
     """Test suite for image loading utility."""
 
     @patch("streamlit_app.st")
-    @patch("streamlit_app._load_s3_image")
+    @patch("streamlit_app._s3_client")
     @patch("streamlit_app._volume_cover_s3_key")
-    def test_load_image_success(self, mock_key, mock_load, mock_st):
+    def test_load_image_success(self, mock_key, mock_s3, mock_st):
         """Test loading image from S3 using st.image."""
         mock_key.return_value = "Front_cover_of_volumes/Volumes/Volume1.jpg"
         mock_img = Image.new("RGB", (100, 100))
-        mock_load.return_value = mock_img
+        buf = io.BytesIO()
+        mock_img.save(buf, format="JPEG")
+        buf.seek(0)
+        mock_s3.get_object.return_value = {"Body": buf}
 
         from streamlit_app import load_image
 
