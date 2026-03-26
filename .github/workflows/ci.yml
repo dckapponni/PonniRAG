@@ -98,8 +98,5 @@ jobs:
       - name: Build Frontend image
         run: docker build -t ponni-frontend -f frontend/Dockerfile ./frontend
 
-      - name: Build Streamlit image
-        run: docker build -t ponni-streamlit -f Dockerfile .
-
       - name: Verify docker-compose config
         run: docker compose config --quiet
