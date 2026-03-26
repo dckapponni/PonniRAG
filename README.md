@@ -226,9 +226,14 @@ python -m evaluation.evaluate --dataset evaluation/ground_truth_data.csv --outpu
 │       ├── ground_truth_template.csv  # Template for ground truth data
 │       ├── ground_truth_data.csv      # Ground truth data to evaluate
 │       └── ground_truth_report.xlsx   # Evaluated results report
+├── guides/                      # Research & reference guides
+│   ├── reranker_model_guide.md        # Cross-encoder reranker evaluation
+│   ├── tamil_models_reference_guide.md # Tamil embedding/LLM model survey
+│   ├── tamil_rag_complete_guide.md    # End-to-end Tamil RAG reference
+│   ├── topic_categorization_guide.md  # Article tagging methodology
+│   └── topic_categorization.md        # Category taxonomy design
 ├── docs/                        # Project documentation (DOCX)
 ├── docker-compose.yml           # Multi-service orchestration
-├── Dockerfile                   # Streamlit container
 ├── Dockerfile.api               # FastAPI container
 └── requirements.txt
 ```
@@ -517,6 +522,14 @@ python -m evaluation.evaluate --dataset evaluation/ground_truth_data.csv --outpu
             <tr>
                 <td><b><a href='tests/test_llm_fallback.py'>test_llm_fallback.py</a></b></td>
                 <td>- Unit tests for LLM fallback behavior (sync, async, streaming).</td>
+            </tr>
+            <tr>
+                <td><b><a href='tests/test_api.py'>test_api.py</a></b></td>
+                <td>- Unit tests for FastAPI endpoints: health, ask, search, authors, topics, tags, library, issues, articles, cache, streaming.</td>
+            </tr>
+            <tr>
+                <td><b><a href='tests/test_update_csv_tags.py'>test_update_csv_tags.py</a></b></td>
+                <td>- Unit tests for CSV tag sync from Qdrant: tag retrieval, fallback logic, CSV update.</td>
             </tr>
             </table>
         </blockquote>
@@ -813,6 +826,16 @@ frontend/
 | Document | Description |
 |----------|-------------|
 | [System Architecture](system_architecture.md) | Full system architecture — query pipeline, module structure, data indexing, guardrails, tagging, tech stack, configuration |
+
+### Research & Reference Guides (`guides/`)
+
+| Document | Description |
+|----------|-------------|
+| [Reranker Model Guide](guides/reranker_model_guide.md) | Cross-encoder reranker evaluation for Tamil retrieval |
+| [Tamil Models Reference](guides/tamil_models_reference_guide.md) | Survey of Tamil-capable embedding and LLM models |
+| [Tamil RAG Complete Guide](guides/tamil_rag_complete_guide.md) | End-to-end reference for building Tamil RAG systems |
+| [Topic Categorization Guide](guides/topic_categorization_guide.md) | Article tagging methodology and category design |
+| [Topic Categorization](guides/topic_categorization.md) | Category taxonomy definitions and rules |
 
 ### Project Documents (`docs/`)
 
