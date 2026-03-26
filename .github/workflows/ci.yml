@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ──────────────────────────────────────────────
+  # Stage 1: Lint, format, and secret scanning
+  # ──────────────────────────────────────────────
+  lint:
+    name: Lint & Secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install lint dependencies
+        run: pip install black isort flake8 flake8-docstrings
+
+      - name: Black (format check)
+        run: black --check --diff src/
+
+      - name: isort (import order check)
+        run: isort --check --diff src/
+
+      - name: flake8 (style + docstrings)
+        run: flake8 src/
+
+      - name: Gitleaks (secret detection)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ──────────────────────────────────────────────
+  # Stage 2: Tests with coverage
+  # ──────────────────────────────────────────────
+  tests:
+    name: Tests
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests with coverage
+        working-directory: src
+        run: |
+          python -m pytest tests/ \
+            --cov=. \
+            --cov-report=term-missing \
+            --cov-report=xml:report/coverage.xml \
+            -v \
+            --tb=short \
+            -x
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: src/report/coverage.xml
+          retention-days: 14
+
+  # ──────────────────────────────────────────────
+  # Stage 3: Docker build verification
+  # ──────────────────────────────────────────────
+  docker-build:
+    name: Docker Build
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build API image
+        run: docker build -t ponni-api -f Dockerfile.api .
+
+      - name: Build Frontend image
+        run: docker build -t ponni-frontend -f frontend/Dockerfile ./frontend
+
+      - name: Build Streamlit image
+        run: docker build -t ponni-streamlit -f Dockerfile .
+
+      - name: Verify docker-compose config
+        run: docker compose config --quiet
