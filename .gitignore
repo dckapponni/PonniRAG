@@ -17,6 +17,6 @@ env/
 *.sqlite
 *.db
 src/db/qdrant_data_tags/
-!src/report/
-!src/report/htmlcov/
-!src/report/htmlcov/**
+!report/
+!report/htmlcov/
+!report/htmlcov/**
