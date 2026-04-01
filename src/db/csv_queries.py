@@ -127,13 +127,14 @@ def _parse_csv_authors(csv_name: str) -> List[str]:
 # ============================================================================
 # AUTHOR NAME NORMALISATION & MATCHING
 # ============================================================================
-
-
 def normalize_author_name(name: str) -> str:
-    """Normalize an author name by stripping honorific prefixes."""
+    """Normalize an author name (handles Tamil variations + prefixes)."""
     if not name:
         return ""
+
     name = normalize_unicode(name)
+
+    # 🔹 Remove prefixes
     prefixes_to_remove = [
         r"மு\.,?\s*",
         r"டாக்டர்\.?\s*",
@@ -149,11 +150,30 @@ def normalize_author_name(name: str) -> str:
         r"கவியரசு\.?\s*",
         r"பாவேந்தர்\.?\s*",
     ]
+
     cleaned = name.strip()
     for prefix in prefixes_to_remove:
         cleaned = re.sub(prefix, "", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
-    return cleaned
+
+    # 🔥 ADD THIS BLOCK (VERY IMPORTANT)
+    cleaned = cleaned.replace(" ", "").replace(".", "")
+
+    # Normalize Tamil vowel length variations
+    replacements = {
+        "ஆ": "அ",
+        "ஈ": "இ",
+        "ஊ": "உ",
+        "ே": "ெ",
+        "ோ": "ொ",
+    }
+
+    for k, v in replacements.items():
+        cleaned = cleaned.replace(k, v)
+
+    # 🔥 Handle common name patterns
+    cleaned = cleaned.replace("ாமூர்த்தி", "மூர்த்தி")
+
+    return cleaned.strip()
 
 
 def flexible_author_match(search_name: str, csv_name: str) -> bool:
@@ -686,13 +706,91 @@ class EnhancedAuthorQuerySystem:
                 if not candidate.empty and len(candidate) <= 10:
                     matches = candidate
 
-        # Stage 4: fuzzy >= 0.80
+        # Stage 3b: 1-char deletion variants of the longest Tamil word.
+        #
+        # Catches user spelling mistakes where a single character is inserted,
+        # swapped, or differs from the CSV title, e.g.:
+        #   வாங்கிலீயோ  → வாங்கலீயோ   (extra 'இ' inserted by user)
+        #   வருந்தாதீர் → வருத்தாதீர்  (ந்→த் consonant swap)
+        #   அறியாதவள்  → அறியாதவன்   (ள்→ன் gender suffix swap)
+        #
+        # Generates every single-character deletion of the longest Tamil word
+        # in the query and does a substring search for each variant.
+        # Accepts result only if <= 8 rows (keeps it precise).
+        if matches.empty:
+            tamil_words_in_query = [
+                w for w in re.findall(r"[\u0B80-\u0BFF]+", topic_cleaned) if len(w) >= 5
+            ]
+            if tamil_words_in_query:
+                longest_word = max(tamil_words_in_query, key=len)
+                logger.info(
+                    f"Stage 3b: generating deletion variants for '{longest_word}'"
+                )
+                deletion_variants = [
+                    longest_word[:i] + longest_word[i + 1 :]
+                    for i in range(len(longest_word))
+                    if len(longest_word) - 1 >= 4
+                ]
+                for variant in deletion_variants:
+                    candidate = self.df[
+                        self.df["தலைப்பு"].str.contains(
+                            variant, case=False, na=False, regex=False
+                        )
+                    ]
+                    if not candidate.empty and len(candidate) <= 8:
+                        logger.info(
+                            f"Stage 3b matched via variant '{variant}' ({len(candidate)} rows)"
+                        )
+                        matches = candidate
+                        break
+
+        # Stage 4: whole-title fuzzy >= 0.72 OR token-level fuzzy >= 0.75.
+        #
+        # Threshold lowered from 0.80 → 0.72 to catch single-character Tamil
+        # spelling differences (vowel markers, consonant clusters).
+        #
+        # Token-level fallback: splits both query and title into individual Tamil
+        # words (>= 4 chars) and requires every query token to fuzzy-match at
+        # least one title token at >= 0.75. Handles cases where the misspelled
+        # word is only part of a multi-word title — the whole-title score gets
+        # diluted by correctly spelled words, but the per-token score stays high.
         if matches.empty:
             fuzzy_rows = []
+            search_tokens = [
+                t for t in re.findall(r"[\u0B80-\u0BFF]+", topic_cleaned) if len(t) >= 4
+            ]
             for _, row in self.df.iterrows():
                 title = str(row.get("தலைப்பு", ""))
-                if title and fuzzy_match_score(topic_cleaned, title) >= 0.80:
-                    fuzzy_rows.append((row, fuzzy_match_score(topic_cleaned, title)))
+                if not title:
+                    continue
+
+                # Whole-title fuzzy (threshold lowered to 0.72)
+                whole_score = fuzzy_match_score(topic_cleaned, title)
+                if whole_score >= 0.72:
+                    fuzzy_rows.append((row, whole_score))
+                    continue
+
+                # Token-level fuzzy: every search token must match
+                # some title token at >= 0.75
+                if search_tokens:
+                    title_tokens = [
+                        t for t in re.findall(r"[\u0B80-\u0BFF]+", title) if len(t) >= 4
+                    ]
+                    if title_tokens:
+                        all_matched = all(
+                            any(
+                                fuzzy_match_score(st, tt) >= 0.79 for tt in title_tokens
+                            )
+                            for st in search_tokens
+                        )
+                        if all_matched:
+                            best_token_score = min(
+                                max(fuzzy_match_score(st, tt) for tt in title_tokens)
+                                for st in search_tokens
+                            )
+                            # Slightly discount token-level vs whole-title matches
+                            fuzzy_rows.append((row, best_token_score * 0.95))
+
             if fuzzy_rows:
                 fuzzy_rows.sort(key=lambda x: x[1], reverse=True)
                 matches = pd.DataFrame([r for r, _ in fuzzy_rows])

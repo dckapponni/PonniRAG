@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import boto3
-from article_tagger import TAXONOMY  # noqa: E402
 from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 from cache import _response_cache  # noqa: E402
 from csv_queries import EnhancedAuthorQuerySystem  # noqa: E402
@@ -28,6 +27,7 @@ from pydantic import BaseModel, Field
 from qdrant_client import models  # noqa: E402
 
 from config.config import get_magazine_config  # noqa: E402
+from db.article_tagger import TAXONOMY  # noqa: E402
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
