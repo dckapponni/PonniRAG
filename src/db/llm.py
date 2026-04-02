@@ -424,6 +424,38 @@ def _is_wh_question(question: str) -> bool:
     return any(p in q for p in _WH_PATTERNS)
 
 
+_CONTENT_DISPLAY_PATTERNS = [
+    "காட்டு",
+    "காட்டுக",
+    "படிக்க",
+    "படி",
+    "வாசிக்க",
+    "முழு உள்ளடக்கம்",
+    "முழு கதை",
+    "முழு கட்டுரை",
+    "முழு கவிதை",
+    "கதையை காட்டு",
+    "கட்டுரையை காட்டு",
+    "கவிதையை காட்டு",
+    "உள்ளடக்கத்தை காட்டு",
+    "என்ன எழுதியுள்ளார்",
+    "show content",
+    "show the article",
+    "show the story",
+    "show the poem",
+    "display",
+    "read the",
+    "full text",
+    "full content",
+]
+
+
+def is_content_display_query(question: str) -> bool:
+    """Return True if the question asks to display/read actual content."""
+    q = question.lower()
+    return any(p in q for p in _CONTENT_DISPLAY_PATTERNS)
+
+
 def _get_system_prompt(language: str = "ta") -> str:
     """Return the appropriate system prompt for the given language."""
     if language == "en":
@@ -475,7 +507,25 @@ def _build_user_content(
     # Repeat the question after context so it's fresh in the model's attention
     parts.append(f"{q_label}: {question}")
 
-    if _is_wh_question(question):
+    if is_content_display_query(question):
+        if en:
+            closing = (
+                "The user wants to READ the actual content. "
+                "Display the content from the context as completely as possible. "
+                "Preserve the original text — do not summarize or paraphrase. "
+                "Add a brief title/author header if available. "
+                "Show as much of the original content as provided:"
+            )
+        else:
+            closing = (
+                "பயனர் உண்மையான உள்ளடக்கத்தை படிக்க விரும்புகிறார். "
+                "சூழலில் உள்ள உள்ளடக்கத்தை முடிந்தவரை முழுமையாகக் காட்டுக. "
+                "அசல் உரையை அப்படியே காட்டுக — சுருக்கமாகவோ "
+                "மாற்றியோ எழுத வேண்டாம். "
+                "தலைப்பு/ஆசிரியர் தகவல் இருந்தால் மேலே சுருக்கமாக குறிப்பிடுக. "
+                "சூழலில் உள்ள அசல் உள்ளடக்கத்தை அதிகமாகக் காட்டுக:"
+            )
+    elif _is_wh_question(question):
         if en:
             closing = (
                 "Using the context above, state the direct answer clearly in the "
@@ -620,6 +670,7 @@ def generate_llm_answer(
     context_doc_count: int = 0,
     history: list = None,
     language: str = "ta",
+    max_output_tokens: int = 4096,
 ) -> str:
     """Generate LLM answer using Gemini API (synchronous).
 
@@ -650,7 +701,9 @@ def generate_llm_answer(
             model=GEMINI_MODEL,
             contents=contents,
             config=_gemini_generation_config(
-                system_prompt, disable_thinking=disable_thinking
+                system_prompt,
+                disable_thinking=disable_thinking,
+                max_output_tokens=max_output_tokens,
             ),
         )
 
@@ -692,6 +745,7 @@ async def generate_llm_answer_async(
     context_doc_count: int = 0,
     history: list = None,
     language: str = "ta",
+    max_output_tokens: int = 4096,
 ) -> str:
     """Generate LLM answer using Gemini API (async).
 
@@ -722,7 +776,9 @@ async def generate_llm_answer_async(
             model=GEMINI_MODEL,
             contents=contents,
             config=_gemini_generation_config(
-                system_prompt, disable_thinking=disable_thinking
+                system_prompt,
+                disable_thinking=disable_thinking,
+                max_output_tokens=max_output_tokens,
             ),
         )
 
@@ -764,6 +820,7 @@ def generate_llm_answer_stream(
     context_doc_count: int = 0,
     history: list = None,
     language: str = "ta",
+    max_output_tokens: int = 4096,
 ):
     """Generate LLM answer using Gemini API with streaming.
 
@@ -795,7 +852,9 @@ def generate_llm_answer_stream(
             model=GEMINI_MODEL,
             contents=contents,
             config=_gemini_generation_config(
-                system_prompt, disable_thinking=disable_thinking
+                system_prompt,
+                disable_thinking=disable_thinking,
+                max_output_tokens=max_output_tokens,
             ),
         )
         for chunk in stream:

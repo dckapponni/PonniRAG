@@ -55,6 +55,7 @@ from guardrails import (
 )
 from llm import _build_csv_user_content  # ✅ required
 from llm import _get_csv_system_prompt  # ✅ required
+from llm import is_content_display_query  # ✅ required
 from llm import (
     check_gemini_health,
     generate_extractive_answer,
@@ -697,8 +698,20 @@ def ask_question(
         relevant_docs = _select_relevant_docs(merged_docs)
         logger.info(f"Selected {len(relevant_docs)} relevant documents for context")
 
-        # Build context with equal excerpts from all relevant docs
-        context, context_doc_count = build_context_from_docs(relevant_docs, question)
+        # Content display queries get more context (full article text)
+        _is_display = is_content_display_query(question)
+        if _is_display:
+            context, context_doc_count = build_context_from_docs(
+                relevant_docs,
+                question,
+                max_context_chars=50000,
+                max_context_docs=3,
+            )
+            logger.info("[DISPLAY] Content display query — expanded context")
+        else:
+            context, context_doc_count = build_context_from_docs(
+                relevant_docs, question
+            )
 
         # CSV semantic context
         csv_results = search_csv_semantic(question, top_k=3)
@@ -728,6 +741,7 @@ def ask_question(
                     context_doc_count=context_doc_count,
                     history=history,
                     language=language,
+                    max_output_tokens=8192 if _is_display else 4096,
                 )
                 logger.info(f"[TIMING] gemini_llm: {time.time() - t0:.2f}s")
 
@@ -947,8 +961,20 @@ async def ask_question_async(
         relevant_docs = _select_relevant_docs(merged_docs)
         logger.info(f"Selected {len(relevant_docs)} relevant documents for context")
 
-        # Build context with equal excerpts from all relevant docs
-        context, context_doc_count = build_context_from_docs(relevant_docs, question)
+        # Content display queries get more context (full article text)
+        _is_display = is_content_display_query(question)
+        if _is_display:
+            context, context_doc_count = build_context_from_docs(
+                relevant_docs,
+                question,
+                max_context_chars=50000,
+                max_context_docs=3,
+            )
+            logger.info("[DISPLAY] Content display query — expanded context")
+        else:
+            context, context_doc_count = build_context_from_docs(
+                relevant_docs, question
+            )
 
         # CSV semantic context
         csv_results = await asyncio.to_thread(search_csv_semantic, question, 3)
@@ -978,6 +1004,7 @@ async def ask_question_async(
                     context_doc_count=context_doc_count,
                     history=history,
                     language=language,
+                    max_output_tokens=8192 if _is_display else 4096,
                 )
                 logger.info(f"[TIMING] async gemini_llm: {time.time() - t0:.2f}s")
 
@@ -1214,8 +1241,20 @@ def ask_question_stream(
         relevant_docs = _select_relevant_docs(merged_docs)
         logger.info(f"Selected {len(relevant_docs)} relevant documents for context")
 
-        # Build context with equal excerpts from all relevant docs
-        context, context_doc_count = build_context_from_docs(relevant_docs, question)
+        # Content display queries get more context (full article text)
+        _is_display = is_content_display_query(question)
+        if _is_display:
+            context, context_doc_count = build_context_from_docs(
+                relevant_docs,
+                question,
+                max_context_chars=50000,
+                max_context_docs=3,
+            )
+            logger.info("[DISPLAY] Content display query — expanded context")
+        else:
+            context, context_doc_count = build_context_from_docs(
+                relevant_docs, question
+            )
 
         csv_results = search_csv_semantic(question, top_k=3)
         csv_context = ""
@@ -1254,6 +1293,7 @@ def ask_question_stream(
             context_doc_count=context_doc_count,
             history=history,
             language=language,
+            max_output_tokens=8192 if _is_display else 4096,
         ):
             token_count += 1
             accumulated_tokens.append(token)
