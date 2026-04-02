@@ -134,7 +134,7 @@ def normalize_author_name(name: str) -> str:
 
     name = normalize_unicode(name)
 
-    # 🔹 Remove prefixes
+    # Remove prefixes
     prefixes_to_remove = [
         r"மு\.,?\s*",
         r"டாக்டர்\.?\s*",
@@ -155,7 +155,7 @@ def normalize_author_name(name: str) -> str:
     for prefix in prefixes_to_remove:
         cleaned = re.sub(prefix, "", cleaned, flags=re.IGNORECASE)
 
-    # 🔥 ADD THIS BLOCK (VERY IMPORTANT)
+    # Strip spaces and dots for normalized comparison
     cleaned = cleaned.replace(" ", "").replace(".", "")
 
     # Normalize Tamil vowel length variations
@@ -170,7 +170,7 @@ def normalize_author_name(name: str) -> str:
     for k, v in replacements.items():
         cleaned = cleaned.replace(k, v)
 
-    # 🔥 Handle common name patterns
+    # Handle common name patterns
     cleaned = cleaned.replace("ாமூர்த்தி", "மூர்த்தி")
 
     return cleaned.strip()
