@@ -121,7 +121,7 @@ class HistoryMessage(BaseModel):
     """A single conversation turn (user or assistant)."""
 
     role: str = Field(..., pattern=r"^(user|assistant)$")
-    content: str = Field(..., min_length=1, max_length=5000)
+    content: str = Field(..., min_length=1, max_length=20000)
 
 
 class QuestionRequest(BaseModel):
