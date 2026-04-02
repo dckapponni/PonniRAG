@@ -662,6 +662,22 @@ class TestGeminiGenerationConfig:
         config = _gemini_generation_config(system_instruction="test")
         assert config.thinking_config is None
 
+    def test_custom_max_output_tokens(self):
+        """Pass custom max_output_tokens to config."""
+        from llm import _gemini_generation_config
+
+        config = _gemini_generation_config(
+            system_instruction="test", max_output_tokens=8192
+        )
+        assert config.max_output_tokens == 8192
+
+    def test_default_max_output_tokens(self):
+        """Default max_output_tokens is 4096."""
+        from llm import _gemini_generation_config
+
+        config = _gemini_generation_config(system_instruction="test")
+        assert config.max_output_tokens == 4096
+
 
 # ============================================================================
 # SYSTEM PROMPT SELECTION TESTS (lines 412, 419)
@@ -1230,3 +1246,83 @@ class TestExtractiveAnswer:
         result = generate_extractive_answer(facts, "q")
         assert "__" not in result
         assert "பொன்னி களஞ்சியம்" not in result
+
+
+# ============================================================================
+# CONTENT DISPLAY QUERY DETECTION
+# ============================================================================
+
+
+class TestIsContentDisplayQuery:
+    """Test is_content_display_query detects show/read intent."""
+
+    def test_tamil_show_pattern(self):
+        """Detect Tamil 'காட்டு' pattern."""
+        from llm import is_content_display_query
+
+        assert is_content_display_query("வளையல் வாங்கலீயோ கதையை காட்டு")
+
+    def test_tamil_read_pattern(self):
+        """Detect Tamil 'படிக்க' pattern."""
+        from llm import is_content_display_query
+
+        assert is_content_display_query("இந்தக் கவிதையை படிக்க வேண்டும்")
+
+    def test_tamil_full_content(self):
+        """Detect Tamil 'முழு கதை' pattern."""
+        from llm import is_content_display_query
+
+        assert is_content_display_query("முழு கதை என்ன")
+
+    def test_english_show(self):
+        """Detect English 'show content' pattern."""
+        from llm import is_content_display_query
+
+        assert is_content_display_query("show the article about Dravidian movement")
+
+    def test_english_full_text(self):
+        """Detect English 'full text' pattern."""
+        from llm import is_content_display_query
+
+        assert is_content_display_query("full text of the poem")
+
+    def test_non_display_query(self):
+        """Regular question should not match."""
+        from llm import is_content_display_query
+
+        assert not is_content_display_query("பொன்னி இதழ் பற்றி கூறுக")
+
+    def test_summary_query_not_display(self):
+        """Summary question should not match display patterns."""
+        from llm import is_content_display_query
+
+        assert not is_content_display_query("கருணாநிதி கருத்து என்ன")
+
+
+class TestBuildUserContentDisplay:
+    """Test _build_user_content uses display closing for content queries."""
+
+    def test_display_closing_tamil(self):
+        """Content display query gets display-specific closing."""
+        from llm import _build_user_content
+
+        result = _build_user_content("கதையை காட்டு", "doc content", "", language="ta")
+        assert "அசல் உரை" in result or "உள்ளடக்கத்தை" in result
+
+    def test_display_closing_english(self):
+        """English content display query gets display-specific closing."""
+        from llm import _build_user_content
+
+        result = _build_user_content(
+            "show the article", "doc content", "", language="en"
+        )
+        assert "READ" in result or "Display" in result
+
+    def test_normal_query_no_display_closing(self):
+        """Normal query should not get display closing."""
+        from llm import _build_user_content
+
+        result = _build_user_content(
+            "பொன்னி இதழ் பற்றி கூறுக", "doc content", "", language="ta"
+        )
+        assert "அசல் உரை" not in result
