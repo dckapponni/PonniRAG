@@ -383,15 +383,51 @@ class EnhancedAuthorQuerySystem:
                 self.df.rename(columns={old: new}, inplace=True)
                 logger.info(f"Renamed '{old}' → '{new}'")
 
+    # Content-seeking words — when present, the query is asking about
+    # meaning/theme/summary of a specific work, NOT requesting an article
+    # listing.  Checked FIRST so that "கருணாநிதி அவர்கள் எழுதிய வளையல்
+    # வாங்கலீயோ கதையின் கருத்து என்ன" goes to vector search even though
+    # "அவர்கள் எழுதிய" matches AUTHOR_ACTION.
+    _CONTENT_SEEKING = [
+        "கருத்து",
+        "சுருக்கம்",
+        "சுருக்கமாக",
+        "கதைச் சுருக்கம்",
+        "கதை சுருக்கம்",
+        "உள்ளடக்கம்",
+        "பொருள்",
+        "விளக்கம்",
+        "விளக்குக",
+        "அர்த்தம்",
+        "காட்டு",
+        "காட்டுக",
+        "படிக்க",
+        "முழு கதை",
+        "முழு கட்டுரை",
+        "முழு கவிதை",
+        "theme",
+        "summary",
+        "meaning",
+        "explain",
+        "describe",
+        "content",
+        "full text",
+        "show",
+    ]
+
     def detect_query_type(self, question: str) -> str:
         """Classify a question into a CSV query type or 'none'.
 
-        Strict matching: CSV only handles queries that explicitly ask
-        for article listings, counts, or author lookups. Everything
-        else goes to vector search — the safe default that can answer
-        any question using actual document content.
+        Content-seeking queries are detected FIRST and always routed to
+        vector search. CSV only handles queries that explicitly ask for
+        article listings, counts, or author lookups.
         """
         q = question.lower().strip()
+
+        # Content-seeking intent overrides all CSV patterns.
+        if any(p in q for p in self._CONTENT_SEEKING):
+            logger.info("[QUERY_TYPE] Content-seeking query — bypassing CSV")
+            return "none"
 
         if any(p in q for p in _PatternBank.LIST_ALL_AUTHORS):
             return "list_all_authors"
@@ -414,11 +450,6 @@ class EnhancedAuthorQuerySystem:
         has_known_author = any(a in q for a in _PatternBank.KNOWN_AUTHORS)
         has_initials_name = bool(_RE_INITIALS_NAME.search(q))
 
-        # Only match author_topics when the query uses an explicit
-        # multi-word listing pattern from AUTHOR_ACTION (e.g. "எழுதிய
-        # கட்டுரைகள்", "என்ன எழுதினார்"). Bare "எழுதிய" alone is NOT
-        # enough — "கருணாநிதி எழுதிய வளையல் வாங்கலீயோ கருத்து என்ன"
-        # has "எழுதிய" but is asking about content, not listing articles.
         if has_known_author or has_initials_name:
             has_author_action = any(p in q for p in _PatternBank.AUTHOR_ACTION)
             if has_author_action:
@@ -1133,14 +1164,22 @@ def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
         entity = system.extract_entity(question, "author_topics")
         logger.info(f"Extracted author: '{entity}'")
         if not entity:
-            return True, "Warning: எழுத்தாளர் பெயரை தெளிவாக குறிப்பிடவும்"
-        return True, format_author_topics(system.get_topics_by_author(entity))
+            return False, ""  # Fall through to vector search
+        result = system.get_topics_by_author(entity)
+        if not result.get("success"):
+            logger.info("[CSV] Author query failed — falling back to vector search")
+            return False, ""
+        return True, format_author_topics(result)
     if query_type == "topic_author":
         entity = system.extract_entity(question, "topic_author")
         logger.info(f"Extracted topic: '{entity}'")
         if not entity:
-            return True, "Warning: தலைப்பை தெளிவாக குறிப்பிடவும்"
-        return True, format_topic_authors(system.get_author_by_topic(entity))
+            return False, ""  # Fall through to vector search
+        result = system.get_author_by_topic(entity)
+        if not result.get("success"):
+            logger.info("[CSV] Topic query failed — falling back to vector search")
+            return False, ""
+        return True, format_topic_authors(result)
 
     return False, ""
 
