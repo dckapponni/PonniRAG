@@ -1276,6 +1276,19 @@ class TestDetectQueryTypeStrict:
         q = "கருணாநிதி அவர்களின் படைப்பில் உள்ள சமூக நோக்கு"
         assert system.detect_query_type(q) == "none"
 
+    def test_author_action_with_content_seeking_bypasses_csv(self):
+        """Content-seeking overrides AUTHOR_ACTION patterns."""
+        system = self._make_system()
+        # "அவர்கள் எழுதிய" is in AUTHOR_ACTION but "கருத்து" is content-seeking
+        q = "கருணாநிதி அவர்கள் எழுதிய வளையல் வாங்கலீயோ கதையின் கருத்து என்ன"
+        assert system.detect_query_type(q) == "none"
+
+    def test_display_pattern_bypasses_csv(self):
+        """Display patterns like 'காட்டு' bypass CSV."""
+        system = self._make_system()
+        q = "கருணாநிதி எழுதிய கதையை காட்டு"
+        assert system.detect_query_type(q) == "none"
+
 
 # ============================================================================
 # TestCorrectQueryWords — question word spelling correction

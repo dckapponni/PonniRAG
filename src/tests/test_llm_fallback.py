@@ -1326,3 +1326,66 @@ class TestBuildUserContentDisplay:
             "பொன்னி இதழ் பற்றி கூறுக", "doc content", "", language="ta"
         )
         assert "அசல் உரை" not in result
+
+
+# ============================================================================
+# GARBAGE TAIL DETECTION
+# ============================================================================
+
+
+class TestDetectGarbageTail:
+    """Test _detect_garbage_tail detects raw document dumps."""
+
+    def test_clean_text_no_garbage(self):
+        """Clean prose should return -1 (no garbage)."""
+        from llm import _detect_garbage_tail
+
+        text = (
+            "பொன்னி இதழில் வெளியான கதையின் கருத்து மிக அழகானது. "
+            "இது குழந்தைகளுக்கான படைப்பு. "
+            "பகுத்தறிவு சிந்தனையை வளர்க்கிறது."
+        )
+        assert _detect_garbage_tail(text) == -1
+
+    def test_tabular_data_detected(self):
+        """Detect tabular metadata like 'name 0 4 0'."""
+        from llm import _detect_garbage_tail
+
+        good = (
+            "பொன்னி இதழில் வெளியான கதையின் கருத்து மிக அழகானது. "
+            "இது குழந்தைகளுக்கான படைப்பு ஆகும். "
+            "பகுத்தறிவு சிந்தனையை வளர்க்கும் நோக்கில் எழுதப்பட்டது. "
+            "இந்தக் கதை குழந்தைகளை இயற்கையை நேசிக்க தூண்டுகிறது. "
+            "மிகவும் சுவாரசியமான கதையாக அமைந்துள்ளது."
+        )
+        garbage = "நாரா நாச்சியப்பன் 0 4 0\n" "தங்கமணி 0 2 0\n" "கலைமணி 0 2 0"
+        text = good + "\n" + garbage
+        pos = _detect_garbage_tail(text)
+        assert pos > 0
+        assert pos < len(text)
+
+    def test_short_text_no_detection(self):
+        """Short text should return -1 (skip detection)."""
+        from llm import _detect_garbage_tail
+
+        assert _detect_garbage_tail("short") == -1
+
+    def test_empty_text(self):
+        """Empty text should return -1."""
+        from llm import _detect_garbage_tail
+
+        assert _detect_garbage_tail("") == -1
+
+    def test_repeated_entries_detected(self):
+        """Detect repeated short data entries."""
+        from llm import _detect_garbage_tail
+
+        good = (
+            "பொன்னி இதழில் வெளியான கதையின் கருத்து மிக அழகானது. "
+            "இது குழந்தைகளுக்கான படைப்பு ஆகும். "
+            "பகுத்தறிவு சிந்தனையை வளர்க்கும் நோக்கில் எழுதப்பட்டது. "
+        ) * 3
+        garbage = "நாச்சியப்பன் 0 4 0 தங்கமணி 0 6 0 கலைமணி 0 2 0"
+        text = good + "\n" + garbage
+        pos = _detect_garbage_tail(text)
+        assert pos > 0

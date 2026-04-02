@@ -3491,6 +3491,93 @@ class TestFormatSources:
         # line 332
 
 
+# ============================================================================
+# FILTER SOURCES BY RELEVANCE
+# ============================================================================
+
+
+class TestFilterSourcesByRelevance:
+    """Test _filter_sources_by_relevance per-doc filtering."""
+
+    def test_keeps_relevant_sources(self):
+        """Keep sources whose content matches query terms."""
+        sources = [
+            _make_merged_doc(
+                heading="வளையல் வாங்கலீயோ",
+                content="கருணாநிதி எழுதிய வளையல் வாங்கலீயோ கதை",
+            ),
+            _make_merged_doc(
+                heading="வேறு தலைப்பு",
+                content="தொடர்பில்லாத உள்ளடக்கம் பற்றிய கட்டுரை",
+            ),
+        ]
+        result = hs._filter_sources_by_relevance(
+            "வளையல் வாங்கலீயோ கதையின் கருத்து", sources
+        )
+        assert len(result) == 1
+        assert result[0]["heading"] == "வளையல் வாங்கலீயோ"
+
+    def test_keeps_all_when_all_relevant(self):
+        """Keep all sources when all match query terms."""
+        sources = [
+            _make_merged_doc(heading="பாரதிதாசன் கவிதை", content="பாரதிதாசன்"),
+            _make_merged_doc(heading="பாரதிதாசன் கட்டுரை", content="பாரதிதாசன்"),
+        ]
+        result = hs._filter_sources_by_relevance("பாரதிதாசன் எழுதியவை", sources)
+        assert len(result) == 2
+
+    def test_returns_original_when_all_filtered(self):
+        """Return original sources if filtering removes everything."""
+        sources = [
+            _make_merged_doc(heading="வேறு தலைப்பு", content="தொடர்பில்லாத உள்ளடக்கம்"),
+        ]
+        result = hs._filter_sources_by_relevance("கருணாநிதி கதை", sources)
+        assert len(result) == 1  # Kept original as fallback
+
+    def test_empty_sources(self):
+        """Return empty list for empty sources."""
+        result = hs._filter_sources_by_relevance("கேள்வி", [])
+        assert result == []
+
+    def test_generic_query_no_filtering(self):
+        """Generic query with only stop words skips filtering."""
+        sources = [
+            _make_merged_doc(heading="ஏதோ", content="ஏதோ உள்ளடக்கம்"),
+        ]
+        result = hs._filter_sources_by_relevance("பொன்னி இதழில்", sources)
+        assert len(result) == 1  # No key terms → no filtering
+
+    def test_tamil_prefix_matching(self):
+        """Match Tamil agglutinative forms via prefix matching."""
+        sources = [
+            _make_merged_doc(
+                heading="சுராதா கவிதை",
+                content="சுராதாவின் படைப்புகள் பல",
+            ),
+        ]
+        # "சுராதா" in query should match "சுராதாவின்" in content
+        result = hs._filter_sources_by_relevance("சுராதா எழுதிய கவிதைகள்", sources)
+        assert len(result) == 1
+
+    def test_author_name_matching(self):
+        """Match query terms against author_name field."""
+        sources = [
+            _make_merged_doc(
+                heading="சில கட்டுரை",
+                content="பொது உள்ளடக்கம்",
+                author_name="கருணாநிதி",
+            ),
+            _make_merged_doc(
+                heading="வேறு கட்டுரை",
+                content="வேறு உள்ளடக்கம்",
+                author_name="பாரதிதாசன்",
+            ),
+        ]
+        result = hs._filter_sources_by_relevance("கருணாநிதி படைப்புகள்", sources)
+        assert len(result) == 1
+        assert result[0]["author_name"] == "கருணாநிதி"
+
+
 if __name__ == "__main__":
     pytest.main(
         [
