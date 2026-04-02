@@ -483,6 +483,74 @@ def _check_context_relevance(question: str, relevant_docs: list) -> bool:
     return True
 
 
+def _filter_sources_by_relevance(question: str, sources: List[Dict]) -> List[Dict]:
+    """Filter sources to only include docs relevant to the question.
+
+    Checks each source individually: a doc is kept if at least one
+    distinguishing term from the question appears in its heading,
+    content, or author name.  Uses the same prefix-matching logic
+    as _check_context_relevance for Tamil agglutinative forms.
+    """
+    if not sources:
+        return sources
+
+    # Extract distinguishing terms from the query
+    tamil_terms = set(_re.findall(r"[\u0B80-\u0BFF]{3,}", question))
+    tamil_terms -= _TAMIL_STOP_WORDS
+    english_terms = {w.lower() for w in _re.findall(r"[a-zA-Z]{3,}", question)}
+    english_terms -= _ENGLISH_STOP_WORDS
+    key_terms = tamil_terms | english_terms
+
+    if not key_terms:
+        return sources  # Generic query — can't filter
+
+    from embeddings import _flatten_author
+
+    def _common_prefix_len(a, b):
+        n = min(len(a), len(b))
+        for i in range(n):
+            if a[i] != b[i]:
+                return i
+        return n
+
+    def _doc_matches(doc):
+        """Check if a single doc contains any query key term."""
+        doc_text = " ".join(
+            [
+                str(doc.get("content", "")),
+                str(doc.get("heading", "")),
+                _flatten_author(doc.get("author_name", "")),
+            ]
+        ).lower()
+
+        doc_tamil_words = set(_re.findall(r"[\u0B80-\u0BFF]{3,}", doc_text))
+
+        for term in key_terms:
+            tl = term.lower()
+            if tl in doc_text:
+                return True
+            for dw in doc_tamil_words:
+                shorter = min(len(dw), len(term))
+                if shorter < 3:
+                    continue
+                cp = _common_prefix_len(dw, term)
+                if cp >= max(3, int(shorter * 0.6)):
+                    return True
+        return False
+
+    filtered = [s for s in sources if _doc_matches(s)]
+
+    if filtered:
+        logger.info(
+            f"[SOURCES] Filtered {len(sources)} → {len(filtered)} " f"relevant sources"
+        )
+        return filtered
+
+    # If filtering removed everything, return original (better than empty)
+    logger.info("[SOURCES] Filtering removed all — keeping original sources")
+    return sources
+
+
 def truncate_query(question: str, max_length: int = MAX_QUERY_LENGTH) -> str:
     """Normalize Unicode to NFC and truncate to max_length at a word boundary.
 
@@ -751,7 +819,7 @@ def ask_question(
                 question, merged_docs, history, language
             )
 
-        sources = format_sources(merged_docs)
+        sources = _filter_sources_by_relevance(question, format_sources(merged_docs))
 
         # Suppress sources when the answer indicates the data is not available
         if _answer_indicates_no_data(answer):
@@ -1014,7 +1082,7 @@ async def ask_question_async(
                 question, merged_docs, history, language
             )
 
-        sources = format_sources(merged_docs)
+        sources = _filter_sources_by_relevance(question, format_sources(merged_docs))
 
         # Suppress sources when the answer indicates the data is not available
         if _answer_indicates_no_data(answer):
@@ -1309,7 +1377,7 @@ def ask_question_stream(
             accumulated_tokens = [answer]
             yield {"type": "token", "content": answer}
 
-        sources = format_sources(merged_docs)
+        sources = _filter_sources_by_relevance(question, format_sources(merged_docs))
 
         if fallback_reason:
             yield {"type": "fallback", "reason": fallback_reason}
