@@ -1109,7 +1109,7 @@ class TestHandleAuthorQuery:
                 del _author_system_cache[cache_key]
 
     def test_author_topics_empty_entity(self, tmp_path):
-        """Return warning for empty author entity."""
+        """Fall back to vector search when author entity is empty."""
         f = tmp_path / "test.csv"
         f.write_text("", encoding="utf-8")
         cache_key = str(f)
@@ -1133,13 +1133,13 @@ class TestHandleAuthorQuery:
                     return_value="",
                 ):
                     handled, text = handle_author_query("யாரோ என்ன எழுதினார்", str(f))
-                    assert handled is True
-                    assert "Warning" in text
+                    assert handled is False
+                    assert text == ""
                     if cache_key in _author_system_cache:
                         del _author_system_cache[cache_key]
 
     def test_topic_author_empty_entity(self, tmp_path):
-        """Return warning for empty topic entity."""
+        """Fall back to vector search when topic entity is empty."""
         f = tmp_path / "test.csv"
         f.write_text("", encoding="utf-8")
         cache_key = str(f)
@@ -1163,8 +1163,8 @@ class TestHandleAuthorQuery:
                     return_value="",
                 ):
                     handled, text = handle_author_query("யாரோ கட்டுரை", str(f))
-                    assert handled is True
-                    assert "Warning" in text
+                    assert handled is False
+                    assert text == ""
                     if cache_key in _author_system_cache:
                         del _author_system_cache[cache_key]
 
