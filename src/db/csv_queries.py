@@ -440,7 +440,16 @@ class EnhancedAuthorQuerySystem:
         ]
         if any(p in q for p in topic_content_patterns):
             return "topic_author"
+        # 🔥 NEW: handle exam-style queries like "எந்த மலர்", "இதழில் இடம்பெற்றுள்ளது"
+        special_patterns = [
+            "எந்த மலர்",
+            "எந்த இதழ்",
+            "இதழில் இடம்பெற்றுள்ளது",
+            "எந்த மலர் மற்றும் இதழில்",
+        ]
 
+        if any(p in q for p in special_patterns):
+            return "topic_author"
         return "none"
 
     def extract_entity(self, question: str, query_type: str) -> str:
@@ -489,12 +498,29 @@ class EnhancedAuthorQuerySystem:
             return " ".join(tokens[:3]) if tokens else ""
 
         elif query_type == "topic_author":
+            # 🔥 STEP 1: Extract title using "என்ற"
+            match = re.search(r"(.*?)\s*என்ற", q)
+            if match:
+                title = match.group(1).strip()
+                title = re.sub(
+                    r"(செய்தி|பாட்டு|பாடல்|கதை|கவிதை|கட்டுரை|சிறுகதை|தொடர்கதை).*",
+                    "",
+                    title,
+                ).strip()
+                return title
+
+            # 🔥 STEP 2: Remove noise words
+            q = q.replace("செய்திப் பாட்டு", "")
+            q = q.replace("பாட்டு", "")
+
+            # 🔥 STEP 3: Clean question words
             noise = sorted(_PatternBank.TOPIC_NOISE_PHRASES, key=len, reverse=True)
             q_title = q
             for np_phrase in noise:
                 q_title = re.sub(
                     re.escape(np_phrase), "  ", q_title, flags=re.IGNORECASE
                 )
+
             for sw in _PatternBank.TITLE_SUFFIXES:
                 q_title = re.sub(
                     r"\s*" + re.escape(sw) + r"\s*$",
@@ -502,7 +528,10 @@ class EnhancedAuthorQuerySystem:
                     q_title.strip(),
                     flags=re.IGNORECASE,
                 )
+
             q_title = _strip_tamil_possessive_suffixes(q_title)
+
+            # normalize endings
             for _pat, _repl in [
                 (r"த்தில்(?=\s|$)", "ம்"),
                 (r"த்தின்(?=\s|$)", "ம்"),
@@ -511,32 +540,15 @@ class EnhancedAuthorQuerySystem:
                 (r"வில்(?=\s|$)", ""),
             ]:
                 q_title = re.sub(_pat, _repl, q_title)
+
             q_title = q_title.replace('"', "").replace("'", "")
-            q_title = re.sub(r"  +(யார்|என்ன|யாவை|எவர்)\??$", "", q_title)
             q_title = re.sub(r"\s+", " ", q_title).strip()
 
-            words = re.findall(r"[\u0B80-\u0BFF!?,।]+|[a-zA-Z]+", q_title)
-            words = [
-                w
-                for w in words
-                if len(w.rstrip("?!,")) > 1
-                and not (
-                    w.rstrip("?!,").lower() in _PatternBank.TOPIC_NOISE_TOKENS
-                    and not w.endswith("?")
-                )
-                and w not in {"?", "!", ",", "।"}
-            ]
-            result = " ".join(words) if words else ""
-            if result.strip().lower().rstrip("?!") in {
-                "யார்",
-                "என்ன",
-                "யாவை",
-                "எவர்",
-                "",
-            }:
-                return ""
-            return result
+            # extract meaningful words
+            words = re.findall(r"[\u0B80-\u0BFF]+", q_title)
+            words = [w for w in words if len(w) > 2]
 
+            return " ".join(words[:3]) if words else ""
         return ""
 
     def list_all_authors(self) -> Dict:
@@ -1111,7 +1123,10 @@ def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
     logger.info(f"Query type: {query_type}")
 
     if query_type == "none":
-        return False, ""
+        if any(word in question for word in ["எந்த", "இதழ்", "மலர்"]):
+            query_type = "topic_author"
+        else:
+            return False, ""
     if query_type == "list_all_authors":
         return True, format_author_list(system.list_all_authors())
     if query_type == "author_topics":
