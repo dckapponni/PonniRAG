@@ -97,6 +97,9 @@ Important:
 - Do not fabricate any information not in the context
 - Avoid phrases like "according to the context" or "as per the source"
 - Structure the answer so it is pleasant and easy to read
+- NEVER reference document numbers (e.g. "Document 1", "Document 2/3") in your answer — the user cannot see them
+- NEVER comment on which documents are relevant or irrelevant, or say "the other documents discuss a different topic"
+- Write your answer as a seamless, natural response — as if you already know the information
 
 Critical — Irrelevant context rule:
 - If the document context provided does NOT directly answer the question, do NOT force-fit the context into your answer
@@ -182,6 +185,9 @@ TAMIL_ANSWER_SYSTEM_PROMPT = (
 - சூழலில் இல்லாத தகவல்களை எதையும் எழுதாதீர்கள்
 - "சூழலின் படி", "ஆதாரத்தின் படி" போன்ற சொற்களை பயன்படுத்த வேண்டாம்
 - வாசிப்பவரின் கண்களுக்கு சோர்வு வராத வகையில் பதிலை அமைக்க வேண்டும்
+- ஆவண எண்களை (எ.கா. "ஆவணம் 1", "ஆவணம் 2/3") பதிலில் ஒருபோதும் குறிப்பிடக் கூடாது — பயனருக்கு அவை தெரியாது
+- எந்த ஆவணம் தொடர்புடையது, எது தொடர்பில்லாதது என்று விளக்கக் கூடாது. "மற்ற ஆவணங்கள் வேறு தலைப்பில் உள்ளன" போன்ற வாக்கியங்களை எழுதக் கூடாது
+- நீங்கள் ஏற்கனவே தகவலை அறிந்தவர் போல இயல்பான பதிலை எழுதுக
 
 மிக முக்கியம் — தொடர்பில்லாத சூழல் (Irrelevant context rule):
 - கொடுக்கப்பட்ட ஆவண சூழல் கேள்விக்கு நேரடியாக தொடர்பில்லை என்றால், சூழலை வலுக்கட்டாயமாக பயன்படுத்தாதீர்கள்
