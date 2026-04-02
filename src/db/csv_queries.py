@@ -384,7 +384,13 @@ class EnhancedAuthorQuerySystem:
                 logger.info(f"Renamed '{old}' → '{new}'")
 
     def detect_query_type(self, question: str) -> str:
-        """Classify a question into a CSV query type or 'none'."""
+        """Classify a question into a CSV query type or 'none'.
+
+        Strict matching: CSV only handles queries that explicitly ask
+        for article listings, counts, or author lookups. Everything
+        else goes to vector search — the safe default that can answer
+        any question using actual document content.
+        """
         q = question.lower().strip()
 
         if any(p in q for p in _PatternBank.LIST_ALL_AUTHORS):
@@ -407,14 +413,16 @@ class EnhancedAuthorQuerySystem:
 
         has_known_author = any(a in q for a in _PatternBank.KNOWN_AUTHORS)
         has_initials_name = bool(_RE_INITIALS_NAME.search(q))
-        has_author_action = any(p in q for p in _PatternBank.AUTHOR_ACTION)
 
-        if (has_known_author or has_initials_name) and has_author_action:
-            return "author_topics"
-        if (has_known_author or has_initials_name) and (
-            "எழுதிய" in q or "படைப்பு" in q or "இயற்றிய" in q or "படைத்த" in q
-        ):
-            return "author_topics"
+        # Only match author_topics when the query uses an explicit
+        # multi-word listing pattern from AUTHOR_ACTION (e.g. "எழுதிய
+        # கட்டுரைகள்", "என்ன எழுதினார்"). Bare "எழுதிய" alone is NOT
+        # enough — "கருணாநிதி எழுதிய வளையல் வாங்கலீயோ கருத்து என்ன"
+        # has "எழுதிய" but is asking about content, not listing articles.
+        if has_known_author or has_initials_name:
+            has_author_action = any(p in q for p in _PatternBank.AUTHOR_ACTION)
+            if has_author_action:
+                return "author_topics"
 
         topic_content_patterns = [
             "பற்றிய படைப்புகள்",
