@@ -258,6 +258,59 @@ General rules:
 - If the data shows "Error" or "not found", clearly say "No" """
 
 
+def _detect_garbage_tail(text: str) -> int:
+    """Detect where a good answer degrades into raw document garbage.
+
+    Returns the character index where garbage starts, or -1 if no
+    garbage detected.  Looks for sudden shifts from natural prose to
+    raw document dumps: tabular numbers (0 4 0), long runs without
+    sentence-ending punctuation, repeated metadata patterns, etc.
+    """
+    if not text or len(text) < 200:
+        return -1
+
+    # Split into sentences/segments by Tamil & English sentence-enders
+    # Walk forward and flag when we see garbage-like segments
+    lines = text.split("\n")
+    good_end = 0  # char offset of last known-good position
+    char_offset = 0
+
+    # Patterns that signal raw document dump
+    _garbage_patterns = [
+        # Tabular data: "word 0 4 0" or "word 0 2 0"
+        re.compile(r"[\u0B80-\u0BFF]+\s+\d\s+\d\s+\d"),
+        # Raw metadata: consecutive "key: value" dumps without prose
+        re.compile(r"(?:^|\n)[\u0B80-\u0BFF]+\s*—\s*[\u0B80-\u0BFF]"),
+        # Long strings with no punctuation (>300 chars without . ? ! ।)
+        re.compile(r"[^.?!।]{300,}"),
+        # Repeated short entries (like raw CSV rows)
+        re.compile(r"([\u0B80-\u0BFF]+\s+[\u0B80-\u0BFF]+\s+\d\s+\d\s+\d\s*){2,}"),
+    ]
+
+    for line in lines:
+        line_len = len(line) + 1  # +1 for the \n
+        is_garbage = False
+
+        for pattern in _garbage_patterns:
+            if pattern.search(line):
+                is_garbage = True
+                break
+
+        if is_garbage:
+            # Found garbage — return the position before this line
+            if good_end > len(text) * 0.3:
+                return good_end
+            # If garbage is too early, it might be a false positive
+            # — skip and continue
+
+        if not is_garbage and line.strip():
+            good_end = char_offset + line_len
+
+        char_offset += line_len
+
+    return -1
+
+
 def _truncate_at_sentence_boundary(text: str) -> str:
     """Truncate text at the last complete sentence if it ends mid-sentence."""
     if not text:
@@ -721,6 +774,12 @@ def generate_llm_answer(
             answer = _truncate_at_sentence_boundary(answer)
             logger.info("Response hit token limit — truncated at sentence boundary")
 
+        # Detect and remove raw document garbage at the end
+        garbage_pos = _detect_garbage_tail(answer)
+        if garbage_pos > 0:
+            answer = _truncate_at_sentence_boundary(answer[:garbage_pos])
+            logger.info(f"Truncated garbage tail at position {garbage_pos}")
+
         word_count = len(re.findall(r"[\u0B80-\u0BFF]+|\w+", answer))
         logger.info(f"Gemini answer generated: {word_count} words")
 
@@ -796,6 +855,12 @@ async def generate_llm_answer_async(
             logger.info(
                 "Async response hit token limit — truncated at sentence boundary"
             )
+
+        # Detect and remove raw document garbage at the end
+        garbage_pos = _detect_garbage_tail(answer)
+        if garbage_pos > 0:
+            answer = _truncate_at_sentence_boundary(answer[:garbage_pos])
+            logger.info(f"Async: truncated garbage tail at position {garbage_pos}")
 
         word_count = len(re.findall(r"[\u0B80-\u0BFF]+|\w+", answer))
         logger.info(f"Gemini async answer generated: {word_count} words")

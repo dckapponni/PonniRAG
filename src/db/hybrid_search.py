@@ -1318,6 +1318,14 @@ def ask_question_stream(
         full_answer = "".join(accumulated_tokens)
         full_answer = sanitize_output(full_answer)
 
+        # Truncate garbage tails before caching so repeat queries are clean
+        from llm import _detect_garbage_tail, _truncate_at_sentence_boundary
+
+        garbage_pos = _detect_garbage_tail(full_answer)
+        if garbage_pos > 0:
+            full_answer = _truncate_at_sentence_boundary(full_answer[:garbage_pos])
+            logger.info(f"Stream: truncated garbage tail at position {garbage_pos}")
+
         # Suppress sources when the answer indicates the data is not available
         if _answer_indicates_no_data(full_answer):
             logger.info(
