@@ -8,6 +8,7 @@ and search to sub-modules (cache, embeddings, search, llm, etc.).
 import asyncio
 import logging
 import re as _re
+import threading
 import time
 from typing import Dict, List
 
@@ -31,6 +32,7 @@ from csv_queries import (  # noqa: F401 — re-exported for backward compatibili
     normalize_author_name,
 )
 from embeddings import (  # noqa: F401 — re-exported for backward compatibility
+    COLLECTION_NAME,
     CSV_PATH,
     SCORE_THRESHOLD,
     HybridQdrantSearch,
@@ -60,6 +62,7 @@ from llm import (
     generate_llm_answer_async,
     generate_llm_answer_stream,
 )
+from qdrant_client import models
 from search import _select_relevant_docs  # ✅ required
 from search import retrieve_all_chunks_for_document  # noqa: F401 — re-export
 from search import (
@@ -76,6 +79,65 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Content vocabulary cache — built lazily from Qdrant document headings
+# ---------------------------------------------------------------------------
+_content_vocab_cache: dict = {"vocab": None, "lock": threading.Lock()}
+
+
+def _build_content_vocab() -> List[str]:
+    """Build vocabulary of Tamil words from Qdrant document headings.
+
+    Scrolls through all article points and extracts unique Tamil words
+    (>= 4 chars) from the title/heading field. Cached for the session.
+    """
+    with _content_vocab_cache["lock"]:
+        if _content_vocab_cache["vocab"] is not None:
+            return _content_vocab_cache["vocab"]
+
+    try:
+        client = get_qdrant_client()
+        vocab = set()
+        scroll_offset = None
+
+        while True:
+            points, scroll_offset = client.scroll(
+                collection_name=COLLECTION_NAME,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="type", match=models.MatchValue(value="article")
+                        )
+                    ]
+                ),
+                limit=500,
+                offset=scroll_offset,
+                with_payload=["metadata"],
+            )
+            if not points:
+                break
+
+            for point in points:
+                meta = point.payload.get("metadata", {})
+                title = meta.get("title", "")
+                if title:
+                    for word in _re.findall(r"[\u0B80-\u0BFF]+", str(title)):
+                        if len(word) >= 4:
+                            vocab.add(word)
+
+            if scroll_offset is None:
+                break
+
+        vocab_list = list(vocab)
+        with _content_vocab_cache["lock"]:
+            _content_vocab_cache["vocab"] = vocab_list
+        logger.info(f"[SPELLING] Built content vocab: {len(vocab_list)} words")
+        return vocab_list
+
+    except Exception as e:
+        logger.warning(f"[SPELLING] Failed to build content vocab: {e}")
+        return []
 
 
 def verify_files():
@@ -588,8 +650,9 @@ def ask_question(
     try:
         client = get_qdrant_client()
 
-        # Correct misspelled title/author words before vector search
-        search_query = correct_query_spelling(question, str(CSV_PATH))
+        # Correct misspelled words before vector search
+        content_vocab = _build_content_vocab()
+        search_query = correct_query_spelling(question, str(CSV_PATH), content_vocab)
 
         logger.info(f"Searching: {search_query[:60]}...")
 
@@ -835,9 +898,10 @@ async def ask_question_async(
     try:
         client = await asyncio.to_thread(get_qdrant_client)
 
-        # Correct misspelled title/author words before vector search
+        # Correct misspelled words before vector search
+        content_vocab = await asyncio.to_thread(_build_content_vocab)
         search_query = await asyncio.to_thread(
-            correct_query_spelling, question, str(CSV_PATH)
+            correct_query_spelling, question, str(CSV_PATH), content_vocab
         )
 
         logger.info(f"Searching: {search_query[:60]}...")
@@ -1109,8 +1173,9 @@ def ask_question_stream(
     try:
         client = get_qdrant_client()
 
-        # Correct misspelled title/author words before vector search
-        search_query = correct_query_spelling(question, str(CSV_PATH))
+        # Correct misspelled words before vector search
+        content_vocab = _build_content_vocab()
+        search_query = correct_query_spelling(question, str(CSV_PATH), content_vocab)
 
         logger.info(f"Streaming search: {search_query[:60]}...")
         searcher = HybridQdrantSearch(client)

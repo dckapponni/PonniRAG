@@ -1284,12 +1284,16 @@ def _correct_query_words(question: str) -> str:
     return corrected
 
 
-def correct_query_spelling(question: str, csv_path: str) -> str:
+def correct_query_spelling(
+    question: str, csv_path: str, content_vocab: List[str] = None
+) -> str:
     """Correct misspelled Tamil words in the query.
 
-    Two-pass correction:
+    Three-pass correction:
     1. Fix misspelled question/action words (எழூதிய → எழுதிய)
     2. Fix misspelled title/author words against CSV vocabulary
+    3. Fix remaining words against content vocabulary from indexed
+       documents (headings, topics — passed in by the caller)
 
     Returns the corrected query, or the original if no corrections needed.
     """
@@ -1302,19 +1306,26 @@ def correct_query_spelling(question: str, csv_path: str) -> str:
             _author_system_cache[csv_path] = EnhancedAuthorQuerySystem(csv_path)
         system = _author_system_cache[csv_path]
 
-    if system.df is None or system.df.empty:
-        if corrected != question:
-            logger.info(f"[SPELLING] Query corrected: '{question}' → '{corrected}'")
-        return corrected
+    # Combine all vocabularies for a single pass over query words
+    title_vocab = []
+    author_vocab = []
+    all_titles = []
 
-    df = system.df
+    if system.df is not None and not system.df.empty:
+        df = system.df
+        title_vocab = _get_title_vocab(df)
+        author_vocab = _get_author_vocab(df)
+        all_titles = [str(t) for t in df["தலைப்பு"].dropna().unique()]
 
-    # Build vocabularies
-    title_vocab = _get_title_vocab(df)
-    author_vocab = _get_author_vocab(df)
+    # Merge content vocab (from Qdrant headings) into a combined set
+    combined_vocab = set(title_vocab)
+    if content_vocab:
+        combined_vocab.update(content_vocab)
 
-    # All unique titles for substring check
-    all_titles = [str(t) for t in df["தலைப்பு"].dropna().unique()]
+    # All text to check for existing substring matches
+    all_reference_text = list(all_titles)
+    if content_vocab:
+        all_reference_text.extend(content_vocab)
 
     # Extract Tamil words from the (already pass-1 corrected) query
     query_words = re.findall(r"[\u0B80-\u0BFF]+", corrected)
@@ -1327,23 +1338,23 @@ def correct_query_spelling(question: str, csv_path: str) -> str:
         if word_stripped in _KNOWN_QUERY_WORDS or word in _KNOWN_QUERY_WORDS:
             continue
 
-        # Check if word already exists as a substring in any title
+        # Check if word already exists as substring in titles or content vocab
         word_lower = word.lower()
-        if any(word_lower in t.lower() for t in all_titles):
+        if any(word_lower in t.lower() for t in all_reference_text):
             continue
 
         # Also check stripped form
         stripped_lower = word_stripped.lower()
         if stripped_lower != word_lower and any(
-            stripped_lower in t.lower() for t in all_titles
+            stripped_lower in t.lower() for t in all_reference_text
         ):
             continue
 
-        # Try to find best matching title token
+        # Try to find best match across all vocabularies
         best_match = None
         best_score = 0.0
 
-        for vocab_word in title_vocab:
+        for vocab_word in combined_vocab:
             score = fuzzy_match_score(word_stripped, vocab_word)
             if score > best_score:
                 best_score = score
