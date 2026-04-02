@@ -1145,3 +1145,219 @@ def _combine_csv_answer(llm_summary: str, csv_data: str) -> str:
     if llm_summary and llm_summary.strip():
         return llm_summary.strip() + suffix
     return "கட்டுரை தரவுத்தளத்திலிருந்து பெறப்பட்ட தகவல்கள்:" + suffix
+
+
+# ============================================================================
+# QUERY SPELLING CORRECTION FOR VECTOR SEARCH
+# ============================================================================
+
+# Known question/action words — used both for skipping (exact match)
+# and for correcting misspelled question words (fuzzy match).
+_KNOWN_QUERY_WORDS = {
+    "இதழில்",
+    "இதழ்",
+    "பொன்னி",
+    "பொன்னியில்",
+    "என்ன",
+    "யாவை",
+    "யார்",
+    "எனும்",
+    "பற்றி",
+    "பற்றிய",
+    "என்று",
+    "உள்ள",
+    "உள்ளது",
+    "கட்டுரை",
+    "கட்டுரைகள்",
+    "எழுதிய",
+    "எழுதியவர்",
+    "ஆசிரியர்",
+    "தொகுதி",
+    "எப்படி",
+    "எங்கே",
+    "எப்போது",
+    "கூறுக",
+    "விளக்குக",
+    "விவரி",
+    "பட்டியலிடுக",
+    "சுருக்கமாக",
+    "சுருக்கம்",
+    "கதைச்",
+    "கதை",
+    "கவிதை",
+    "கவிதைகள்",
+    "படைப்பு",
+    "படைப்புகள்",
+    "முக்கிய",
+    "முக்கியமான",
+    "தகவல்",
+    "வெளியான",
+    "வெளிவந்தது",
+    "எழுதியுள்ளார்",
+    "எழுதினார்",
+    "இயற்றிய",
+    "படைத்த",
+    "தலைப்பு",
+    "ஆசிரியர்கள்",
+    "பங்களிப்பு",
+    "பங்களித்த",
+    "வரலாறு",
+    "சிறுகதை",
+    "சிறுகதைகள்",
+    "நாடகம்",
+    "நாடகங்கள்",
+    "தொடர்கதை",
+    "தொடர்கதைகள்",
+}
+
+# Minimum fuzzy score to accept a token-level correction
+_SPELLING_TOKEN_THRESHOLD = 0.75
+# Minimum fuzzy score for whole-title correction
+_SPELLING_TITLE_THRESHOLD = 0.72
+
+
+def _get_title_vocab(df: pd.DataFrame) -> list:
+    """Extract unique Tamil words (>= 4 chars) from all CSV titles."""
+    vocab = set()
+    for title in df["தலைப்பு"].dropna().unique():
+        for word in re.findall(r"[\u0B80-\u0BFF]+", str(title)):
+            if len(word) >= 4:
+                vocab.add(word)
+    return list(vocab)
+
+
+def _get_author_vocab(df: pd.DataFrame) -> list:
+    """Extract unique author names from the CSV."""
+    authors = set()
+    for val in df["ஆசிரியர்"].dropna():
+        for name in _parse_csv_authors(str(val)):
+            name = name.strip()
+            if len(name) >= 4:
+                authors.add(name)
+    return list(authors)
+
+
+def _correct_query_words(question: str) -> str:
+    """Correct misspelled question/action words against known vocabulary.
+
+    Handles cases like "எழூதிய" → "எழுதிய", "சுறுக்கம்" → "சுருக்கம்".
+    Only corrects words that are NOT already an exact match.
+    """
+    query_words = re.findall(r"[\u0B80-\u0BFF]+", question)
+    corrected = question
+    known_list = list(_KNOWN_QUERY_WORDS)
+
+    for word in query_words:
+        if len(word) < 4:
+            continue
+        # Already a known word — no correction needed
+        if word in _KNOWN_QUERY_WORDS:
+            continue
+
+        best_match = None
+        best_score = 0.0
+        for known in known_list:
+            if len(known) < 4:
+                continue
+            score = fuzzy_match_score(word, known)
+            if score > best_score:
+                best_score = score
+                best_match = known
+
+        # Use a higher threshold (0.80) for question words to avoid
+        # wrongly "correcting" title/author words into question words
+        if best_match and best_score >= 0.80:
+            logger.info(
+                f"[SPELLING] query word '{word}' → '{best_match}' "
+                f"(score: {best_score:.2f})"
+            )
+            corrected = corrected.replace(word, best_match, 1)
+
+    return corrected
+
+
+def correct_query_spelling(question: str, csv_path: str) -> str:
+    """Correct misspelled Tamil words in the query.
+
+    Two-pass correction:
+    1. Fix misspelled question/action words (எழூதிய → எழுதிய)
+    2. Fix misspelled title/author words against CSV vocabulary
+
+    Returns the corrected query, or the original if no corrections needed.
+    """
+    # Pass 1: correct question/action words
+    corrected = _correct_query_words(question)
+
+    # Pass 2: correct title/author words using CSV vocabulary
+    with _author_system_lock:
+        if csv_path not in _author_system_cache:
+            _author_system_cache[csv_path] = EnhancedAuthorQuerySystem(csv_path)
+        system = _author_system_cache[csv_path]
+
+    if system.df is None or system.df.empty:
+        if corrected != question:
+            logger.info(f"[SPELLING] Query corrected: '{question}' → '{corrected}'")
+        return corrected
+
+    df = system.df
+
+    # Build vocabularies
+    title_vocab = _get_title_vocab(df)
+    author_vocab = _get_author_vocab(df)
+
+    # All unique titles for substring check
+    all_titles = [str(t) for t in df["தலைப்பு"].dropna().unique()]
+
+    # Extract Tamil words from the (already pass-1 corrected) query
+    query_words = re.findall(r"[\u0B80-\u0BFF]+", corrected)
+
+    for word in query_words:
+        if len(word) < 4:
+            continue
+        # Strip possessive suffix for matching
+        word_stripped = _strip_tamil_possessive_suffix_word(word)
+        if word_stripped in _KNOWN_QUERY_WORDS or word in _KNOWN_QUERY_WORDS:
+            continue
+
+        # Check if word already exists as a substring in any title
+        word_lower = word.lower()
+        if any(word_lower in t.lower() for t in all_titles):
+            continue
+
+        # Also check stripped form
+        stripped_lower = word_stripped.lower()
+        if stripped_lower != word_lower and any(
+            stripped_lower in t.lower() for t in all_titles
+        ):
+            continue
+
+        # Try to find best matching title token
+        best_match = None
+        best_score = 0.0
+
+        for vocab_word in title_vocab:
+            score = fuzzy_match_score(word_stripped, vocab_word)
+            if score > best_score:
+                best_score = score
+                best_match = vocab_word
+
+        # Also check author names
+        for author_name in author_vocab:
+            for author_word in re.findall(r"[\u0B80-\u0BFF]+", author_name):
+                if len(author_word) < 4:
+                    continue
+                score = fuzzy_match_score(word_stripped, author_word)
+                if score > best_score:
+                    best_score = score
+                    best_match = author_word
+
+        if best_match and best_score >= _SPELLING_TOKEN_THRESHOLD:
+            logger.info(
+                f"[SPELLING] '{word}' → '{best_match}' " f"(score: {best_score:.2f})"
+            )
+            corrected = corrected.replace(word, best_match, 1)
+
+    if corrected != question:
+        logger.info(f"[SPELLING] Query corrected: '{question}' → '{corrected}'")
+
+    return corrected

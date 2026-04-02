@@ -19,6 +19,7 @@ from csv_queries import (  # noqa: F401 — re-exported for backward compatibili
     _combine_csv_answer,
     _csv_data_suffix,
     _load_csv_safe,
+    correct_query_spelling,
     detect_issue_count_query,
     flexible_author_match,
     format_author_list,
@@ -587,12 +588,15 @@ def ask_question(
     try:
         client = get_qdrant_client()
 
-        logger.info(f"Searching: {question[:60]}...")
+        # Correct misspelled title/author words before vector search
+        search_query = correct_query_spelling(question, str(CSV_PATH))
+
+        logger.info(f"Searching: {search_query[:60]}...")
 
         t0 = time.time()
         searcher = HybridQdrantSearch(client)
         results = searcher.search(
-            question, limit=200, score_threshold=SCORE_THRESHOLD, tags=filter_tags
+            search_query, limit=200, score_threshold=SCORE_THRESHOLD, tags=filter_tags
         )
         logger.info(
             f"[TIMING] hybrid_search: {time.time() - t0:.2f}s ({len(results)} results)"
@@ -831,12 +835,17 @@ async def ask_question_async(
     try:
         client = await asyncio.to_thread(get_qdrant_client)
 
-        logger.info(f"Searching: {question[:60]}...")
+        # Correct misspelled title/author words before vector search
+        search_query = await asyncio.to_thread(
+            correct_query_spelling, question, str(CSV_PATH)
+        )
+
+        logger.info(f"Searching: {search_query[:60]}...")
 
         t0 = time.time()
         searcher = HybridQdrantSearch(client)
         results = await asyncio.to_thread(
-            searcher.search, question, 200, SCORE_THRESHOLD, filter_tags
+            searcher.search, search_query, 200, SCORE_THRESHOLD, filter_tags
         )
         logger.info(
             f"[TIMING] async hybrid_search: "
@@ -1100,10 +1109,13 @@ def ask_question_stream(
     try:
         client = get_qdrant_client()
 
-        logger.info(f"Streaming search: {question[:60]}...")
+        # Correct misspelled title/author words before vector search
+        search_query = correct_query_spelling(question, str(CSV_PATH))
+
+        logger.info(f"Streaming search: {search_query[:60]}...")
         searcher = HybridQdrantSearch(client)
         results = searcher.search(
-            question, limit=200, score_threshold=SCORE_THRESHOLD, tags=filter_tags
+            search_query, limit=200, score_threshold=SCORE_THRESHOLD, tags=filter_tags
         )
 
         if not results:
