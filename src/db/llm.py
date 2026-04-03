@@ -538,8 +538,9 @@ def _build_user_content(
     """
     en = language == "en"
     q_label = "Question" if en else "கேள்வி"
-    csv_label = "CSV Content" if en else "CSV உள்ளடக்கம்"
-    doc_label = "Document Context" if en else "ஆவண சூழல்"
+    # Use neutral labels — the LLM sometimes repeats these verbatim
+    csv_label = "Article Database" if en else "கட்டுரை தகவல்"
+    doc_label = "Reference Material" if en else "மூல ஆவணம்"
 
     parts = [f"{q_label}:\n{question}\n"]
 

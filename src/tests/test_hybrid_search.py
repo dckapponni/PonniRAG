@@ -3526,13 +3526,13 @@ class TestFilterSourcesByRelevance:
         result = hs._filter_sources_by_relevance("பாரதிதாசன் எழுதியவை", sources)
         assert len(result) == 2
 
-    def test_returns_original_when_all_filtered(self):
-        """Return original sources if filtering removes everything."""
+    def test_returns_empty_when_all_filtered(self):
+        """Return empty when no sources match — better than wrong evidence."""
         sources = [
             _make_merged_doc(heading="வேறு தலைப்பு", content="தொடர்பில்லாத உள்ளடக்கம்"),
         ]
         result = hs._filter_sources_by_relevance("கருணாநிதி கதை", sources)
-        assert len(result) == 1  # Kept original as fallback
+        assert len(result) == 0
 
     def test_empty_sources(self):
         """Return empty list for empty sources."""

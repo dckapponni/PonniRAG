@@ -726,9 +726,8 @@ class TestBuildUserContent:
         from llm import _build_user_content
 
         result = _build_user_content("question", "", "csv data")
-        assert "CSV" in result
-        assert "Document Context" not in result
-        assert "ஆவண சூழல்" not in result
+        assert "csv data" in result
+        assert "மூல ஆவணம்" not in result
 
     def test_omits_empty_csv(self):
         """Omit CSV section when csv_context is empty."""
@@ -791,7 +790,7 @@ class TestBuildUserContent:
 
         result = _build_user_content("test", "doc", "csv", language="en")
         assert "Question:" in result
-        assert "Document Context:" in result
+        assert "Reference Material:" in result
 
 
 # ============================================================================

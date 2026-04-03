@@ -513,8 +513,8 @@ def _filter_sources_by_relevance(question: str, sources: List[Dict]) -> List[Dic
                 return i
         return n
 
-    def _doc_matches(doc):
-        """Check if a single doc contains any query key term."""
+    def _doc_match_count(doc):
+        """Count how many query key terms appear in a single doc."""
         doc_text = " ".join(
             [
                 str(doc.get("content", "")),
@@ -524,31 +524,40 @@ def _filter_sources_by_relevance(question: str, sources: List[Dict]) -> List[Dic
         ).lower()
 
         doc_tamil_words = set(_re.findall(r"[\u0B80-\u0BFF]{3,}", doc_text))
+        matched = 0
 
         for term in key_terms:
             tl = term.lower()
             if tl in doc_text:
-                return True
+                matched += 1
+                continue
             for dw in doc_tamil_words:
                 shorter = min(len(dw), len(term))
                 if shorter < 3:
                     continue
                 cp = _common_prefix_len(dw, term)
                 if cp >= max(3, int(shorter * 0.6)):
-                    return True
-        return False
+                    matched += 1
+                    break
+        return matched
 
-    filtered = [s for s in sources if _doc_matches(s)]
+    scored = [(s, _doc_match_count(s)) for s in sources]
+    filtered = [(s, count) for s, count in scored if count > 0]
 
     if filtered:
+        # Re-rank: more matching terms → higher rank
+        filtered.sort(key=lambda x: x[1], reverse=True)
+        result = [s for s, _ in filtered]
         logger.info(
-            f"[SOURCES] Filtered {len(sources)} → {len(filtered)} " f"relevant sources"
+            f"[SOURCES] Filtered {len(sources)} → {len(result)} "
+            f"relevant sources (re-ranked by term match count)"
         )
-        return filtered
+        return result
 
-    # If filtering removed everything, return original (better than empty)
-    logger.info("[SOURCES] Filtering removed all — keeping original sources")
-    return sources
+    # No sources matched any query terms — show nothing rather than
+    # misleading the user with unrelated evidence
+    logger.info("[SOURCES] No sources matched query terms — suppressing all")
+    return []
 
 
 def truncate_query(question: str, max_length: int = MAX_QUERY_LENGTH) -> str:
