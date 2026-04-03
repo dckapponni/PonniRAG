@@ -312,6 +312,7 @@ _TAMIL_STOP_WORDS = {
     "கருத்துக்கள்",
     "கருத்து",
     "தகவல்",
+    "தகவல்கள்",
     "கட்டுரை",
     "கட்டுரைகள்",
     "எழுதிய",
@@ -337,6 +338,22 @@ _TAMIL_STOP_WORDS = {
     "இருக்கின்றன",
     "வெளிவந்தது",
     "வெளியான",
+    # Common query words that match too many documents
+    "செய்திகள்",
+    "செய்தி",
+    "பகுதி",
+    "பகுதியின்",
+    "பயன்கள்",
+    "வந்துள்ளனவா",
+    "வந்துள்ளது",
+    "இடம்பெற்ற",
+    "இடம்பெற்றுள்ள",
+    "படைப்புகள்",
+    "படைப்பு",
+    "தலைப்பு",
+    "தலைப்புகள்",
+    "பெயர்கள்",
+    "பெயர்களை",
 }
 _ENGLISH_STOP_WORDS = {
     "what",
@@ -542,7 +559,15 @@ def _filter_sources_by_relevance(question: str, sources: List[Dict]) -> List[Dic
         return matched
 
     scored = [(s, _doc_match_count(s)) for s in sources]
-    filtered = [(s, count) for s, count in scored if count > 0]
+
+    # Require docs to match a meaningful proportion of key terms.
+    # With many key terms, a doc matching just 1 generic word (like
+    # "செய்திகள்") is noise. Require at least 30% of terms or 2,
+    # whichever is smaller — but always at least 1.
+    n_terms = len(key_terms)
+    min_matches = max(1, min(2, int(n_terms * 0.3)))
+
+    filtered = [(s, count) for s, count in scored if count >= min_matches]
 
     if filtered:
         # Re-rank: more matching terms → higher rank
@@ -550,13 +575,16 @@ def _filter_sources_by_relevance(question: str, sources: List[Dict]) -> List[Dic
         result = [s for s, _ in filtered]
         logger.info(
             f"[SOURCES] Filtered {len(sources)} → {len(result)} "
-            f"relevant sources (re-ranked by term match count)"
+            f"relevant sources (min_matches={min_matches}, "
+            f"re-ranked by term match count)"
         )
         return result
 
-    # No sources matched any query terms — show nothing rather than
+    # No sources met the threshold — show nothing rather than
     # misleading the user with unrelated evidence
-    logger.info("[SOURCES] No sources matched query terms — suppressing all")
+    logger.info(
+        f"[SOURCES] No sources met min_matches={min_matches} " f"— suppressing all"
+    )
     return []
 
 
