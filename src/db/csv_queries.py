@@ -423,6 +423,9 @@ class EnhancedAuthorQuerySystem:
         article listings, counts, or author lookups.
         """
         q = question.lower().strip()
+        YEAR_PATTERNS = ["எந்த ஆண்டு", "ஆண்டு", "வெளியான ஆண்டு"]
+        if any(p in q for p in YEAR_PATTERNS):
+            return "none"
 
         # Content-seeking intent overrides all CSV patterns.
         if any(p in q for p in self._CONTENT_SEEKING):
@@ -1154,7 +1157,10 @@ def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
     logger.info(f"Query type: {query_type}")
 
     if query_type == "none":
-        if any(word in question for word in ["எந்த", "இதழ்", "மலர்"]):
+        if (
+            any(word in question for word in ["இதழ்", "மலர்"])
+            and "ஆண்டு" not in question
+        ):
             query_type = "topic_author"
         else:
             return False, ""
