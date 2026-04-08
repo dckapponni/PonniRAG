@@ -8,6 +8,7 @@ and search to sub-modules (cache, embeddings, search, llm, etc.).
 import asyncio
 import logging
 import re as _re
+import threading
 import time
 from typing import Dict, List
 
@@ -19,6 +20,7 @@ from csv_queries import (  # noqa: F401 — re-exported for backward compatibili
     _combine_csv_answer,
     _csv_data_suffix,
     _load_csv_safe,
+    correct_query_spelling,
     detect_issue_count_query,
     flexible_author_match,
     format_author_list,
@@ -30,6 +32,7 @@ from csv_queries import (  # noqa: F401 — re-exported for backward compatibili
     normalize_author_name,
 )
 from embeddings import (  # noqa: F401 — re-exported for backward compatibility
+    COLLECTION_NAME,
     CSV_PATH,
     SCORE_THRESHOLD,
     HybridQdrantSearch,
@@ -52,6 +55,7 @@ from guardrails import (
 )
 from llm import _build_csv_user_content  # ✅ required
 from llm import _get_csv_system_prompt  # ✅ required
+from llm import is_content_display_query  # ✅ required
 from llm import (
     check_gemini_health,
     generate_extractive_answer,
@@ -59,6 +63,7 @@ from llm import (
     generate_llm_answer_async,
     generate_llm_answer_stream,
 )
+from qdrant_client import models
 from search import _select_relevant_docs  # ✅ required
 from search import retrieve_all_chunks_for_document  # noqa: F401 — re-export
 from search import (
@@ -75,6 +80,65 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Content vocabulary cache — built lazily from Qdrant document headings
+# ---------------------------------------------------------------------------
+_content_vocab_cache: dict = {"vocab": None, "lock": threading.Lock()}
+
+
+def _build_content_vocab() -> List[str]:
+    """Build vocabulary of Tamil words from Qdrant document headings.
+
+    Scrolls through all article points and extracts unique Tamil words
+    (>= 4 chars) from the title/heading field. Cached for the session.
+    """
+    with _content_vocab_cache["lock"]:
+        if _content_vocab_cache["vocab"] is not None:
+            return _content_vocab_cache["vocab"]
+
+    try:
+        client = get_qdrant_client()
+        vocab = set()
+        scroll_offset = None
+
+        while True:
+            points, scroll_offset = client.scroll(
+                collection_name=COLLECTION_NAME,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="type", match=models.MatchValue(value="article")
+                        )
+                    ]
+                ),
+                limit=500,
+                offset=scroll_offset,
+                with_payload=["metadata"],
+            )
+            if not points:
+                break
+
+            for point in points:
+                meta = point.payload.get("metadata", {})
+                title = meta.get("title", "")
+                if title:
+                    for word in _re.findall(r"[\u0B80-\u0BFF]+", str(title)):
+                        if len(word) >= 4:
+                            vocab.add(word)
+
+            if scroll_offset is None:
+                break
+
+        vocab_list = list(vocab)
+        with _content_vocab_cache["lock"]:
+            _content_vocab_cache["vocab"] = vocab_list
+        logger.info(f"[SPELLING] Built content vocab: {len(vocab_list)} words")
+        return vocab_list
+
+    except Exception as e:
+        logger.warning(f"[SPELLING] Failed to build content vocab: {e}")
+        return []
 
 
 def verify_files():
@@ -248,6 +312,7 @@ _TAMIL_STOP_WORDS = {
     "கருத்துக்கள்",
     "கருத்து",
     "தகவல்",
+    "தகவல்கள்",
     "கட்டுரை",
     "கட்டுரைகள்",
     "எழுதிய",
@@ -273,6 +338,22 @@ _TAMIL_STOP_WORDS = {
     "இருக்கின்றன",
     "வெளிவந்தது",
     "வெளியான",
+    # Common query words that match too many documents
+    "செய்திகள்",
+    "செய்தி",
+    "பகுதி",
+    "பகுதியின்",
+    "பயன்கள்",
+    "வந்துள்ளனவா",
+    "வந்துள்ளது",
+    "இடம்பெற்ற",
+    "இடம்பெற்றுள்ள",
+    "படைப்புகள்",
+    "படைப்பு",
+    "தலைப்பு",
+    "தலைப்புகள்",
+    "பெயர்கள்",
+    "பெயர்களை",
 }
 _ENGLISH_STOP_WORDS = {
     "what",
@@ -417,6 +498,94 @@ def _check_context_relevance(question: str, relevant_docs: list) -> bool:
             return False
 
     return True
+
+
+def _filter_sources_by_relevance(question: str, sources: List[Dict]) -> List[Dict]:
+    """Filter sources to only include docs relevant to the question.
+
+    Checks each source individually: a doc is kept if at least one
+    distinguishing term from the question appears in its heading,
+    content, or author name.  Uses the same prefix-matching logic
+    as _check_context_relevance for Tamil agglutinative forms.
+    """
+    if not sources:
+        return sources
+
+    # Extract distinguishing terms from the query
+    tamil_terms = set(_re.findall(r"[\u0B80-\u0BFF]{3,}", question))
+    tamil_terms -= _TAMIL_STOP_WORDS
+    english_terms = {w.lower() for w in _re.findall(r"[a-zA-Z]{3,}", question)}
+    english_terms -= _ENGLISH_STOP_WORDS
+    key_terms = tamil_terms | english_terms
+
+    if not key_terms:
+        return sources  # Generic query — can't filter
+
+    from embeddings import _flatten_author
+
+    def _common_prefix_len(a, b):
+        n = min(len(a), len(b))
+        for i in range(n):
+            if a[i] != b[i]:
+                return i
+        return n
+
+    def _doc_match_count(doc):
+        """Count how many query key terms appear in a single doc."""
+        doc_text = " ".join(
+            [
+                str(doc.get("content", "")),
+                str(doc.get("heading", "")),
+                _flatten_author(doc.get("author_name", "")),
+            ]
+        ).lower()
+
+        doc_tamil_words = set(_re.findall(r"[\u0B80-\u0BFF]{3,}", doc_text))
+        matched = 0
+
+        for term in key_terms:
+            tl = term.lower()
+            if tl in doc_text:
+                matched += 1
+                continue
+            for dw in doc_tamil_words:
+                shorter = min(len(dw), len(term))
+                if shorter < 3:
+                    continue
+                cp = _common_prefix_len(dw, term)
+                if cp >= max(3, int(shorter * 0.6)):
+                    matched += 1
+                    break
+        return matched
+
+    scored = [(s, _doc_match_count(s)) for s in sources]
+
+    # Require docs to match a meaningful proportion of key terms.
+    # With many key terms, a doc matching just 1 generic word (like
+    # "செய்திகள்") is noise. Require at least 30% of terms or 2,
+    # whichever is smaller — but always at least 1.
+    n_terms = len(key_terms)
+    min_matches = max(1, min(2, int(n_terms * 0.3)))
+
+    filtered = [(s, count) for s, count in scored if count >= min_matches]
+
+    if filtered:
+        # Re-rank: more matching terms → higher rank
+        filtered.sort(key=lambda x: x[1], reverse=True)
+        result = [s for s, _ in filtered]
+        logger.info(
+            f"[SOURCES] Filtered {len(sources)} → {len(result)} "
+            f"relevant sources (min_matches={min_matches}, "
+            f"re-ranked by term match count)"
+        )
+        return result
+
+    # No sources met the threshold — show nothing rather than
+    # misleading the user with unrelated evidence
+    logger.info(
+        f"[SOURCES] No sources met min_matches={min_matches} " f"— suppressing all"
+    )
+    return []
 
 
 def truncate_query(question: str, max_length: int = MAX_QUERY_LENGTH) -> str:
@@ -587,12 +756,16 @@ def ask_question(
     try:
         client = get_qdrant_client()
 
-        logger.info(f"Searching: {question[:60]}...")
+        # Correct misspelled words before vector search
+        content_vocab = _build_content_vocab()
+        search_query = correct_query_spelling(question, str(CSV_PATH), content_vocab)
+
+        logger.info(f"Searching: {search_query[:60]}...")
 
         t0 = time.time()
         searcher = HybridQdrantSearch(client)
         results = searcher.search(
-            question, limit=200, score_threshold=SCORE_THRESHOLD, tags=filter_tags
+            search_query, limit=200, score_threshold=SCORE_THRESHOLD, tags=filter_tags
         )
         logger.info(
             f"[TIMING] hybrid_search: {time.time() - t0:.2f}s ({len(results)} results)"
@@ -630,8 +803,20 @@ def ask_question(
         relevant_docs = _select_relevant_docs(merged_docs)
         logger.info(f"Selected {len(relevant_docs)} relevant documents for context")
 
-        # Build context with equal excerpts from all relevant docs
-        context, context_doc_count = build_context_from_docs(relevant_docs, question)
+        # Content display queries get more context (full article text)
+        _is_display = is_content_display_query(question)
+        if _is_display:
+            context, context_doc_count = build_context_from_docs(
+                relevant_docs,
+                question,
+                max_context_chars=50000,
+                max_context_docs=3,
+            )
+            logger.info("[DISPLAY] Content display query — expanded context")
+        else:
+            context, context_doc_count = build_context_from_docs(
+                relevant_docs, question
+            )
 
         # CSV semantic context
         csv_results = search_csv_semantic(question, top_k=3)
@@ -661,6 +846,7 @@ def ask_question(
                     context_doc_count=context_doc_count,
                     history=history,
                     language=language,
+                    max_output_tokens=8192 if _is_display else 4096,
                 )
                 logger.info(f"[TIMING] gemini_llm: {time.time() - t0:.2f}s")
 
@@ -670,7 +856,7 @@ def ask_question(
                 question, merged_docs, history, language
             )
 
-        sources = format_sources(merged_docs)
+        sources = _filter_sources_by_relevance(question, format_sources(merged_docs))
 
         # Suppress sources when the answer indicates the data is not available
         if _answer_indicates_no_data(answer):
@@ -831,12 +1017,18 @@ async def ask_question_async(
     try:
         client = await asyncio.to_thread(get_qdrant_client)
 
-        logger.info(f"Searching: {question[:60]}...")
+        # Correct misspelled words before vector search
+        content_vocab = await asyncio.to_thread(_build_content_vocab)
+        search_query = await asyncio.to_thread(
+            correct_query_spelling, question, str(CSV_PATH), content_vocab
+        )
+
+        logger.info(f"Searching: {search_query[:60]}...")
 
         t0 = time.time()
         searcher = HybridQdrantSearch(client)
         results = await asyncio.to_thread(
-            searcher.search, question, 200, SCORE_THRESHOLD, filter_tags
+            searcher.search, search_query, 200, SCORE_THRESHOLD, filter_tags
         )
         logger.info(
             f"[TIMING] async hybrid_search: "
@@ -874,8 +1066,20 @@ async def ask_question_async(
         relevant_docs = _select_relevant_docs(merged_docs)
         logger.info(f"Selected {len(relevant_docs)} relevant documents for context")
 
-        # Build context with equal excerpts from all relevant docs
-        context, context_doc_count = build_context_from_docs(relevant_docs, question)
+        # Content display queries get more context (full article text)
+        _is_display = is_content_display_query(question)
+        if _is_display:
+            context, context_doc_count = build_context_from_docs(
+                relevant_docs,
+                question,
+                max_context_chars=50000,
+                max_context_docs=3,
+            )
+            logger.info("[DISPLAY] Content display query — expanded context")
+        else:
+            context, context_doc_count = build_context_from_docs(
+                relevant_docs, question
+            )
 
         # CSV semantic context
         csv_results = await asyncio.to_thread(search_csv_semantic, question, 3)
@@ -905,6 +1109,7 @@ async def ask_question_async(
                     context_doc_count=context_doc_count,
                     history=history,
                     language=language,
+                    max_output_tokens=8192 if _is_display else 4096,
                 )
                 logger.info(f"[TIMING] async gemini_llm: {time.time() - t0:.2f}s")
 
@@ -914,7 +1119,7 @@ async def ask_question_async(
                 question, merged_docs, history, language
             )
 
-        sources = format_sources(merged_docs)
+        sources = _filter_sources_by_relevance(question, format_sources(merged_docs))
 
         # Suppress sources when the answer indicates the data is not available
         if _answer_indicates_no_data(answer):
@@ -1100,10 +1305,14 @@ def ask_question_stream(
     try:
         client = get_qdrant_client()
 
-        logger.info(f"Streaming search: {question[:60]}...")
+        # Correct misspelled words before vector search
+        content_vocab = _build_content_vocab()
+        search_query = correct_query_spelling(question, str(CSV_PATH), content_vocab)
+
+        logger.info(f"Streaming search: {search_query[:60]}...")
         searcher = HybridQdrantSearch(client)
         results = searcher.search(
-            question, limit=200, score_threshold=SCORE_THRESHOLD, tags=filter_tags
+            search_query, limit=200, score_threshold=SCORE_THRESHOLD, tags=filter_tags
         )
 
         if not results:
@@ -1137,8 +1346,20 @@ def ask_question_stream(
         relevant_docs = _select_relevant_docs(merged_docs)
         logger.info(f"Selected {len(relevant_docs)} relevant documents for context")
 
-        # Build context with equal excerpts from all relevant docs
-        context, context_doc_count = build_context_from_docs(relevant_docs, question)
+        # Content display queries get more context (full article text)
+        _is_display = is_content_display_query(question)
+        if _is_display:
+            context, context_doc_count = build_context_from_docs(
+                relevant_docs,
+                question,
+                max_context_chars=50000,
+                max_context_docs=3,
+            )
+            logger.info("[DISPLAY] Content display query — expanded context")
+        else:
+            context, context_doc_count = build_context_from_docs(
+                relevant_docs, question
+            )
 
         csv_results = search_csv_semantic(question, top_k=3)
         csv_context = ""
@@ -1177,6 +1398,7 @@ def ask_question_stream(
             context_doc_count=context_doc_count,
             history=history,
             language=language,
+            max_output_tokens=8192 if _is_display else 4096,
         ):
             token_count += 1
             accumulated_tokens.append(token)
@@ -1192,7 +1414,7 @@ def ask_question_stream(
             accumulated_tokens = [answer]
             yield {"type": "token", "content": answer}
 
-        sources = format_sources(merged_docs)
+        sources = _filter_sources_by_relevance(question, format_sources(merged_docs))
 
         if fallback_reason:
             yield {"type": "fallback", "reason": fallback_reason}
@@ -1200,6 +1422,14 @@ def ask_question_stream(
         # --- CACHE STORE (skip when conversation history is present) ---
         full_answer = "".join(accumulated_tokens)
         full_answer = sanitize_output(full_answer)
+
+        # Truncate garbage tails before caching so repeat queries are clean
+        from llm import _detect_garbage_tail, _truncate_at_sentence_boundary
+
+        garbage_pos = _detect_garbage_tail(full_answer)
+        if garbage_pos > 0:
+            full_answer = _truncate_at_sentence_boundary(full_answer[:garbage_pos])
+            logger.info(f"Stream: truncated garbage tail at position {garbage_pos}")
 
         # Suppress sources when the answer indicates the data is not available
         if _answer_indicates_no_data(full_answer):

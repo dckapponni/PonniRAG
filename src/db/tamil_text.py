@@ -419,6 +419,7 @@ class _PatternBank:
 
     # ── Noise phrases stripped from around the topic title ────────────────────
     TOPIC_NOISE_PHRASES = [
+        "யார்",
         "யார் எழுதினார்",
         "யார் எழுதியது",
         "யார் இயற்றியவர்",

@@ -127,13 +127,14 @@ def _parse_csv_authors(csv_name: str) -> List[str]:
 # ============================================================================
 # AUTHOR NAME NORMALISATION & MATCHING
 # ============================================================================
-
-
 def normalize_author_name(name: str) -> str:
-    """Normalize an author name by stripping honorific prefixes."""
+    """Normalize an author name (handles Tamil variations + prefixes)."""
     if not name:
         return ""
+
     name = normalize_unicode(name)
+
+    # Remove prefixes
     prefixes_to_remove = [
         r"மு\.,?\s*",
         r"டாக்டர்\.?\s*",
@@ -149,11 +150,30 @@ def normalize_author_name(name: str) -> str:
         r"கவியரசு\.?\s*",
         r"பாவேந்தர்\.?\s*",
     ]
+
     cleaned = name.strip()
     for prefix in prefixes_to_remove:
         cleaned = re.sub(prefix, "", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
-    return cleaned
+
+    # Strip spaces and dots for normalized comparison
+    cleaned = cleaned.replace(" ", "").replace(".", "")
+
+    # Normalize Tamil vowel length variations
+    replacements = {
+        "ஆ": "அ",
+        "ஈ": "இ",
+        "ஊ": "உ",
+        "ே": "ெ",
+        "ோ": "ொ",
+    }
+
+    for k, v in replacements.items():
+        cleaned = cleaned.replace(k, v)
+
+    # Handle common name patterns
+    cleaned = cleaned.replace("ாமூர்த்தி", "மூர்த்தி")
+
+    return cleaned.strip()
 
 
 def flexible_author_match(search_name: str, csv_name: str) -> bool:
@@ -363,9 +383,54 @@ class EnhancedAuthorQuerySystem:
                 self.df.rename(columns={old: new}, inplace=True)
                 logger.info(f"Renamed '{old}' → '{new}'")
 
+    # Content-seeking words — when present, the query is asking about
+    # meaning/theme/summary of a specific work, NOT requesting an article
+    # listing.  Checked FIRST so that "கருணாநிதி அவர்கள் எழுதிய வளையல்
+    # வாங்கலீயோ கதையின் கருத்து என்ன" goes to vector search even though
+    # "அவர்கள் எழுதிய" matches AUTHOR_ACTION.
+    _CONTENT_SEEKING = [
+        "கருத்து",
+        "சுருக்கம்",
+        "சுருக்கமாக",
+        "கதைச் சுருக்கம்",
+        "கதை சுருக்கம்",
+        "உள்ளடக்கம்",
+        "பொருள்",
+        "விளக்கம்",
+        "விளக்குக",
+        "அர்த்தம்",
+        "காட்டு",
+        "காட்டுக",
+        "படிக்க",
+        "முழு கதை",
+        "முழு கட்டுரை",
+        "முழு கவிதை",
+        "theme",
+        "summary",
+        "meaning",
+        "explain",
+        "describe",
+        "content",
+        "full text",
+        "show",
+    ]
+
     def detect_query_type(self, question: str) -> str:
-        """Classify a question into a CSV query type or 'none'."""
+        """Classify a question into a CSV query type or 'none'.
+
+        Content-seeking queries are detected FIRST and always routed to
+        vector search. CSV only handles queries that explicitly ask for
+        article listings, counts, or author lookups.
+        """
         q = question.lower().strip()
+        YEAR_PATTERNS = ["எந்த ஆண்டு", "ஆண்டு", "வெளியான ஆண்டு"]
+        if any(p in q for p in YEAR_PATTERNS):
+            return "none"
+
+        # Content-seeking intent overrides all CSV patterns.
+        if any(p in q for p in self._CONTENT_SEEKING):
+            logger.info("[QUERY_TYPE] Content-seeking query — bypassing CSV")
+            return "none"
 
         if any(p in q for p in _PatternBank.LIST_ALL_AUTHORS):
             return "list_all_authors"
@@ -387,14 +452,11 @@ class EnhancedAuthorQuerySystem:
 
         has_known_author = any(a in q for a in _PatternBank.KNOWN_AUTHORS)
         has_initials_name = bool(_RE_INITIALS_NAME.search(q))
-        has_author_action = any(p in q for p in _PatternBank.AUTHOR_ACTION)
 
-        if (has_known_author or has_initials_name) and has_author_action:
-            return "author_topics"
-        if (has_known_author or has_initials_name) and (
-            "எழுதிய" in q or "படைப்பு" in q or "இயற்றிய" in q or "படைத்த" in q
-        ):
-            return "author_topics"
+        if has_known_author or has_initials_name:
+            has_author_action = any(p in q for p in _PatternBank.AUTHOR_ACTION)
+            if has_author_action:
+                return "author_topics"
 
         topic_content_patterns = [
             "பற்றிய படைப்புகள்",
@@ -412,7 +474,16 @@ class EnhancedAuthorQuerySystem:
         ]
         if any(p in q for p in topic_content_patterns):
             return "topic_author"
+        # 🔥 NEW: handle exam-style queries like "எந்த மலர்", "இதழில் இடம்பெற்றுள்ளது"
+        special_patterns = [
+            "எந்த மலர்",
+            "எந்த இதழ்",
+            "இதழில் இடம்பெற்றுள்ளது",
+            "எந்த மலர் மற்றும் இதழில்",
+        ]
 
+        if any(p in q for p in special_patterns):
+            return "topic_author"
         return "none"
 
     def extract_entity(self, question: str, query_type: str) -> str:
@@ -461,12 +532,29 @@ class EnhancedAuthorQuerySystem:
             return " ".join(tokens[:3]) if tokens else ""
 
         elif query_type == "topic_author":
+            # 🔥 STEP 1: Extract title using "என்ற"
+            match = re.search(r"(.*?)\s*என்ற", q)
+            if match:
+                title = match.group(1).strip()
+                title = re.sub(
+                    r"(செய்தி|பாட்டு|பாடல்|கதை|கவிதை|கட்டுரை|சிறுகதை|தொடர்கதை).*",
+                    "",
+                    title,
+                ).strip()
+                return title
+
+            # 🔥 STEP 2: Remove noise words
+            q = q.replace("செய்திப் பாட்டு", "")
+            q = q.replace("பாட்டு", "")
+
+            # 🔥 STEP 3: Clean question words
             noise = sorted(_PatternBank.TOPIC_NOISE_PHRASES, key=len, reverse=True)
             q_title = q
             for np_phrase in noise:
                 q_title = re.sub(
                     re.escape(np_phrase), "  ", q_title, flags=re.IGNORECASE
                 )
+
             for sw in _PatternBank.TITLE_SUFFIXES:
                 q_title = re.sub(
                     r"\s*" + re.escape(sw) + r"\s*$",
@@ -474,7 +562,10 @@ class EnhancedAuthorQuerySystem:
                     q_title.strip(),
                     flags=re.IGNORECASE,
                 )
+
             q_title = _strip_tamil_possessive_suffixes(q_title)
+
+            # normalize endings
             for _pat, _repl in [
                 (r"த்தில்(?=\s|$)", "ம்"),
                 (r"த்தின்(?=\s|$)", "ம்"),
@@ -483,32 +574,15 @@ class EnhancedAuthorQuerySystem:
                 (r"வில்(?=\s|$)", ""),
             ]:
                 q_title = re.sub(_pat, _repl, q_title)
+
             q_title = q_title.replace('"', "").replace("'", "")
-            q_title = re.sub(r"  +(யார்|என்ன|யாவை|எவர்)\??$", "", q_title)
             q_title = re.sub(r"\s+", " ", q_title).strip()
 
-            words = re.findall(r"[\u0B80-\u0BFF!?,।]+|[a-zA-Z]+", q_title)
-            words = [
-                w
-                for w in words
-                if len(w.rstrip("?!,")) > 1
-                and not (
-                    w.rstrip("?!,").lower() in _PatternBank.TOPIC_NOISE_TOKENS
-                    and not w.endswith("?")
-                )
-                and w not in {"?", "!", ",", "।"}
-            ]
-            result = " ".join(words) if words else ""
-            if result.strip().lower().rstrip("?!") in {
-                "யார்",
-                "என்ன",
-                "யாவை",
-                "எவர்",
-                "",
-            }:
-                return ""
-            return result
+            # extract meaningful words
+            words = re.findall(r"[\u0B80-\u0BFF]+", q_title)
+            words = [w for w in words if len(w) > 2]
 
+            return " ".join(words[:3]) if words else ""
         return ""
 
     def list_all_authors(self) -> Dict:
@@ -686,13 +760,91 @@ class EnhancedAuthorQuerySystem:
                 if not candidate.empty and len(candidate) <= 10:
                     matches = candidate
 
-        # Stage 4: fuzzy >= 0.80
+        # Stage 3b: 1-char deletion variants of the longest Tamil word.
+        #
+        # Catches user spelling mistakes where a single character is inserted,
+        # swapped, or differs from the CSV title, e.g.:
+        #   வாங்கிலீயோ  → வாங்கலீயோ   (extra 'இ' inserted by user)
+        #   வருந்தாதீர் → வருத்தாதீர்  (ந்→த் consonant swap)
+        #   அறியாதவள்  → அறியாதவன்   (ள்→ன் gender suffix swap)
+        #
+        # Generates every single-character deletion of the longest Tamil word
+        # in the query and does a substring search for each variant.
+        # Accepts result only if <= 8 rows (keeps it precise).
+        if matches.empty:
+            tamil_words_in_query = [
+                w for w in re.findall(r"[\u0B80-\u0BFF]+", topic_cleaned) if len(w) >= 5
+            ]
+            if tamil_words_in_query:
+                longest_word = max(tamil_words_in_query, key=len)
+                logger.info(
+                    f"Stage 3b: generating deletion variants for '{longest_word}'"
+                )
+                deletion_variants = [
+                    longest_word[:i] + longest_word[i + 1 :]
+                    for i in range(len(longest_word))
+                    if len(longest_word) - 1 >= 4
+                ]
+                for variant in deletion_variants:
+                    candidate = self.df[
+                        self.df["தலைப்பு"].str.contains(
+                            variant, case=False, na=False, regex=False
+                        )
+                    ]
+                    if not candidate.empty and len(candidate) <= 8:
+                        logger.info(
+                            f"Stage 3b matched via variant '{variant}' ({len(candidate)} rows)"
+                        )
+                        matches = candidate
+                        break
+
+        # Stage 4: whole-title fuzzy >= 0.72 OR token-level fuzzy >= 0.75.
+        #
+        # Threshold lowered from 0.80 → 0.72 to catch single-character Tamil
+        # spelling differences (vowel markers, consonant clusters).
+        #
+        # Token-level fallback: splits both query and title into individual Tamil
+        # words (>= 4 chars) and requires every query token to fuzzy-match at
+        # least one title token at >= 0.75. Handles cases where the misspelled
+        # word is only part of a multi-word title — the whole-title score gets
+        # diluted by correctly spelled words, but the per-token score stays high.
         if matches.empty:
             fuzzy_rows = []
+            search_tokens = [
+                t for t in re.findall(r"[\u0B80-\u0BFF]+", topic_cleaned) if len(t) >= 4
+            ]
             for _, row in self.df.iterrows():
                 title = str(row.get("தலைப்பு", ""))
-                if title and fuzzy_match_score(topic_cleaned, title) >= 0.80:
-                    fuzzy_rows.append((row, fuzzy_match_score(topic_cleaned, title)))
+                if not title:
+                    continue
+
+                # Whole-title fuzzy (threshold lowered to 0.72)
+                whole_score = fuzzy_match_score(topic_cleaned, title)
+                if whole_score >= 0.72:
+                    fuzzy_rows.append((row, whole_score))
+                    continue
+
+                # Token-level fuzzy: every search token must match
+                # some title token at >= 0.75
+                if search_tokens:
+                    title_tokens = [
+                        t for t in re.findall(r"[\u0B80-\u0BFF]+", title) if len(t) >= 4
+                    ]
+                    if title_tokens:
+                        all_matched = all(
+                            any(
+                                fuzzy_match_score(st, tt) >= 0.79 for tt in title_tokens
+                            )
+                            for st in search_tokens
+                        )
+                        if all_matched:
+                            best_token_score = min(
+                                max(fuzzy_match_score(st, tt) for tt in title_tokens)
+                                for st in search_tokens
+                            )
+                            # Slightly discount token-level vs whole-title matches
+                            fuzzy_rows.append((row, best_token_score * 0.95))
+
             if fuzzy_rows:
                 fuzzy_rows.sort(key=lambda x: x[1], reverse=True)
                 matches = pd.DataFrame([r for r, _ in fuzzy_rows])
@@ -1005,21 +1157,35 @@ def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
     logger.info(f"Query type: {query_type}")
 
     if query_type == "none":
-        return False, ""
+        if (
+            any(word in question for word in ["இதழ்", "மலர்"])
+            and "ஆண்டு" not in question
+        ):
+            query_type = "topic_author"
+        else:
+            return False, ""
     if query_type == "list_all_authors":
         return True, format_author_list(system.list_all_authors())
     if query_type == "author_topics":
         entity = system.extract_entity(question, "author_topics")
         logger.info(f"Extracted author: '{entity}'")
         if not entity:
-            return True, "Warning: எழுத்தாளர் பெயரை தெளிவாக குறிப்பிடவும்"
-        return True, format_author_topics(system.get_topics_by_author(entity))
+            return False, ""  # Fall through to vector search
+        result = system.get_topics_by_author(entity)
+        if not result.get("success"):
+            logger.info("[CSV] Author query failed — falling back to vector search")
+            return False, ""
+        return True, format_author_topics(result)
     if query_type == "topic_author":
         entity = system.extract_entity(question, "topic_author")
         logger.info(f"Extracted topic: '{entity}'")
         if not entity:
-            return True, "Warning: தலைப்பை தெளிவாக குறிப்பிடவும்"
-        return True, format_topic_authors(system.get_author_by_topic(entity))
+            return False, ""  # Fall through to vector search
+        result = system.get_author_by_topic(entity)
+        if not result.get("success"):
+            logger.info("[CSV] Topic query failed — falling back to vector search")
+            return False, ""
+        return True, format_topic_authors(result)
 
     return False, ""
 
@@ -1047,3 +1213,230 @@ def _combine_csv_answer(llm_summary: str, csv_data: str) -> str:
     if llm_summary and llm_summary.strip():
         return llm_summary.strip() + suffix
     return "கட்டுரை தரவுத்தளத்திலிருந்து பெறப்பட்ட தகவல்கள்:" + suffix
+
+
+# ============================================================================
+# QUERY SPELLING CORRECTION FOR VECTOR SEARCH
+# ============================================================================
+
+# Known question/action words — used both for skipping (exact match)
+# and for correcting misspelled question words (fuzzy match).
+_KNOWN_QUERY_WORDS = {
+    "இதழில்",
+    "இதழ்",
+    "பொன்னி",
+    "பொன்னியில்",
+    "என்ன",
+    "யாவை",
+    "யார்",
+    "எனும்",
+    "பற்றி",
+    "பற்றிய",
+    "என்று",
+    "உள்ள",
+    "உள்ளது",
+    "கட்டுரை",
+    "கட்டுரைகள்",
+    "எழுதிய",
+    "எழுதியவர்",
+    "ஆசிரியர்",
+    "தொகுதி",
+    "எப்படி",
+    "எங்கே",
+    "எப்போது",
+    "கூறுக",
+    "விளக்குக",
+    "விவரி",
+    "பட்டியலிடுக",
+    "சுருக்கமாக",
+    "சுருக்கம்",
+    "கதைச்",
+    "கதை",
+    "கவிதை",
+    "கவிதைகள்",
+    "படைப்பு",
+    "படைப்புகள்",
+    "முக்கிய",
+    "முக்கியமான",
+    "தகவல்",
+    "வெளியான",
+    "வெளிவந்தது",
+    "எழுதியுள்ளார்",
+    "எழுதினார்",
+    "இயற்றிய",
+    "படைத்த",
+    "தலைப்பு",
+    "ஆசிரியர்கள்",
+    "பங்களிப்பு",
+    "பங்களித்த",
+    "வரலாறு",
+    "சிறுகதை",
+    "சிறுகதைகள்",
+    "நாடகம்",
+    "நாடகங்கள்",
+    "தொடர்கதை",
+    "தொடர்கதைகள்",
+}
+
+# Minimum fuzzy score to accept a token-level correction
+_SPELLING_TOKEN_THRESHOLD = 0.75
+# Minimum fuzzy score for whole-title correction
+_SPELLING_TITLE_THRESHOLD = 0.72
+
+
+def _get_title_vocab(df: pd.DataFrame) -> list:
+    """Extract unique Tamil words (>= 4 chars) from all CSV titles."""
+    vocab = set()
+    for title in df["தலைப்பு"].dropna().unique():
+        for word in re.findall(r"[\u0B80-\u0BFF]+", str(title)):
+            if len(word) >= 4:
+                vocab.add(word)
+    return list(vocab)
+
+
+def _get_author_vocab(df: pd.DataFrame) -> list:
+    """Extract unique author names from the CSV."""
+    authors = set()
+    for val in df["ஆசிரியர்"].dropna():
+        for name in _parse_csv_authors(str(val)):
+            name = name.strip()
+            if len(name) >= 4:
+                authors.add(name)
+    return list(authors)
+
+
+def _correct_query_words(question: str) -> str:
+    """Correct misspelled question/action words against known vocabulary.
+
+    Handles cases like "எழூதிய" → "எழுதிய", "சுறுக்கம்" → "சுருக்கம்".
+    Only corrects words that are NOT already an exact match.
+    """
+    query_words = re.findall(r"[\u0B80-\u0BFF]+", question)
+    corrected = question
+    known_list = list(_KNOWN_QUERY_WORDS)
+
+    for word in query_words:
+        if len(word) < 4:
+            continue
+        # Already a known word — no correction needed
+        if word in _KNOWN_QUERY_WORDS:
+            continue
+
+        best_match = None
+        best_score = 0.0
+        for known in known_list:
+            if len(known) < 4:
+                continue
+            score = fuzzy_match_score(word, known)
+            if score > best_score:
+                best_score = score
+                best_match = known
+
+        # Use a higher threshold (0.80) for question words to avoid
+        # wrongly "correcting" title/author words into question words
+        if best_match and best_score >= 0.80:
+            logger.info(
+                f"[SPELLING] query word '{word}' → '{best_match}' "
+                f"(score: {best_score:.2f})"
+            )
+            corrected = corrected.replace(word, best_match, 1)
+
+    return corrected
+
+
+def correct_query_spelling(
+    question: str, csv_path: str, content_vocab: List[str] = None
+) -> str:
+    """Correct misspelled Tamil words in the query.
+
+    Three-pass correction:
+    1. Fix misspelled question/action words (எழூதிய → எழுதிய)
+    2. Fix misspelled title/author words against CSV vocabulary
+    3. Fix remaining words against content vocabulary from indexed
+       documents (headings, topics — passed in by the caller)
+
+    Returns the corrected query, or the original if no corrections needed.
+    """
+    # Pass 1: correct question/action words
+    corrected = _correct_query_words(question)
+
+    # Pass 2: correct title/author words using CSV vocabulary
+    with _author_system_lock:
+        if csv_path not in _author_system_cache:
+            _author_system_cache[csv_path] = EnhancedAuthorQuerySystem(csv_path)
+        system = _author_system_cache[csv_path]
+
+    # Combine all vocabularies for a single pass over query words
+    title_vocab = []
+    author_vocab = []
+    all_titles = []
+
+    if system.df is not None and not system.df.empty:
+        df = system.df
+        title_vocab = _get_title_vocab(df)
+        author_vocab = _get_author_vocab(df)
+        all_titles = [str(t) for t in df["தலைப்பு"].dropna().unique()]
+
+    # Merge content vocab (from Qdrant headings) into a combined set
+    combined_vocab = set(title_vocab)
+    if content_vocab:
+        combined_vocab.update(content_vocab)
+
+    # All text to check for existing substring matches
+    all_reference_text = list(all_titles)
+    if content_vocab:
+        all_reference_text.extend(content_vocab)
+
+    # Extract Tamil words from the (already pass-1 corrected) query
+    query_words = re.findall(r"[\u0B80-\u0BFF]+", corrected)
+
+    for word in query_words:
+        if len(word) < 4:
+            continue
+        # Strip possessive suffix for matching
+        word_stripped = _strip_tamil_possessive_suffix_word(word)
+        if word_stripped in _KNOWN_QUERY_WORDS or word in _KNOWN_QUERY_WORDS:
+            continue
+
+        # Check if word already exists as substring in titles or content vocab
+        word_lower = word.lower()
+        if any(word_lower in t.lower() for t in all_reference_text):
+            continue
+
+        # Also check stripped form
+        stripped_lower = word_stripped.lower()
+        if stripped_lower != word_lower and any(
+            stripped_lower in t.lower() for t in all_reference_text
+        ):
+            continue
+
+        # Try to find best match across all vocabularies
+        best_match = None
+        best_score = 0.0
+
+        for vocab_word in combined_vocab:
+            score = fuzzy_match_score(word_stripped, vocab_word)
+            if score > best_score:
+                best_score = score
+                best_match = vocab_word
+
+        # Also check author names
+        for author_name in author_vocab:
+            for author_word in re.findall(r"[\u0B80-\u0BFF]+", author_name):
+                if len(author_word) < 4:
+                    continue
+                score = fuzzy_match_score(word_stripped, author_word)
+                if score > best_score:
+                    best_score = score
+                    best_match = author_word
+
+        if best_match and best_score >= _SPELLING_TOKEN_THRESHOLD:
+            logger.info(
+                f"[SPELLING] '{word}' → '{best_match}' " f"(score: {best_score:.2f})"
+            )
+            corrected = corrected.replace(word, best_match, 1)
+
+    if corrected != question:
+        logger.info(f"[SPELLING] Query corrected: '{question}' → '{corrected}'")
+
+    return corrected

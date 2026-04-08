@@ -1314,8 +1314,9 @@ class TestMainFunction:
         mock_render_about.assert_called_once()
 
 
+@patch("streamlit_app.fetch_issue_articles", return_value=[])
 @patch("streamlit_app.st")
-def test_render_tags_page_default(mock_st):
+def test_render_tags_page_default(mock_st, mock_fetch):
     """Test default tags page rendering."""
     mock_st.query_params = {}
 

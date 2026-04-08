@@ -1265,6 +1265,37 @@ class TestPydanticModels:
         msg = HistoryMessage(role="user", content="hello")
         assert msg.role == "user"
 
+    def test_history_message_long_content_accepted(self):
+        """Accept any content length (truncation happens at endpoint level)."""
+        from db.api import HistoryMessage
+
+        long_content = "அ" * 30000
+        msg = HistoryMessage(role="assistant", content=long_content)
+        assert len(msg.content) == 30000
+
+    def test_truncate_history_long_content(self):
+        """Truncate history entries exceeding max content length."""
+        from db.api import _MAX_HISTORY_CONTENT, QuestionRequest, _truncate_history
+
+        long_content = "அ" * (_MAX_HISTORY_CONTENT + 5000)
+        req = QuestionRequest(
+            question="test",
+            history=[
+                {"role": "user", "content": "short"},
+                {"role": "assistant", "content": long_content},
+            ],
+        )
+        result = _truncate_history(req)
+        assert result[0]["content"] == "short"
+        assert len(result[1]["content"]) == _MAX_HISTORY_CONTENT
+
+    def test_truncate_history_none(self):
+        """Return None when request has no history."""
+        from db.api import QuestionRequest, _truncate_history
+
+        req = QuestionRequest(question="test")
+        assert _truncate_history(req) is None
+
     def test_history_message_invalid_role(self):
         """Reject invalid role in HistoryMessage."""
         from pydantic import ValidationError

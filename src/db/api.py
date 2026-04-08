@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import boto3
-from article_tagger import TAXONOMY  # noqa: E402
 from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 from cache import _response_cache  # noqa: E402
 from csv_queries import EnhancedAuthorQuerySystem  # noqa: E402
@@ -28,6 +27,7 @@ from pydantic import BaseModel, Field
 from qdrant_client import models  # noqa: E402
 
 from config.config import get_magazine_config  # noqa: E402
+from db.article_tagger import TAXONOMY  # noqa: E402
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
@@ -117,11 +117,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+_MAX_HISTORY_CONTENT = 15000  # Truncate long history entries instead of rejecting
+
+
 class HistoryMessage(BaseModel):
     """A single conversation turn (user or assistant)."""
 
     role: str = Field(..., pattern=r"^(user|assistant)$")
-    content: str = Field(..., min_length=1, max_length=5000)
+    content: str = Field(..., min_length=1)
 
 
 class QuestionRequest(BaseModel):
@@ -508,6 +511,23 @@ async def get_about_image(filename: str):
     )
 
 
+def _truncate_history(request: "QuestionRequest"):
+    """Truncate long history entries instead of rejecting the request."""
+    if not request.history:
+        return None
+    history = []
+    for h in request.history:
+        content = h.content
+        if len(content) > _MAX_HISTORY_CONTENT:
+            content = content[:_MAX_HISTORY_CONTENT]
+            logger.info(
+                f"Truncated {h.role} history entry from "
+                f"{len(h.content)} to {_MAX_HISTORY_CONTENT} chars"
+            )
+        history.append({"role": h.role, "content": content})
+    return history
+
+
 @app.post("/api/ask", response_model=QuestionResponse, tags=["Search"])
 async def ask_question_endpoint(request: QuestionRequest):
     """
@@ -523,7 +543,7 @@ async def ask_question_endpoint(request: QuestionRequest):
     try:
         logger.info(f"Question received: {request.question[:100]}...")
 
-        history = [h.model_dump() for h in request.history] if request.history else None
+        history = _truncate_history(request)
         result = await ask_question_async(
             question=request.question,
             return_formatted=False,
@@ -558,7 +578,7 @@ async def ask_question_stream_endpoint(request: QuestionRequest):
     - event: sources — source documents (JSON array)
     - event: done — signals completion
     """
-    history = [h.model_dump() for h in request.history] if request.history else None
+    history = _truncate_history(request)
 
     def event_generator():
         """Yield SSE events for streaming response."""

@@ -9,6 +9,41 @@ import numpy as np
 import pytest
 from moto import mock_aws
 
+# ---------------------------------------------------------------------------
+# Mock torch — must be injected before any module that imports torch at the
+# top level (e.g. embeddings.py). Uses numpy arrays so the @ operator works.
+# ---------------------------------------------------------------------------
+mock_torch = Mock()
+mock_torch.set_grad_enabled = Mock()
+mock_torch.cuda.is_available = Mock(return_value=False)
+mock_torch.set_num_threads = Mock()
+mock_torch.set_num_interop_threads = Mock()
+mock_torch.tensor = lambda x: np.array(x)
+sys.modules["torch"] = mock_torch
+sys.modules["torch.cuda"] = mock_torch.cuda
+sys.modules["torch.backends"] = mock_torch.backends
+sys.modules["torch.backends.cuda"] = mock_torch.backends.cuda
+sys.modules["torch.backends.cudnn"] = mock_torch.backends.cudnn
+
+# Mock other heavy GPU/ML packages not installed in CI
+for _mod in ["torchvision", "torchaudio", "transformers", "accelerate", "bitsandbytes"]:
+    sys.modules[_mod] = Mock()
+
+
+# Mock streamlit — imported at module level in streamlit_app.py.
+# cache_data/cache_resource must be pass-through decorators so that
+# decorated functions (e.g. fetch_issue_articles) remain callable.
+def _st_passthrough(*args, **kwargs):
+    if len(args) == 1 and callable(args[0]) and not kwargs:
+        return args[0]  # @st.cache_data used directly
+    return lambda fn: fn  # @st.cache_data(ttl=300) style
+
+
+mock_streamlit = Mock()
+mock_streamlit.cache_data = _st_passthrough
+mock_streamlit.cache_resource = _st_passthrough
+sys.modules["streamlit"] = mock_streamlit
+
 
 class MockSentenceTransformer:
     """Mock SentenceTransformer to avoid loading heavy models."""

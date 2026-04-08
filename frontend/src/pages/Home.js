@@ -37,9 +37,10 @@ const Home = ({ language }) => {
 
     // Build history from last 3 Q&A turns (before adding the new messages)
     const historyMessages = messages.slice(-6); // last 3 turns = 6 messages max
+    const MAX_HISTORY_CONTENT = 15000;
     const history = historyMessages
       .filter((m) => m.content)
-      .map((m) => ({ role: m.role, content: m.content }));
+      .map((m) => ({ role: m.role, content: m.content.slice(0, MAX_HISTORY_CONTENT) }));
 
     setMessages((prev) => [
       ...prev,

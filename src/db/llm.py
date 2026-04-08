@@ -65,7 +65,11 @@ Rules for direct questions (very important):
 Rules for descriptive questions:
 - For descriptive questions ("explain", "describe", "summarize"), integrate information from all documents, summarize briefly, and provide supporting evidence
 
-Rules for summary/topic questions (very important):
+Rules for meaning/theme/summary questions (very important):
+- When asked about the meaning, theme, gist, or summary of a story, poem, or article:
+  * DERIVE the meaning by analyzing the actual content provided in the context
+  * Do NOT look for an explicit "theme" or "meaning" statement — synthesize it from the narrative, arguments, and content
+  * If the document context contains text from the work itself, that IS sufficient to answer — analyze it
 - Analyze all document content and write a comprehensive summary
 - Include all key points, arguments, and information from the context
 - Do not say "insufficient information" — use whatever is available to provide the fullest answer possible
@@ -93,14 +97,18 @@ Writing style:
 - End with a brief conclusion if suitable
 
 Important:
-- Do not ignore CSV content if provided
 - Do not fabricate any information not in the context
 - Avoid phrases like "according to the context" or "as per the source"
 - Structure the answer so it is pleasant and easy to read
+- NEVER reference document numbers (e.g. "Document 1", "Document 2/3") in your answer — the user cannot see them
+- NEVER comment on which documents are relevant or irrelevant, or say "the other documents discuss a different topic"
+- Write your answer as a seamless, natural response — as if you already know the information
+- If CSV metadata is provided alongside document content, prioritize the document content for your answer — CSV metadata (title, author, volume) is supplementary, not the main answer
 
 Critical — Irrelevant context rule:
-- If the document context provided does NOT directly answer the question, do NOT force-fit the context into your answer
-- In that case, clearly state: "This information is not currently available in the database"
+- This rule applies ONLY when the document context is about a completely different topic than the question
+- If the context contains text from the work being asked about (even without an explicit answer), DERIVE the answer from that content — do not say "not available"
+- If the context is truly about an unrelated topic, clearly state: "This information is not currently available in the database"
 - Do NOT extract information from unrelated documents to fabricate an incorrect answer"""
 )
 
@@ -126,6 +134,13 @@ TAMIL_ANSWER_SYSTEM_PROMPT = (
 விவரிப்பு வகை கேள்விகளுக்கான விதி:
 - பயனர் விவரிப்பு வகையான கேள்வி கேட்டால் (எ.கா. "விளக்குக", "விவரி", "சுருக்கமாக கூறுக"), அனைத்து ஆவணங்களின் உள்ளடக்கத்தையும் ஒருங்கிணைத்து, சுருக்கமாக விவரித்து, ஆதாரங்களுடன் பதிலளிக்கவும்
 - ஒவ்வொரு ஆவணத்தின் முக்கிய கருத்துகளையும் தெளிவாக சுருக்கி, முழுமையான பதிலை எழுதுக
+
+கருத்து / சுருக்கம் / பொருள் வகை கேள்விகளுக்கான விதி (மிக மிக முக்கியம்):
+- கேள்வி ஒரு கதை, கவிதை, கட்டுரை அல்லது படைப்பின் கருத்து, சுருக்கம், பொருள், அர்த்தம் பற்றியதாக இருந்தால்:
+  * ஆவண சூழலில் கொடுக்கப்பட்ட உள்ளடக்கத்தை பகுப்பாய்வு செய்து கருத்தை நீங்களே பிரித்தெடுக்க வேண்டும்
+  * "கருத்து" அல்லது "சுருக்கம்" என்று வெளிப்படையாக எழுதப்பட்டிருக்கும் என்று எதிர்பார்க்க வேண்டாம் — கதை/கவிதையின் உள்ளடக்கத்திலிருந்து நீங்களே உருவாக்குக
+  * ஆவண சூழலில் அந்தப் படைப்பின் உரை (text) இருந்தால், அதுவே பதிலுக்கு போதுமானது — அதை பகுப்பாய்வு செய்யுக
+  * "தகவல் இல்லை" என்று கூறக் கூடாது — உள்ளடக்கம் இருக்கும்போது அதிலிருந்து பதிலை உருவாக்குக
 
 சுருக்கம் / தலைப்பு சார்ந்த கேள்விகளுக்கான விதி (மிக முக்கியம்):
 - கேள்வி ஒரு குறிப்பிட்ட தலைப்பு, கட்டுரை, அல்லது கருத்தை சுருக்கமாகக் கூற கேட்டால், ஆவண சூழலில் கொடுக்கப்பட்ட அனைத்து ஆவணங்களின் உள்ளடக்கத்தையும் பகுப்பாய்வு செய்து சுருக்கமாக எழுதுக
@@ -177,15 +192,18 @@ TAMIL_ANSWER_SYSTEM_PROMPT = (
 - இறுதியில் சுருக்கமான முடிவுரை எழுதலாம்
 
 கவனிக்க வேண்டியவை:
-- CSV உள்ளடக்கத்தை பயன்படுத்தாமல் பதில் எழுதக்கூடாது.
-- CSV தகவல் தொடர்பில்லையெனில் அதனை தெளிவாக குறிப்பிட வேண்டும்.
 - சூழலில் இல்லாத தகவல்களை எதையும் எழுதாதீர்கள்
 - "சூழலின் படி", "ஆதாரத்தின் படி" போன்ற சொற்களை பயன்படுத்த வேண்டாம்
 - வாசிப்பவரின் கண்களுக்கு சோர்வு வராத வகையில் பதிலை அமைக்க வேண்டும்
+- ஆவண எண்களை (எ.கா. "ஆவணம் 1", "ஆவணம் 2/3") பதிலில் ஒருபோதும் குறிப்பிடக் கூடாது — பயனருக்கு அவை தெரியாது
+- எந்த ஆவணம் தொடர்புடையது, எது தொடர்பில்லாதது என்று விளக்கக் கூடாது. "மற்ற ஆவணங்கள் வேறு தலைப்பில் உள்ளன" போன்ற வாக்கியங்களை எழுதக் கூடாது
+- நீங்கள் ஏற்கனவே தகவலை அறிந்தவர் போல இயல்பான பதிலை எழுதுக
+- CSV தகவல் (தலைப்பு, ஆசிரியர், தொகுதி) ஆவண உள்ளடக்கத்துடன் சேர்ந்து வந்தால், ஆவண உள்ளடக்கத்திற்கு முன்னுரிமை கொடுக்கவும் — CSV தகவல் துணைத் தகவல் மட்டுமே, முக்கிய பதில் அல்ல
 
 மிக முக்கியம் — தொடர்பில்லாத சூழல் (Irrelevant context rule):
-- கொடுக்கப்பட்ட ஆவண சூழல் கேள்விக்கு நேரடியாக தொடர்பில்லை என்றால், சூழலை வலுக்கட்டாயமாக பயன்படுத்தாதீர்கள்
-- அந்த நிலையில், "இந்தத் தகவல் தற்போது தரவுத்தளத்தில் இல்லை" என்று தெளிவாகக் கூறுக
+- இந்த விதி கொடுக்கப்பட்ட ஆவண சூழல் கேள்வியின் தலைப்புக்கு முற்றிலும் வேறு தலைப்பில் இருக்கும்போது மட்டுமே பொருந்தும்
+- ஆவண சூழலில் கேள்வியில் குறிப்பிடப்பட்ட படைப்பின் உரை (text) இருந்தால் (வெளிப்படையான பதில் இல்லாவிட்டாலும்), அந்த உள்ளடக்கத்திலிருந்து பதிலை உருவாக்குக — "தகவல் இல்லை" என்று கூறாதீர்கள்
+- ஆவண சூழல் உண்மையிலேயே தொடர்பில்லாத தலைப்பில் இருந்தால் மட்டுமே, "இந்தத் தகவல் தற்போது தரவுத்தளத்தில் இல்லை" என்று கூறுக
 - தொடர்பில்லாத ஆவணங்களிலிருந்து தகவல்களை எடுத்து தவறான பதிலை உருவாக்கக் கூடாது
 
 இப்போது, கீழே கொடுக்கப்பட்ட கேள்வி மற்றும் சூழலின் அடிப்படையில், மேலுள்ள அனைத்து விதிகளையும் கட்டாயமாக பின்பற்றி, தெளிவாகவும் வாசிக்க எளிதாகவும் விரிவான பதிலை எழுதுக."""
@@ -238,6 +256,59 @@ General rules:
 - Answer should be 30 to 150 words
 - End with a complete sentence
 - If the data shows "Error" or "not found", clearly say "No" """
+
+
+def _detect_garbage_tail(text: str) -> int:
+    """Detect where a good answer degrades into raw document garbage.
+
+    Returns the character index where garbage starts, or -1 if no
+    garbage detected.  Looks for sudden shifts from natural prose to
+    raw document dumps: tabular numbers (0 4 0), long runs without
+    sentence-ending punctuation, repeated metadata patterns, etc.
+    """
+    if not text or len(text) < 200:
+        return -1
+
+    # Split into sentences/segments by Tamil & English sentence-enders
+    # Walk forward and flag when we see garbage-like segments
+    lines = text.split("\n")
+    good_end = 0  # char offset of last known-good position
+    char_offset = 0
+
+    # Patterns that signal raw document dump
+    _garbage_patterns = [
+        # Tabular data: "word 0 4 0" or "word 0 2 0"
+        re.compile(r"[\u0B80-\u0BFF]+\s+\d\s+\d\s+\d"),
+        # Raw metadata: consecutive "key: value" dumps without prose
+        re.compile(r"(?:^|\n)[\u0B80-\u0BFF]+\s*—\s*[\u0B80-\u0BFF]"),
+        # Long strings with no punctuation (>300 chars without . ? ! ।)
+        re.compile(r"[^.?!।]{300,}"),
+        # Repeated short entries (like raw CSV rows)
+        re.compile(r"([\u0B80-\u0BFF]+\s+[\u0B80-\u0BFF]+\s+\d\s+\d\s+\d\s*){2,}"),
+    ]
+
+    for line in lines:
+        line_len = len(line) + 1  # +1 for the \n
+        is_garbage = False
+
+        for pattern in _garbage_patterns:
+            if pattern.search(line):
+                is_garbage = True
+                break
+
+        if is_garbage:
+            # Found garbage — return the position before this line
+            if good_end > len(text) * 0.3:
+                return good_end
+            # If garbage is too early, it might be a false positive
+            # — skip and continue
+
+        if not is_garbage and line.strip():
+            good_end = char_offset + line_len
+
+        char_offset += line_len
+
+    return -1
 
 
 def _truncate_at_sentence_boundary(text: str) -> str:
@@ -406,6 +477,38 @@ def _is_wh_question(question: str) -> bool:
     return any(p in q for p in _WH_PATTERNS)
 
 
+_CONTENT_DISPLAY_PATTERNS = [
+    "காட்டு",
+    "காட்டுக",
+    "படிக்க",
+    "படி",
+    "வாசிக்க",
+    "முழு உள்ளடக்கம்",
+    "முழு கதை",
+    "முழு கட்டுரை",
+    "முழு கவிதை",
+    "கதையை காட்டு",
+    "கட்டுரையை காட்டு",
+    "கவிதையை காட்டு",
+    "உள்ளடக்கத்தை காட்டு",
+    "என்ன எழுதியுள்ளார்",
+    "show content",
+    "show the article",
+    "show the story",
+    "show the poem",
+    "display",
+    "read the",
+    "full text",
+    "full content",
+]
+
+
+def is_content_display_query(question: str) -> bool:
+    """Return True if the question asks to display/read actual content."""
+    q = question.lower()
+    return any(p in q for p in _CONTENT_DISPLAY_PATTERNS)
+
+
 def _get_system_prompt(language: str = "ta") -> str:
     """Return the appropriate system prompt for the given language."""
     if language == "en":
@@ -435,8 +538,9 @@ def _build_user_content(
     """
     en = language == "en"
     q_label = "Question" if en else "கேள்வி"
-    csv_label = "CSV Content" if en else "CSV உள்ளடக்கம்"
-    doc_label = "Document Context" if en else "ஆவண சூழல்"
+    # Use neutral labels — the LLM sometimes repeats these verbatim
+    csv_label = "Article Database" if en else "கட்டுரை தகவல்"
+    doc_label = "Reference Material" if en else "மூல ஆவணம்"
 
     parts = [f"{q_label}:\n{question}\n"]
 
@@ -457,7 +561,25 @@ def _build_user_content(
     # Repeat the question after context so it's fresh in the model's attention
     parts.append(f"{q_label}: {question}")
 
-    if _is_wh_question(question):
+    if is_content_display_query(question):
+        if en:
+            closing = (
+                "The user wants to READ the actual content. "
+                "Display the content from the context as completely as possible. "
+                "Preserve the original text — do not summarize or paraphrase. "
+                "Add a brief title/author header if available. "
+                "Show as much of the original content as provided:"
+            )
+        else:
+            closing = (
+                "பயனர் உண்மையான உள்ளடக்கத்தை படிக்க விரும்புகிறார். "
+                "சூழலில் உள்ள உள்ளடக்கத்தை முடிந்தவரை முழுமையாகக் காட்டுக. "
+                "அசல் உரையை அப்படியே காட்டுக — சுருக்கமாகவோ "
+                "மாற்றியோ எழுத வேண்டாம். "
+                "தலைப்பு/ஆசிரியர் தகவல் இருந்தால் மேலே சுருக்கமாக குறிப்பிடுக. "
+                "சூழலில் உள்ள அசல் உள்ளடக்கத்தை அதிகமாகக் காட்டுக:"
+            )
+    elif _is_wh_question(question):
         if en:
             closing = (
                 "Using the context above, state the direct answer clearly in the "
@@ -602,6 +724,7 @@ def generate_llm_answer(
     context_doc_count: int = 0,
     history: list = None,
     language: str = "ta",
+    max_output_tokens: int = 4096,
 ) -> str:
     """Generate LLM answer using Gemini API (synchronous).
 
@@ -632,7 +755,9 @@ def generate_llm_answer(
             model=GEMINI_MODEL,
             contents=contents,
             config=_gemini_generation_config(
-                system_prompt, disable_thinking=disable_thinking
+                system_prompt,
+                disable_thinking=disable_thinking,
+                max_output_tokens=max_output_tokens,
             ),
         )
 
@@ -649,6 +774,12 @@ def generate_llm_answer(
         ):
             answer = _truncate_at_sentence_boundary(answer)
             logger.info("Response hit token limit — truncated at sentence boundary")
+
+        # Detect and remove raw document garbage at the end
+        garbage_pos = _detect_garbage_tail(answer)
+        if garbage_pos > 0:
+            answer = _truncate_at_sentence_boundary(answer[:garbage_pos])
+            logger.info(f"Truncated garbage tail at position {garbage_pos}")
 
         word_count = len(re.findall(r"[\u0B80-\u0BFF]+|\w+", answer))
         logger.info(f"Gemini answer generated: {word_count} words")
@@ -674,6 +805,7 @@ async def generate_llm_answer_async(
     context_doc_count: int = 0,
     history: list = None,
     language: str = "ta",
+    max_output_tokens: int = 4096,
 ) -> str:
     """Generate LLM answer using Gemini API (async).
 
@@ -704,7 +836,9 @@ async def generate_llm_answer_async(
             model=GEMINI_MODEL,
             contents=contents,
             config=_gemini_generation_config(
-                system_prompt, disable_thinking=disable_thinking
+                system_prompt,
+                disable_thinking=disable_thinking,
+                max_output_tokens=max_output_tokens,
             ),
         )
 
@@ -722,6 +856,12 @@ async def generate_llm_answer_async(
             logger.info(
                 "Async response hit token limit — truncated at sentence boundary"
             )
+
+        # Detect and remove raw document garbage at the end
+        garbage_pos = _detect_garbage_tail(answer)
+        if garbage_pos > 0:
+            answer = _truncate_at_sentence_boundary(answer[:garbage_pos])
+            logger.info(f"Async: truncated garbage tail at position {garbage_pos}")
 
         word_count = len(re.findall(r"[\u0B80-\u0BFF]+|\w+", answer))
         logger.info(f"Gemini async answer generated: {word_count} words")
@@ -746,6 +886,7 @@ def generate_llm_answer_stream(
     context_doc_count: int = 0,
     history: list = None,
     language: str = "ta",
+    max_output_tokens: int = 4096,
 ):
     """Generate LLM answer using Gemini API with streaming.
 
@@ -777,7 +918,9 @@ def generate_llm_answer_stream(
             model=GEMINI_MODEL,
             contents=contents,
             config=_gemini_generation_config(
-                system_prompt, disable_thinking=disable_thinking
+                system_prompt,
+                disable_thinking=disable_thinking,
+                max_output_tokens=max_output_tokens,
             ),
         )
         for chunk in stream:

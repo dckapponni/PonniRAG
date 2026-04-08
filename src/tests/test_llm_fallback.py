@@ -662,6 +662,22 @@ class TestGeminiGenerationConfig:
         config = _gemini_generation_config(system_instruction="test")
         assert config.thinking_config is None
 
+    def test_custom_max_output_tokens(self):
+        """Pass custom max_output_tokens to config."""
+        from llm import _gemini_generation_config
+
+        config = _gemini_generation_config(
+            system_instruction="test", max_output_tokens=8192
+        )
+        assert config.max_output_tokens == 8192
+
+    def test_default_max_output_tokens(self):
+        """Default max_output_tokens is 4096."""
+        from llm import _gemini_generation_config
+
+        config = _gemini_generation_config(system_instruction="test")
+        assert config.max_output_tokens == 4096
+
 
 # ============================================================================
 # SYSTEM PROMPT SELECTION TESTS (lines 412, 419)
@@ -710,9 +726,8 @@ class TestBuildUserContent:
         from llm import _build_user_content
 
         result = _build_user_content("question", "", "csv data")
-        assert "CSV" in result
-        assert "Document Context" not in result
-        assert "ஆவண சூழல்" not in result
+        assert "csv data" in result
+        assert "மூல ஆவணம்" not in result
 
     def test_omits_empty_csv(self):
         """Omit CSV section when csv_context is empty."""
@@ -775,7 +790,7 @@ class TestBuildUserContent:
 
         result = _build_user_content("test", "doc", "csv", language="en")
         assert "Question:" in result
-        assert "Document Context:" in result
+        assert "Reference Material:" in result
 
 
 # ============================================================================
@@ -1230,3 +1245,146 @@ class TestExtractiveAnswer:
         result = generate_extractive_answer(facts, "q")
         assert "__" not in result
         assert "பொன்னி களஞ்சியம்" not in result
+
+
+# ============================================================================
+# CONTENT DISPLAY QUERY DETECTION
+# ============================================================================
+
+
+class TestIsContentDisplayQuery:
+    """Test is_content_display_query detects show/read intent."""
+
+    def test_tamil_show_pattern(self):
+        """Detect Tamil 'காட்டு' pattern."""
+        from llm import is_content_display_query
+
+        assert is_content_display_query("வளையல் வாங்கலீயோ கதையை காட்டு")
+
+    def test_tamil_read_pattern(self):
+        """Detect Tamil 'படிக்க' pattern."""
+        from llm import is_content_display_query
+
+        assert is_content_display_query("இந்தக் கவிதையை படிக்க வேண்டும்")
+
+    def test_tamil_full_content(self):
+        """Detect Tamil 'முழு கதை' pattern."""
+        from llm import is_content_display_query
+
+        assert is_content_display_query("முழு கதை என்ன")
+
+    def test_english_show(self):
+        """Detect English 'show content' pattern."""
+        from llm import is_content_display_query
+
+        assert is_content_display_query("show the article about Dravidian movement")
+
+    def test_english_full_text(self):
+        """Detect English 'full text' pattern."""
+        from llm import is_content_display_query
+
+        assert is_content_display_query("full text of the poem")
+
+    def test_non_display_query(self):
+        """Regular question should not match."""
+        from llm import is_content_display_query
+
+        assert not is_content_display_query("பொன்னி இதழ் பற்றி கூறுக")
+
+    def test_summary_query_not_display(self):
+        """Summary question should not match display patterns."""
+        from llm import is_content_display_query
+
+        assert not is_content_display_query("கருணாநிதி கருத்து என்ன")
+
+
+class TestBuildUserContentDisplay:
+    """Test _build_user_content uses display closing for content queries."""
+
+    def test_display_closing_tamil(self):
+        """Content display query gets display-specific closing."""
+        from llm import _build_user_content
+
+        result = _build_user_content("கதையை காட்டு", "doc content", "", language="ta")
+        assert "அசல் உரை" in result or "உள்ளடக்கத்தை" in result
+
+    def test_display_closing_english(self):
+        """English content display query gets display-specific closing."""
+        from llm import _build_user_content
+
+        result = _build_user_content(
+            "show the article", "doc content", "", language="en"
+        )
+        assert "READ" in result or "Display" in result
+
+    def test_normal_query_no_display_closing(self):
+        """Normal query should not get display closing."""
+        from llm import _build_user_content
+
+        result = _build_user_content(
+            "பொன்னி இதழ் பற்றி கூறுக", "doc content", "", language="ta"
+        )
+        assert "அசல் உரை" not in result
+
+
+# ============================================================================
+# GARBAGE TAIL DETECTION
+# ============================================================================
+
+
+class TestDetectGarbageTail:
+    """Test _detect_garbage_tail detects raw document dumps."""
+
+    def test_clean_text_no_garbage(self):
+        """Clean prose should return -1 (no garbage)."""
+        from llm import _detect_garbage_tail
+
+        text = (
+            "பொன்னி இதழில் வெளியான கதையின் கருத்து மிக அழகானது. "
+            "இது குழந்தைகளுக்கான படைப்பு. "
+            "பகுத்தறிவு சிந்தனையை வளர்க்கிறது."
+        )
+        assert _detect_garbage_tail(text) == -1
+
+    def test_tabular_data_detected(self):
+        """Detect tabular metadata like 'name 0 4 0'."""
+        from llm import _detect_garbage_tail
+
+        good = (
+            "பொன்னி இதழில் வெளியான கதையின் கருத்து மிக அழகானது. "
+            "இது குழந்தைகளுக்கான படைப்பு ஆகும். "
+            "பகுத்தறிவு சிந்தனையை வளர்க்கும் நோக்கில் எழுதப்பட்டது. "
+            "இந்தக் கதை குழந்தைகளை இயற்கையை நேசிக்க தூண்டுகிறது. "
+            "மிகவும் சுவாரசியமான கதையாக அமைந்துள்ளது."
+        )
+        garbage = "நாரா நாச்சியப்பன் 0 4 0\n" "தங்கமணி 0 2 0\n" "கலைமணி 0 2 0"
+        text = good + "\n" + garbage
+        pos = _detect_garbage_tail(text)
+        assert pos > 0
+        assert pos < len(text)
+
+    def test_short_text_no_detection(self):
+        """Short text should return -1 (skip detection)."""
+        from llm import _detect_garbage_tail
+
+        assert _detect_garbage_tail("short") == -1
+
+    def test_empty_text(self):
+        """Empty text should return -1."""
+        from llm import _detect_garbage_tail
+
+        assert _detect_garbage_tail("") == -1
+
+    def test_repeated_entries_detected(self):
+        """Detect repeated short data entries."""
+        from llm import _detect_garbage_tail
+
+        good = (
+            "பொன்னி இதழில் வெளியான கதையின் கருத்து மிக அழகானது. "
+            "இது குழந்தைகளுக்கான படைப்பு ஆகும். "
+            "பகுத்தறிவு சிந்தனையை வளர்க்கும் நோக்கில் எழுதப்பட்டது. "
+        ) * 3
+        garbage = "நாச்சியப்பன் 0 4 0 தங்கமணி 0 6 0 கலைமணி 0 2 0"
+        text = good + "\n" + garbage
+        pos = _detect_garbage_tail(text)
+        assert pos > 0
