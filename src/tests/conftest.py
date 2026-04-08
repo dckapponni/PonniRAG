@@ -29,8 +29,20 @@ sys.modules["torch.backends.cudnn"] = mock_torch.backends.cudnn
 for _mod in ["torchvision", "torchaudio", "transformers", "accelerate", "bitsandbytes"]:
     sys.modules[_mod] = Mock()
 
-# Mock streamlit — imported at module level in streamlit_app.py
-sys.modules["streamlit"] = Mock()
+
+# Mock streamlit — imported at module level in streamlit_app.py.
+# cache_data/cache_resource must be pass-through decorators so that
+# decorated functions (e.g. fetch_issue_articles) remain callable.
+def _st_passthrough(*args, **kwargs):
+    if len(args) == 1 and callable(args[0]) and not kwargs:
+        return args[0]  # @st.cache_data used directly
+    return lambda fn: fn  # @st.cache_data(ttl=300) style
+
+
+mock_streamlit = Mock()
+mock_streamlit.cache_data = _st_passthrough
+mock_streamlit.cache_resource = _st_passthrough
+sys.modules["streamlit"] = mock_streamlit
 
 
 class MockSentenceTransformer:
