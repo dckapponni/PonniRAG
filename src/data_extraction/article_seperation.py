@@ -29,12 +29,22 @@ from s3_utils import file_exists, list_files, upload_json
 from shared_author import build_shared_authors_dict_s3  # noqa: E402
 from text_processing import get_intro_keywords, normalize_text  # noqa: E402
 
-from config.config import INPUT_PREFIX  # noqa: E402
-from config.config import BUCKET_NAME, CSV_PATH, OUTPUT_PREFIX
+from config.config import (  # noqa: E402
+    BUCKET_NAME,
+    CSV_PATH,
+    EXTRACTED_OUTPUT,
+    INPUT_PREFIX,
+    OUTPUT_PREFIX,
+)
 
-current_dir = Path(__file__).resolve().parent
-project_root = current_dir.parent
-sys.path.insert(0, str(project_root))
+# ── Fix import path ────────────────────────────────────────────────────────
+# Script lives at:  src/data_extraction/article_seperation.py
+# Project root is:  Tagging_feature/   (parents[2])
+# config package:   Tagging_feature/src/config/
+_project_root = Path(__file__).resolve().parents[2]  # Tagging_feature/
+_src_root = Path(__file__).resolve().parents[1]  # Tagging_feature/src/
+sys.path.insert(0, str(_project_root))
+sys.path.insert(0, str(_src_root))
 
 
 def setup_logging(log_file="tamil_doc_processing.log"):
@@ -332,7 +342,6 @@ def extract_authors_from_content(lines):
                     authors_normalized.append(normalize_text(clean))
 
             # Position pattern: short line right after another short line
-            # (title → author pattern)
             elif (
                 i > 0
                 and len(lines[i - 1].strip()) <= 25
@@ -399,7 +408,6 @@ def run_pattern_extraction(
     articles = []
     article_no = start_article_no
 
-    # Count remaining unprocessed lines
     remaining_count = sum(
         1
         for i in range(content_start_idx, len(lines))
@@ -436,6 +444,7 @@ def run_pattern_extraction(
                 "content": article["content"],
                 "year": year,
                 "source_document": source_document,
+                "subtopics": [],
             }
         )
         article_no += 1
@@ -463,6 +472,7 @@ def run_pattern_extraction(
                 "content": article["content"],
                 "year": year,
                 "source_document": source_document,
+                "subtopics": [],
             }
         )
         article_no += 1
@@ -490,6 +500,7 @@ def run_pattern_extraction(
                 "content": article["content"],
                 "year": year,
                 "source_document": source_document,
+                "subtopics": [],
             }
         )
         article_no += 1
@@ -534,6 +545,7 @@ def run_pattern_extraction(
                             "content": content,
                             "year": year,
                             "source_document": source_document,
+                            "subtopics": [],
                         }
                     )
                     article_no += 1
@@ -567,6 +579,7 @@ def run_pattern_extraction(
                 "content": article["content"],
                 "year": year,
                 "source_document": source_document,
+                "subtopics": [],
             }
         )
         article_no += 1
@@ -582,6 +595,11 @@ def parse_tamil_document(lines, shared_authors_dict, csv_df, s3_key):
     for pattern extraction (author extraction + line marking).
     CSV extraction does NOT use TOC at all.
 
+    CSV articles now support a topic→subtopic hierarchy:
+    - Main topics with பெற்றோர்_வ.எ. = NaN are top-level articles.
+    - Rows with a பெற்றோர்_வ.எ. value are subtopics nested under
+      their parent article.
+
     Flow:
     ┌─────────────────────────────────────────────────────────┐
     │ STEP 1: Extract மலர்/இதழ்/year from FILENAME           │
@@ -593,8 +611,9 @@ def parse_tamil_document(lines, shared_authors_dict, csv_df, s3_key):
     │         Mark TOC lines as processed                     │
     ├─────────────────────────────────────────────────────────┤
     │ STEP 3: CSV extraction (if மலர்/இதழ் found)            │
+    │         Build topic→subtopic tree from CSV rows         │
     │         Search titles in FULL document                  │
-    │         No TOC dependency                               │
+    │         Extract per-subtopic content between boundaries │
     │         Mark extracted lines as processed               │
     ├─────────────────────────────────────────────────────────┤
     │ STEP 4: Pattern extraction on REMAINING lines only      │
@@ -701,13 +720,13 @@ def parse_tamil_document(lines, shared_authors_dict, csv_df, s3_key):
 
         if not authors_original:
             logger.info(
-                "Trying content-based author extraction " "(dash/position patterns)"
+                "Trying content-based author extraction (dash/position patterns)"
             )
             authors_original, authors_normalized = extract_authors_from_content(lines)
             if authors_original:
                 logger.info(f"Content-based: {len(authors_original)} authors")
 
-        logger.info("Total authors for pattern matching: " f"{len(authors_original)}")
+        logger.info(f"Total authors for pattern matching: {len(authors_original)}")
 
         articles = []
         article_no = 1
@@ -733,8 +752,12 @@ def parse_tamil_document(lines, shared_authors_dict, csv_df, s3_key):
                     for k in range(start_line, min(end_line, len(lines))):
                         processed_lines[k] = True
 
+                csv_subtopic_count = sum(
+                    len(a.get("subtopics", [])) for a in csv_result["articles"]
+                )
                 logger.info(
-                    f"CSV: {len(csv_result['articles'])} articles. "
+                    f"CSV: {len(csv_result['articles'])} articles "
+                    f"({csv_subtopic_count} subtopics). "
                     "Remaining lines go to patterns."
                 )
 
@@ -754,7 +777,7 @@ def parse_tamil_document(lines, shared_authors_dict, csv_df, s3_key):
                         )
             else:
                 logger.warning(
-                    "CSV returned no articles — " "all content goes to patterns"
+                    "CSV returned no articles — all content goes to patterns"
                 )
         else:
             logger.info(
@@ -787,10 +810,19 @@ def parse_tamil_document(lines, shared_authors_dict, csv_df, s3_key):
             for a in authors_original
         ]
 
+        # Summary counts
+        csv_article_count = len(articles) - len(pattern_articles)
+        csv_subtopic_count = sum(
+            len(a.get("subtopics", [])) for a in articles[:csv_article_count]
+        )
+
         logger.info("=" * 80)
         logger.info(f"TOTAL: {len(articles)} articles")
-        logger.info(f"  CSV:      {len(articles) - len(pattern_articles)}")
-        logger.info(f"  Patterns: {len(pattern_articles)}")
+        logger.info(
+            f"  CSV:      {csv_article_count} articles "
+            f"({csv_subtopic_count} subtopics)"
+        )
+        logger.info(f"  Patterns: {len(pattern_articles)} articles")
         logger.info("=" * 80)
 
         return {
@@ -833,7 +865,7 @@ def process_s3_files(force_reprocess=False):
             return
 
         # List TXT files
-        txt_files = list_files(BUCKET_NAME, INPUT_PREFIX, suffix=".txt")
+        txt_files = list_files(BUCKET_NAME, EXTRACTED_OUTPUT, suffix=".txt")
         if not txt_files:
             logger.warning("No TXT files found")
             return
@@ -849,7 +881,7 @@ def process_s3_files(force_reprocess=False):
         for idx, txt_key in enumerate(txt_files, 1):
 
             relative_key = txt_key[len(INPUT_PREFIX) :]
-            output_key = f"{OUTPUT_PREFIX}" f"{relative_key.rsplit('.', 1)[0]}.json"
+            output_key = f"{OUTPUT_PREFIX}{relative_key.rsplit('.', 1)[0]}.json"
 
             logger.info("")
             logger.info("=" * 80)
@@ -878,7 +910,14 @@ def process_s3_files(force_reprocess=False):
 
                 # Save articles JSON
                 upload_json(BUCKET_NAME, output_key, {"articles": result["articles"]})
-                logger.info(f"Saved {len(result['articles'])} articles")
+
+                subtopic_total = sum(
+                    len(a.get("subtopics", [])) for a in result["articles"]
+                )
+                logger.info(
+                    f"Saved {len(result['articles'])} articles "
+                    f"({subtopic_total} subtopics)"
+                )
 
                 # Save authors JSON
                 output_key_prefix = (
@@ -892,7 +931,10 @@ def process_s3_files(force_reprocess=False):
                     result["authors_list"],
                 )
 
-                logger.info(f"SUCCESS: {len(result['articles'])} articles")
+                logger.info(
+                    f"SUCCESS: {len(result['articles'])} articles "
+                    f"({subtopic_total} subtopics)"
+                )
                 processed += 1
 
             except Exception as e:
@@ -908,7 +950,7 @@ def process_s3_files(force_reprocess=False):
         logger.info(f"  Failed:    {failed}")
         if len(txt_files) > 0:
             logger.info(
-                "  Success: " f"{((processed + skipped)/len(txt_files)*100):.1f}%"
+                "  Success: " f"{((processed + skipped) / len(txt_files) * 100):.1f}%"
             )
         logger.info("=" * 80)
 

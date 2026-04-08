@@ -1,4 +1,50 @@
-"""CSV fuzzy matching utilities for Tamil document article extraction."""
+"""CSV fuzzy matching utilities for Tamil document article extraction.
+
+New CSV format (2025):
+  - வ.எ.              : row serial number
+  - ஆண்டு             : year
+  - மலர்              : volume
+  - இதழ்              : issue
+  - தலைப்பு           : title
+  - ஆசிரியர்          : author (brackets = main-topic, plain = subtopic)
+  - பெற்றோர்_வ.எ.    : parent row number (NaN = main topic, int = subtopic)
+
+Output JSON shape
+-----------------
+{
+  "articles": [
+    {
+      "doc_id": "1",
+      "doc_issue": "6",
+      "article_no": 1,
+      "title": "வளரும் இலக்கியம்",           ← main topic
+      "author_name": [],                       ← [] when no author
+      "year": "1947",
+      "source_document": "VOL1-6-1947.txt",
+      "subtopics": [
+        {
+          "subtopic_no": 1,
+          "title": "அழகு",
+          "author_name": "தோழர் அறிவழகன்",
+          "content": "..."
+        },
+        ...
+      ]
+    },
+    {
+      "doc_id": "1",
+      "doc_issue": "6",
+      "article_no": 2,
+      "title": "கண் திறக்குமா?",              ← standalone (no subtopics)
+      "author_name": ["நக்கீரன்"],
+      "content": "...",
+      "year": "1947",
+      "source_document": "VOL1-6-1947.txt",
+      "subtopics": []
+    }
+  ]
+}
+"""
 
 import logging
 import re
@@ -10,41 +56,39 @@ import pandas as pd
 logger = logging.getLogger("TamilDocProcessor.csv_fuzzy_matcher")
 
 
-def load_csv(csv_path):
-    """Load CSV file where multi-author fields are wrapped in double quotes.
+# ---------------------------------------------------------------------------
+# CSV loading
+# ---------------------------------------------------------------------------
 
-    "[பாண்டியன், நா. வேத்தரசன், வணங்காமுடி]"
-    pandas needs quotechar='"' to read them as a single field.
+
+def load_csv(csv_path):
+    """Load CSV file.
+
+    Multi-author fields wrapped in double quotes are handled
+    by pandas quotechar setting.
+
+    "[பாண்டியன், நா. வேத்தரசன், வணங்காமுடி]" → single field.
     """
-    return pd.read_csv(csv_path, encoding="utf-8", quotechar='"')
+    df = pd.read_csv(csv_path, encoding="utf-8", quotechar='"')
+    # Normalise column names (strip whitespace)
+    df.columns = [c.strip() for c in df.columns]
+    return df
+
+
+# ---------------------------------------------------------------------------
+# String helpers
+# ---------------------------------------------------------------------------
 
 
 def calculate_similarity(str1, str2):
-    """
-    Calculate similarity percentage between two strings.
-
-    Args:
-        str1 (str): First string
-        str2 (str): Second string
-
-    Returns:
-        float: Similarity 0-100
-    """
+    """Return similarity percentage (0-100) between two strings."""
     if not str1 or not str2:
         return 0
     return SequenceMatcher(None, str1, str2).ratio() * 100
 
 
 def remove_symbols(text):
-    """
-    Remove punctuation and symbols, keep Unicode letters and spaces.
-
-    Args:
-        text (str): Text to clean
-
-    Returns:
-        str: Cleaned text
-    """
+    """Remove punctuation/symbols; keep Unicode letters and spaces."""
     if pd.isna(text):
         return ""
     text = str(text).strip()
@@ -53,49 +97,8 @@ def remove_symbols(text):
     return text.strip()
 
 
-def parse_author_field(author_val):
-    """
-    Parse author field that may contain bracket-wrapped names.
-
-    Handles:
-    - NA                                         -> []
-    - [நக்கீரன்]                                  -> ['நக்கீரன்']
-    - [பாண்டியன், நா. வேத்தரசன், வணங்காமுடி]
-      -> ['பாண்டியன்', 'நா. வேத்தரசன்', 'வணங்காமுடி']
-    - நக்கீரன் (no brackets, legacy)              -> ['நக்கீரன்']
-
-    Args:
-        author_val: raw CSV cell value
-
-    Returns:
-        list[str]: list of author name strings (may be empty)
-    """
-    if pd.isna(author_val):
-        return []
-    raw = str(author_val).strip()
-    if not raw or raw == "NA":
-        return []
-
-    # Strip outer brackets if present
-    if raw.startswith("[") and raw.endswith("]"):
-        raw = raw[1:-1].strip()
-
-    # Split by comma for multiple authors
-    authors = [a.strip() for a in raw.split(",") if a.strip()]
-    return authors
-
-
 def normalize_csv_value(val):
-    """Normalize CSV values for consistent comparison.
-
-    Converts "1.0" -> "1", strips whitespace.
-
-    Args:
-        val: CSV cell value
-
-    Returns:
-        str: Normalized string
-    """
+    """Normalize CSV values: '1.0' → '1', strip whitespace."""
     if pd.isna(val):
         return ""
     val_str = str(val).strip()
@@ -109,19 +112,71 @@ def normalize_csv_value(val):
     return val_str
 
 
-def extract_malar_ithal_from_filename(filename):
+# ---------------------------------------------------------------------------
+# Author field parsing
+# ---------------------------------------------------------------------------
+
+
+def parse_author_field(author_val):
+    """Parse author field from either format.
+
+    Main-topic rows  : "[நக்கீரன்]" or "[A, B, C]" or "[]" or NA
+    Subtopic rows    : "தோழர் அறிவழகன்"  (plain, no brackets)
+
+    Returns:
+        list[str]: list of author name strings (may be empty)
     """
-    Extract மலர் and இதழ் from filename.
+    if pd.isna(author_val):
+        return []
+    raw = str(author_val).strip()
+    if not raw or raw == "NA":
+        return []
 
-    Handles:
-    - VOL5-7-1951
-    - VOL5 - 7 - 1951
-    - VOL1-PONGAL-1948  (text இதழ்)
-    - VOL_5_7_1951
-    - 5-7-1951
+    # Bracket-wrapped (main topic)
+    if raw.startswith("[") and raw.endswith("]"):
+        inner = raw[1:-1].strip()
+        if not inner:
+            return []
+        authors = [a.strip() for a in inner.split(",") if a.strip()]
+        return authors
 
-    Args:
-        filename (str): filename with or without extension
+    # Plain (subtopic) — treat whole value as single author
+    return [raw]
+
+
+def is_subtopic_row(row):
+    """Return True when the row has a parent row number (it is a subtopic)."""
+    parent_col = "பெற்றோர்_வ.எ."
+    if parent_col not in row.index:
+        return False
+    val = row[parent_col]
+    if pd.isna(val):
+        return False
+    try:
+        int(float(val))
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def get_parent_row_no(row):
+    """Return the parent வ.எ. as int, or None."""
+    try:
+        return int(float(row["பெற்றோர்_வ.எ."]))
+    except (ValueError, TypeError, KeyError):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Filename / text extraction
+# ---------------------------------------------------------------------------
+
+
+def extract_malar_ithal_from_filename(filename):
+    """Extract மலர் and இதழ் from filename.
+
+    Handles: VOL5-7-1951 | VOL5 - 7 - 1951 | VOL1-PONGAL-1948
+             VOL_5_7_1951 | 5-7-1951
 
     Returns:
         tuple: (malar, ithal, year) as strings, or (None, None, None)
@@ -132,7 +187,9 @@ def extract_malar_ithal_from_filename(filename):
 
         # Pattern 1: VOL5-7-1951 (numeric இதழ்)
         vol_match = re.search(
-            r"VOL\s*[-_]?\s*(\d+)\s*[-_]\s*(\d+)\s*[-_]\s*(\d{4})", name, re.IGNORECASE
+            r"VOL\s*[-_]?\s*(\d+)\s*[-_]\s*(\d+)\s*[-_]\s*(\d{4})",
+            name,
+            re.IGNORECASE,
         )
         if vol_match:
             malar = str(int(vol_match.group(1)))
@@ -151,7 +208,6 @@ def extract_malar_ithal_from_filename(filename):
             malar = str(int(vol_text_match.group(1)))
             ithal_text = vol_text_match.group(2).upper()
             year = vol_text_match.group(3)
-
             ITHAL_MAP = {"PONGAL": "பொங்கல் மலர்"}
             ithal = ITHAL_MAP.get(ithal_text, ithal_text)
             logger.info(f"VOL-TEXT pattern: மலர்={malar}, இதழ்={ithal}, year={year}")
@@ -188,9 +244,7 @@ def extract_malar_ithal_from_filename(filename):
 
 
 def extract_malar_ithal_from_text(lines):
-    """Extract malar and ithal from document text as fallback.
-
-    Used only when filename parsing fails.
+    """Extract மலர் and இதழ் from document text (fallback).
 
     Args:
         lines (list): document lines
@@ -206,25 +260,21 @@ def extract_malar_ithal_from_text(lines):
         ithal = None
         year = None
 
-        # Check for பொங்கல் மலர் (special issue)
         pongal_match = re.search(r"பொங்கல்\s*மலர்", text)
         if pongal_match:
             malar = "பொங்கல்"
             ithal = "பொங்கல் மலர்"
             logger.info("Found பொங்கல் மலர் in text")
 
-        # Extract year
         year_match = re.search(r"(19|20)\d{2}", text)
         if year_match:
             year = year_match.group(0)
 
-        # Extract numeric மலர்
         if not malar:
             malar_match = re.search(r"மலர்\s*[:—\-]?\s*(\d+)", text)
             if malar_match:
                 malar = str(int(malar_match.group(1)))
 
-        # Extract இதழ்
         if not ithal:
             ithal_match = re.search(r"இதழ்\s*[:—\-]?\s*(\d+)", text)
             if ithal_match:
@@ -242,34 +292,25 @@ def extract_malar_ithal_from_text(lines):
         return None, None, None
 
 
+# ---------------------------------------------------------------------------
+# CSV row matching
+# ---------------------------------------------------------------------------
+
+
 def match_csv_rows(csv_df, malar, ithal):
-    """
-    Match CSV rows by மலர் (exact) and இதழ் (fuzzy + contains).
-
-    Handles:
-    - "பொங்கல் மலர்" vs "பொங்கல்"
-    - "பொங்கல் மலர் " (trailing space)
-    - numeric: "7" vs "7.0"
-
-    Args:
-        csv_df (pd.DataFrame): CSV dataframe
-        malar (str): மலர் value
-        ithal (str): இதழ் value
+    """Match CSV rows by மலர் (exact) and இதழ் (fuzzy + contains).
 
     Returns:
-        pd.DataFrame: matched rows
+        pd.DataFrame: matched rows (all columns preserved)
     """
     malar_norm = normalize_csv_value(malar).strip()
     ithal_norm = normalize_csv_value(ithal).strip()
 
-    csv_df = csv_df.copy()
-    csv_df["மலர்_norm"] = csv_df["மலர்"].apply(lambda x: normalize_csv_value(x).strip())
-    csv_df["இதழ்_norm"] = csv_df["இதழ்"].apply(lambda x: normalize_csv_value(x).strip())
+    df = csv_df.copy()
+    df["_மலர்_norm"] = df["மலர்"].apply(lambda x: normalize_csv_value(x).strip())
+    df["_இதழ்_norm"] = df["இதழ்"].apply(lambda x: normalize_csv_value(x).strip())
 
-    # Exact match first
-    exact = csv_df[
-        (csv_df["மலர்_norm"] == malar_norm) & (csv_df["இதழ்_norm"] == ithal_norm)
-    ]
+    exact = df[(df["_மலர்_norm"] == malar_norm) & (df["_இதழ்_norm"] == ithal_norm)]
     if not exact.empty:
         logger.info(
             f"Exact CSV match: {len(exact)} rows for "
@@ -277,27 +318,25 @@ def match_csv_rows(csv_df, malar, ithal):
         )
         return exact
 
-    # Fuzzy match on இதழ் — handles பொங்கல் vs பொங்கல் மலர்
     def ithal_similar(csv_ithal):
         if ithal_norm in csv_ithal or csv_ithal in ithal_norm:
             return True
         return calculate_similarity(ithal_norm, csv_ithal) >= 80
 
-    fuzzy = csv_df[
-        (csv_df["மலர்_norm"] == malar_norm) & (csv_df["இதழ்_norm"].apply(ithal_similar))
+    fuzzy = df[
+        (df["_மலர்_norm"] == malar_norm) & (df["_இதழ்_norm"].apply(ithal_similar))
     ]
     if not fuzzy.empty:
         logger.info(
-            f"Fuzzy CSV match: {len(fuzzy)} rows " f"('{ithal_norm}' ~ CSV இதழ் values)"
+            f"Fuzzy CSV match: {len(fuzzy)} rows ('{ithal_norm}' ~ CSV இதழ் values)"
         )
         return fuzzy
 
-    # Debug: show what the CSV actually has for this மலர்
-    malar_only = csv_df[csv_df["மலர்_norm"] == malar_norm]
+    malar_only = df[df["_மலர்_norm"] == malar_norm]
     if not malar_only.empty:
-        unique_ithal = list(malar_only["இதழ்_norm"].unique())
+        unique_ithal = list(malar_only["_இதழ்_norm"].unique())
         logger.warning(
-            f"No இதழ் match. மலர்={malar_norm} exists in CSV with "
+            f"No இதழ் match. மலர்={malar_norm} exists with "
             f"இதழ் values: {unique_ithal}. Looking for: '{ithal_norm}'"
         )
     else:
@@ -306,184 +345,295 @@ def match_csv_rows(csv_df, malar, ithal):
     return pd.DataFrame()
 
 
-def find_article_boundary_fuzzy(lines, title, next_title=None):
-    """
-    Find article content by fuzzy matching title in FULL document.
+# ---------------------------------------------------------------------------
+# Topic / subtopic tree building
+# ---------------------------------------------------------------------------
 
-    KEY RULE:
-    A title appears in TWO places in the document:
-      1. Inside TOC  — title is embedded in a longer line
-                       with author name + page number
-                       e.g. "அணியணியாக வாரீர்! நாரா நாச்சியப்பன் 3"
-      2. Outside TOC — title appears ALONE on its own line
-                       e.g. "அணியணியாக வாரீர்!"
 
-    We always want the OUTSIDE-TOC occurrence — the standalone line.
+def build_topic_tree(matched_df):
+    """Organise matched CSV rows into a parent→children structure.
 
-    Strategy:
-    - Collect ALL candidate lines that match >= 70% similarity
-    - Among candidates, PREFER lines where the cleaned line text
-      matches the cleaned title at >= 95% (near-exact / standalone)
-    - If no near-exact match, fall back to best fuzzy match
-
-    This naturally picks the standalone occurrence outside TOC
-    because TOC lines are longer (title + author + page) and
-    therefore have lower similarity to just the title.
-
-    Args:
-        lines (list): ALL document lines (full document, including TOC)
-        title (str): article title from CSV
-        next_title (str): next article title for boundary detection
+    A row is a **main topic** when பெற்றோர்_வ.எ. is NaN/empty.
+    A row is a **subtopic** when பெற்றோர்_வ.எ. holds the வ.எ. of its parent.
 
     Returns:
-        tuple: (content, start_line, end_line)
-               content is None if not found
+        list[dict]: ordered list of topic dicts:
+            {
+                "row_no": int,
+                "title": str,
+                "authors": list[str],
+                "year": str,
+                "subtopics": [
+                    {"row_no": int, "title": str, "author": str}, ...
+                ]
+            }
     """
-    try:
-        title_clean = remove_symbols(title)
+    # Build lookup: row_no → row
+    row_lookup = {}
+    for _, row in matched_df.iterrows():
+        rno = normalize_csv_value(row.get("வ.எ.", ""))
+        try:
+            rno_int = int(float(rno))
+        except (ValueError, TypeError):
+            rno_int = None
+        if rno_int is not None:
+            row_lookup[rno_int] = row
 
-        if not title_clean:
-            logger.warning(f"Empty title after cleaning: '{title}'")
-            return None, -1, -1
+    topics = []  # ordered main topics
+    topic_index = {}  # row_no → position in topics list
 
-        # --- PASS 1: collect all candidates ---
-        # candidate = (similarity, line_index, line_length)
-        candidates = []
+    for _, row in matched_df.iterrows():
+        if is_subtopic_row(row):
+            continue  # handled below
 
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-            line_clean = remove_symbols(stripped)
+        rno = normalize_csv_value(row.get("வ.எ.", ""))
+        try:
+            rno_int = int(float(rno))
+        except (ValueError, TypeError):
+            rno_int = None
 
-            if not line_clean:
-                continue
+        year_raw = row.get("ஆண்டு", "")
+        year = (
+            str(int(float(year_raw)))
+            if not pd.isna(year_raw) and str(year_raw).strip()
+            else "Unknown"
+        )
 
-            similarity = calculate_similarity(title_clean, line_clean)
+        topic = {
+            "row_no": rno_int,
+            "title": str(row.get("தலைப்பு", "")).strip(),
+            "authors": parse_author_field(row.get("ஆசிரியர்", "")),
+            "year": year,
+            "subtopics": [],
+        }
+        topic_index[rno_int] = len(topics)
+        topics.append(topic)
 
-            if similarity >= 70:
-                candidates.append((similarity, i, len(stripped)))
-                logger.debug(
-                    f"Candidate line {i}: sim={similarity:.1f}% "
-                    f"len={len(stripped)} '{stripped[:60]}'"
-                )
+    # Attach subtopics to their parents
+    for _, row in matched_df.iterrows():
+        if not is_subtopic_row(row):
+            continue
 
-        if not candidates:
-            logger.warning(f"Title not found (no candidates): '{title[:50]}'")
-            return None, -1, -1
-
-        # --- PASS 2: prefer standalone (near-exact) match ---
-        near_exact = [c for c in candidates if c[0] >= 95]
-
-        if near_exact:
-            best = min(near_exact, key=lambda c: c[2])
-            logger.info(
-                f"Title '{title[:50]}' → standalone match "
-                f"at line {best[1]} "
-                f"(sim={best[0]:.1f}%, len={best[2]})"
+        parent_no = get_parent_row_no(row)
+        if parent_no is None or parent_no not in topic_index:
+            logger.warning(
+                f"Subtopic '{row.get('தலைப்பு', '')}' "
+                f"has unknown parent {parent_no} — skipped"
             )
-            start_line = best[1]
-        else:
-            best = max(candidates, key=lambda c: (c[0], -c[2]))
-            logger.info(
-                f"Title '{title[:50]}' → fuzzy match "
-                f"at line {best[1]} "
-                f"(sim={best[0]:.1f}%, len={best[2]})"
-            )
-            start_line = best[1]
+            continue
 
-        # --- Find end boundary using next title ---
-        end_line = len(lines)
+        subtopic = {
+            "row_no": normalize_csv_value(row.get("வ.எ.", "")),
+            "title": str(row.get("தலைப்பு", "")).strip(),
+            # Plain author for subtopic (no brackets)
+            "author": parse_author_field(row.get("ஆசிரியர்", "")),
+        }
+        topics[topic_index[parent_no]]["subtopics"].append(subtopic)
 
-        if next_title:
-            next_title_clean = remove_symbols(next_title)
-            next_candidates = []
+    logger.info(
+        f"Topic tree: {len(topics)} main topics, "
+        f"{sum(len(t['subtopics']) for t in topics)} subtopics"
+    )
+    return topics
 
-            for i in range(start_line + 1, len(lines)):
-                stripped = lines[i].strip()
-                line_clean = remove_symbols(stripped)
 
-                if not line_clean:
-                    continue
+# ---------------------------------------------------------------------------
+# Content extraction (fuzzy title search)
+# ---------------------------------------------------------------------------
 
-                similarity = calculate_similarity(next_title_clean, line_clean)
-                if similarity >= 70:
-                    next_candidates.append((similarity, i, len(stripped)))
 
-            if next_candidates:
-                near_exact_next = [c for c in next_candidates if c[0] >= 95]
-                if near_exact_next:
-                    next_best = min(near_exact_next, key=lambda c: c[2])
-                else:
-                    next_best = max(next_candidates, key=lambda c: (c[0], -c[2]))
+def find_title_in_document(lines, title, search_from=0):
+    """Find the line index where *title* appears standalone in the document.
 
-                if next_best[0] >= 80:
-                    end_line = next_best[1]
-                    logger.debug(
-                        f"Next title boundary at line {end_line} "
-                        f"(sim={next_best[0]:.1f}%)"
-                    )
+    Strategy:
+    - Collect ALL candidate lines with >= 70 % similarity.
+    - Prefer near-exact (>= 95 %) matches with shortest line length
+      (standalone titles are short; TOC lines are long).
+    - Fall back to best fuzzy match.
 
-        # Extract content
-        content_lines = list(lines[start_line:end_line])
+    Returns:
+        int: line index of best match, or -1 if not found.
+    """
+    title_clean = remove_symbols(title)
+    if not title_clean:
+        return -1
 
-        # Remove trailing blank lines
-        while content_lines and not content_lines[-1].strip():
-            content_lines.pop()
+    candidates = []
+    for i in range(search_from, len(lines)):
+        stripped = lines[i].strip()
+        line_clean = remove_symbols(stripped)
+        if not line_clean:
+            continue
+        sim = calculate_similarity(title_clean, line_clean)
+        if sim >= 70:
+            candidates.append((sim, i, len(stripped)))
 
-        content = "\n".join(content_lines).strip()
-        return content, start_line, end_line
+    if not candidates:
+        logger.debug(f"Title not found: '{title[:50]}'")
+        return -1
 
-    except Exception as e:
-        logger.error("Error in find_article_boundary_fuzzy " f"for '{title[:40]}': {e}")
-        return None, -1, -1
+    near_exact = [c for c in candidates if c[0] >= 95]
+    if near_exact:
+        best = min(near_exact, key=lambda c: c[2])
+    else:
+        best = max(candidates, key=lambda c: (c[0], -c[2]))
+
+    logger.debug(
+        f"Title '{title[:40]}' → line {best[1]} " f"(sim={best[0]:.1f}%, len={best[2]})"
+    )
+    return best[1]
+
+
+def extract_content_between(lines, start_line, end_line):
+    """Return stripped content text from lines[start_line:end_line].
+
+    Removes leading/trailing blank lines.
+    """
+    content_lines = [i.rstrip() for i in lines[start_line:end_line]]
+    # Strip leading blanks
+    while content_lines and not content_lines[0].strip():
+        content_lines.pop(0)
+    # Strip trailing blanks
+    while content_lines and not content_lines[-1].strip():
+        content_lines.pop()
+    return "\n".join(content_lines)
+
+
+# ---------------------------------------------------------------------------
+# Main subtopic content extractor
+# ---------------------------------------------------------------------------
+
+
+def extract_subtopic_contents(lines, subtopics):
+    """Extract content for each subtopic.
+
+    Boundary rule:
+      - A subtopic's content starts right after its title line.
+      - It ends when the next subtopic's title line is found,
+        OR when the next MAIN topic's title line is found,
+        whichever comes first.
+
+    Args:
+        lines (list[str]): full document lines
+        subtopics (list[dict]): subtopic dicts with at least {"title": str}
+            (may also have pre-located "title_line" from caller)
+
+    Returns:
+        list[dict]: same list with "content" and "title_line" added.
+    """
+    if not subtopics:
+        return subtopics
+
+    # Locate each subtopic title in the document (sequential search)
+    search_from = 0
+    for st in subtopics:
+        idx = find_title_in_document(lines, st["title"], search_from=search_from)
+        st["title_line"] = idx
+        if idx != -1:
+            search_from = idx + 1
+
+    # Build content using next boundary
+    for i, st in enumerate(subtopics):
+        start = st.get("title_line", -1)
+        if start == -1:
+            st["content"] = ""
+            continue
+
+        # Find end: next subtopic title OR document end
+        end = len(lines)
+        for j in range(i + 1, len(subtopics)):
+            next_line = subtopics[j].get("title_line", -1)
+            if next_line != -1 and next_line > start:
+                end = next_line
+                break
+
+        # Content starts AFTER the title line
+        st["content"] = extract_content_between(lines, start + 1, end)
+        logger.debug(
+            f"Subtopic '{st['title'][:30]}' "
+            f"lines {start+1}–{end}: "
+            f"{len(st['content'])} chars"
+        )
+
+    return subtopics
+
+
+# ---------------------------------------------------------------------------
+# Main-topic content extractor (standalone articles without subtopics)
+# ---------------------------------------------------------------------------
+
+
+def extract_main_topic_content(lines, topic, next_topic_line):
+    """Extract content for a standalone main topic (no subtopics).
+
+    Content begins after the title line and ends at next_topic_line.
+
+    Args:
+        lines (list[str]): document lines
+        topic (dict): topic dict with "title_line" set
+        next_topic_line (int): line index of the next topic (or len(lines))
+
+    Returns:
+        str: extracted content
+    """
+    start = topic.get("title_line", -1)
+    if start == -1:
+        return ""
+    return extract_content_between(lines, start + 1, next_topic_line)
+
+
+# ---------------------------------------------------------------------------
+# Top-level extraction entry point
+# ---------------------------------------------------------------------------
 
 
 def extract_articles_from_csv(lines, csv_df, file_path):
-    """
-    Extract articles using filename-based மலர்/இதழ் matching.
-
-    CSV logic is INDEPENDENT of TOC section.
-    பொருளடக்கம் and ஆகியோரின் are NOT used here.
-    TOC is only used by pattern extraction in main.py.
-
-    Title search covers the FULL document including TOC region.
-    The find_article_boundary_fuzzy function automatically picks
-    the standalone occurrence (outside TOC) because:
-    - TOC lines contain title + author + page → lower similarity
-    - Standalone lines contain only the title → near-exact match
-
-    Author field format:
-    - Single author:   [நக்கீரன்]
-    - Multi-author:    [பாண்டியன், நா. வேத்தரசன், வணங்காமுடி]
-    - No author:       NA
-    Brackets are stripped; multiple authors are split by comma.
-
-    NOTE: csv_df must be loaded via load_csv() not pd.read_csv()
-    directly, so that multi-author bracketed fields are parsed
-    correctly by pandas.
+    """Extract articles (with subtopic support) using CSV metadata.
 
     Flow:
-    1. Extract மலர்/இதழ் from filename
-    2. If filename fails → try document text
-    3. Match CSV rows (exact then fuzzy இதழ் matching)
-    4. For each CSV title → find standalone title in full document
-    5. Return articles + extracted line ranges
+    1. Extract மலர்/இதழ் from filename (fallback: document text).
+    2. Match CSV rows for this volume/issue.
+    3. Build parent→children topic tree.
+    4. Locate each topic title in the document.
+    5. For topics WITH subtopics → extract per-subtopic content.
+       For topics WITHOUT subtopics → extract content up to next topic.
+    6. Return structured result.
 
-    All metadata (doc_id, doc_issue, author, title, year) from CSV.
-    Only content is extracted from document text.
+    JSON shape per article
+    ----------------------
+    {
+      "doc_id": "1",
+      "doc_issue": "6",
+      "article_no": 2,
+      "title": "வளரும் இலக்கியம்",
+      "author_name": [],
+      "year": "1947",
+      "source_document": "VOL1-6-1947.txt",
+      "subtopics": [
+        {
+          "subtopic_no": 1,
+          "title": "அழகு",
+          "author_name": ["தோழர் அறிவழகன்"],
+          "content": "..."
+        }
+      ]
+    }
+
+    Standalone article (no subtopics) additionally has:
+      "content": "..."
+      "subtopics": []
 
     Args:
-        lines (list): document lines (full document)
-        csv_df (pd.DataFrame): CSV loaded via load_csv()
-        file_path (Path-like): file path with .name attribute
+        lines (list[str]): full document lines
+        csv_df (pd.DataFrame): loaded via load_csv()
+        file_path: path-like with .name attribute
 
     Returns:
         dict or None
     """
     logger.info("=" * 80)
-    logger.info("CSV EXTRACTION")
+    logger.info("CSV EXTRACTION (topic-subtopic mode)")
     logger.info(f"File: {file_path.name}")
-    logger.info("NOTE: Searches FULL document. Standalone title")
-    logger.info("      occurrence preferred over TOC occurrence.")
     logger.info("=" * 80)
 
     if csv_df is None:
@@ -493,130 +643,177 @@ def extract_articles_from_csv(lines, csv_df, file_path):
     source_document = file_path.name
 
     # ----------------------------------------------------------------
-    # STEP 1: Extract மலர்/இதழ் from FILENAME
+    # STEP 1: மலர்/இதழ் from filename, fallback to text
     # ----------------------------------------------------------------
     malar, ithal, year_from_file = extract_malar_ithal_from_filename(source_document)
 
-    # ----------------------------------------------------------------
-    # STEP 1b: Fallback to document TEXT if filename fails
-    # ----------------------------------------------------------------
     if not malar or not ithal:
-        logger.warning("Filename parse failed — trying document text for மலர்/இதழ்")
+        logger.warning("Filename parse failed — trying document text")
         malar, ithal, year_from_file = extract_malar_ithal_from_text(lines)
 
     if not malar or not ithal:
-        logger.error(
-            "Cannot find மலர்/இதழ் from filename or text. " "CSV extraction skipped."
-        )
+        logger.error("Cannot find மலர்/இதழ். CSV extraction skipped.")
         return None
 
     logger.info(f"மலர்={malar}, இதழ்={ithal}, year={year_from_file}")
 
-    # ----------------------------------------------------------------
-    # STEP 2: Match CSV rows (exact then fuzzy)
-    # ----------------------------------------------------------------
-    matched_articles = match_csv_rows(csv_df, malar, ithal)
-
-    if matched_articles.empty:
-        return None
-
     malar_norm = normalize_csv_value(malar).strip()
     ithal_norm = normalize_csv_value(ithal).strip()
 
-    logger.info(f"Found {len(matched_articles)} CSV rows to extract")
+    # ----------------------------------------------------------------
+    # STEP 2: Match CSV rows
+    # ----------------------------------------------------------------
+    matched_df = match_csv_rows(csv_df, malar, ithal)
+    if matched_df.empty:
+        logger.warning("No CSV rows matched — extraction skipped")
+        return None
+
+    logger.info(f"Matched {len(matched_df)} CSV rows")
 
     # ----------------------------------------------------------------
-    # STEP 3: Extract content for each CSV title
-    # Search FULL document — standalone title preferred over TOC
+    # STEP 3: Build topic tree
+    # ----------------------------------------------------------------
+    topics = build_topic_tree(matched_df)
+
+    # ----------------------------------------------------------------
+    # STEP 4: Locate each main-topic title in the document
+    # ----------------------------------------------------------------
+    search_from = 0
+    for topic in topics:
+        idx = find_title_in_document(lines, topic["title"], search_from=search_from)
+        topic["title_line"] = idx
+        if idx != -1:
+            search_from = idx + 1
+            logger.debug(f"Main topic '{topic['title'][:40]}' at line {idx}")
+        else:
+            logger.warning(f"Main topic not found in doc: '{topic['title'][:40]}'")
+
+    # ----------------------------------------------------------------
+    # STEP 5: Extract content
     # ----------------------------------------------------------------
     articles = []
     article_no = 1
     extracted_line_ranges = []
 
-    for idx_pos, (idx, row) in enumerate(matched_articles.iterrows()):
-        # Title from CSV
-        title = str(row["தலைப்பு"]) if pd.notna(row["தலைப்பு"]) else ""
+    for t_idx, topic in enumerate(topics):
+        title_line = topic.get("title_line", -1)
 
-        # Parse author field — strips brackets, splits multiple authors
-        author_names = parse_author_field(row["ஆசிரியர்"])
+        # Determine where the NEXT main topic starts
+        next_topic_line = len(lines)
+        for future in topics[t_idx + 1 :]:
+            fl = future.get("title_line", -1)
+            if fl != -1:
+                next_topic_line = fl
+                break
 
-        # Year from CSV row, fallback to filename year
-        year = (
-            str(int(row["ஆண்டு"]))
-            if pd.notna(row["ஆண்டு"])
-            else (year_from_file or "Unknown")
-        )
+        year = topic.get("year") or year_from_file or "Unknown"
 
-        if not title:
-            logger.warning(f"Empty title at CSV row {idx}, skipping")
-            continue
+        if topic["subtopics"]:
+            # ── Topics WITH subtopics ───────────────────────────────
+            # Restrict subtopic search to the region of this main topic
+            region_lines = lines[
+                (title_line if title_line != -1 else 0) : next_topic_line
+            ]
+            region_offset = title_line if title_line != -1 else 0
 
-        # Get next title for boundary detection
-        next_title = None
-        if idx_pos + 1 < len(matched_articles):
-            next_row = matched_articles.iloc[idx_pos + 1]
-            next_title = (
-                str(next_row["தலைப்பு"]) if pd.notna(next_row["தலைப்பு"]) else None
-            )
+            subtopics = topic["subtopics"]
+            subtopics = extract_subtopic_contents(region_lines, subtopics)
 
-        logger.info(
-            f"[{idx_pos + 1}/{len(matched_articles)}] " f"Searching: '{title[:50]}'"
-        )
+            # Adjust title_line back to global indices
+            for st in subtopics:
+                if st.get("title_line", -1) != -1:
+                    st["title_line"] += region_offset
 
-        # Search FULL document — standalone title auto-preferred
-        content, start_line, end_line = find_article_boundary_fuzzy(
-            lines, title, next_title
-        )
+            built_subtopics = []
+            st_no = 1
+            for st in subtopics:
+                # author field from subtopic: list from parse_author_field
+                author_val = st.get("author", [])
+                if isinstance(author_val, list):
+                    author_names = author_val
+                else:
+                    author_names = [str(author_val)] if author_val else []
 
-        if content and len(content) > 100:
-            articles.append(
-                {
-                    "doc_id": malar_norm,
-                    "doc_issue": ithal_norm,
-                    "article_no": article_no,
-                    "author_name": author_names if author_names else ["NA"],
-                    "title": title,
-                    "content": content,
-                    "year": year,
-                    "source_document": source_document,
-                }
-            )
-            article_no += 1
-
-            if start_line != -1 and end_line != -1:
-                extracted_line_ranges.append((start_line, end_line))
-                logger.info(
-                    f"  ✓ Extracted '{title[:40]}' "
-                    f"lines {start_line}-{end_line} "
-                    f"({len(content)} chars)"
+                built_subtopics.append(
+                    {
+                        "subtopic_no": st_no,
+                        "title": st["title"],
+                        "author_name": author_names,
+                        "content": st.get("content", ""),
+                    }
                 )
-        else:
-            reason = (
-                "not found" if not content else f"only {len(content)} chars (too short)"
+                st_no += 1
+
+            article = {
+                "doc_id": malar_norm,
+                "doc_issue": ithal_norm,
+                "article_no": article_no,
+                "title": topic["title"],
+                "author_name": topic["authors"],
+                "year": year,
+                "source_document": source_document,
+                "subtopics": built_subtopics,
+            }
+
+            if title_line != -1:
+                extracted_line_ranges.append((title_line, next_topic_line))
+
+            logger.info(
+                f"[{article_no}] '{topic['title'][:40]}' "
+                f"— {len(built_subtopics)} subtopics"
             )
-            logger.warning(f"  Could not extract '{title[:40]}' " f"- {reason}")
+
+        else:
+            # ── Standalone topic (no subtopics) ────────────────────
+            content = (
+                extract_main_topic_content(lines, topic, next_topic_line)
+                if title_line != -1
+                else ""
+            )
+
+            article = {
+                "doc_id": malar_norm,
+                "doc_issue": ithal_norm,
+                "article_no": article_no,
+                "title": topic["title"],
+                "author_name": topic["authors"],
+                "content": content,
+                "year": year,
+                "source_document": source_document,
+                "subtopics": [],
+            }
+
+            if title_line != -1:
+                extracted_line_ranges.append((title_line, next_topic_line))
+
+            logger.info(
+                f"[{article_no}] '{topic['title'][:40]}' "
+                f"— standalone ({len(content)} chars)"
+            )
+
+        articles.append(article)
+        article_no += 1
 
     # ----------------------------------------------------------------
-    # Build authors_list — one entry per unique author across all rows
+    # Build authors_list (unique authors across all rows)
     # ----------------------------------------------------------------
     authors_list = []
-    unique_authors = set()
-
-    for _, row in matched_articles.iterrows():
-        for author_name in parse_author_field(row["ஆசிரியர்"]):
-            if author_name not in unique_authors:
-                unique_authors.add(author_name)
+    seen_authors = set()
+    for _, row in matched_df.iterrows():
+        for name in parse_author_field(row.get("ஆசிரியர்", "")):
+            if name and name not in seen_authors:
+                seen_authors.add(name)
                 authors_list.append(
                     {
                         "doc_id": malar_norm,
                         "doc_issue": ithal_norm,
-                        "author_name": author_name,
+                        "author_name": name,
                     }
                 )
 
     logger.info(
-        "CSV extraction complete: "
-        f"{len(articles)}/{len(matched_articles)} articles extracted"
+        f"CSV extraction complete: {len(articles)} articles "
+        f"({sum(len(a['subtopics']) for a in articles)} subtopics total)"
     )
 
     return {

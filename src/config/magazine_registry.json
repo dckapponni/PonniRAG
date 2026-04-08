@@ -1,7 +1,10 @@
 {
   "ponni": {
     "id": "ponni",
-    "name": {"ta": "பொன்னி", "en": "Ponni"},
+    "name": {
+      "ta": "பொன்னி",
+      "en": "Ponni"
+    },
     "description": {
       "ta": "1947-1955 கலை இலக்கிய இதழ்",
       "en": "Literary magazine, 1947-1955"
@@ -11,7 +14,7 @@
       "region": "ap-south-1",
       "raw_content": "Raw_Proof_Read_Content/",
       "extracted_text": "extracted_text/",
-      "output_json": "output_json/",
+      "output_json": "new_output_json/",
       "covers_prefix": "Front_cover_of_volumes/",
       "cover_folder_pattern": "volume {vol_id} cover images/",
       "cover_file_pattern": "VOL{vol_id} - {issue_num} - {year}.jpg",
