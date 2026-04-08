@@ -9,6 +9,29 @@ import numpy as np
 import pytest
 from moto import mock_aws
 
+# ---------------------------------------------------------------------------
+# Mock torch — must be injected before any module that imports torch at the
+# top level (e.g. embeddings.py). Uses numpy arrays so the @ operator works.
+# ---------------------------------------------------------------------------
+mock_torch = Mock()
+mock_torch.set_grad_enabled = Mock()
+mock_torch.cuda.is_available = Mock(return_value=False)
+mock_torch.set_num_threads = Mock()
+mock_torch.set_num_interop_threads = Mock()
+mock_torch.tensor = lambda x: np.array(x)
+sys.modules["torch"] = mock_torch
+sys.modules["torch.cuda"] = mock_torch.cuda
+sys.modules["torch.backends"] = mock_torch.backends
+sys.modules["torch.backends.cuda"] = mock_torch.backends.cuda
+sys.modules["torch.backends.cudnn"] = mock_torch.backends.cudnn
+
+# Mock other heavy GPU/ML packages not installed in CI
+for _mod in ["torchvision", "torchaudio", "transformers", "accelerate", "bitsandbytes"]:
+    sys.modules[_mod] = Mock()
+
+# Mock streamlit — imported at module level in streamlit_app.py
+sys.modules["streamlit"] = Mock()
+
 
 class MockSentenceTransformer:
     """Mock SentenceTransformer to avoid loading heavy models."""
