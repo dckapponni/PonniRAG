@@ -6,26 +6,34 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+# Ensure project root and src root are on sys.path so that config and
+# sibling modules resolve correctly when the script is run directly.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # Tagging_feature/
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # Tagging_feature/src/
+
 from article_patterns import extract_pattern_a_forward  # noqa: E402
-from article_patterns import extract_pattern_b_forward, extract_pattern_c_reverse
+from article_patterns import (  # noqa: E402
+    extract_pattern_b_forward,
+    extract_pattern_c_reverse,
+)
 from content_extraction import extract_intro_content_phase1  # noqa: E402
-from content_extraction import extract_remaining_content
+from content_extraction import extract_remaining_content  # noqa: E402
 from csv_fuzzy_matcher import extract_articles_from_csv  # noqa: E402
-from csv_fuzzy_matcher import (
+from csv_fuzzy_matcher import (  # noqa: E402
     extract_malar_ithal_from_filename,
     extract_malar_ithal_from_text,
     load_csv,
     normalize_csv_value,
 )
 from doc_utils import count_content_lines  # noqa: E402
-from doc_utils import (
+from doc_utils import (  # noqa: E402
     extract_authors_alternative,
     extract_authors_from_toc,
     get_shared_authors,
     is_valid_author_name,
 )
 from s3_utils import read_text_from_s3  # noqa: E402
-from s3_utils import file_exists, list_files, upload_json
+from s3_utils import file_exists, list_files, upload_json  # noqa: E402
 from shared_author import build_shared_authors_dict_s3  # noqa: E402
 from text_processing import get_intro_keywords, normalize_text  # noqa: E402
 
@@ -36,15 +44,6 @@ from config.config import (  # noqa: E402
     INPUT_PREFIX,
     OUTPUT_PREFIX,
 )
-
-# ── Fix import path ────────────────────────────────────────────────────────
-# Script lives at:  src/data_extraction/article_seperation.py
-# Project root is:  Tagging_feature/   (parents[2])
-# config package:   Tagging_feature/src/config/
-_project_root = Path(__file__).resolve().parents[2]  # Tagging_feature/
-_src_root = Path(__file__).resolve().parents[1]  # Tagging_feature/src/
-sys.path.insert(0, str(_project_root))
-sys.path.insert(0, str(_src_root))
 
 
 def setup_logging(log_file="tamil_doc_processing.log"):
@@ -848,7 +847,7 @@ def process_s3_files(force_reprocess=False):
         logger.info("=" * 80)
         logger.info("Tamil Document Processing")
         logger.info(f"Bucket: {BUCKET_NAME}")
-        logger.info(f"Input:  {INPUT_PREFIX}")
+        logger.info(f"Input (extracted_text): {EXTRACTED_OUTPUT}")
         logger.info(f"Output: {OUTPUT_PREFIX}")
         logger.info(f"CSV:    {CSV_PATH}")
         logger.info(f"Force:  {force_reprocess}")
@@ -880,7 +879,7 @@ def process_s3_files(force_reprocess=False):
 
         for idx, txt_key in enumerate(txt_files, 1):
 
-            relative_key = txt_key[len(INPUT_PREFIX) :]
+            relative_key = txt_key[len(EXTRACTED_OUTPUT) :]
             output_key = f"{OUTPUT_PREFIX}{relative_key.rsplit('.', 1)[0]}.json"
 
             logger.info("")
