@@ -29,7 +29,7 @@ from s3_utils import file_exists, list_files, upload_json
 from shared_author import build_shared_authors_dict_s3  # noqa: E402
 from text_processing import get_intro_keywords, normalize_text  # noqa: E402
 
-from config.config import INPUT_PREFIX  # noqa: E402
+from config.config import EXTRACTED_OUTPUT  # noqa: E402
 from config.config import BUCKET_NAME, CSV_PATH, OUTPUT_PREFIX
 
 current_dir = Path(__file__).resolve().parent
@@ -816,7 +816,7 @@ def process_s3_files(force_reprocess=False):
         logger.info("=" * 80)
         logger.info("Tamil Document Processing")
         logger.info(f"Bucket: {BUCKET_NAME}")
-        logger.info(f"Input:  {INPUT_PREFIX}")
+        logger.info(f"Input:  {EXTRACTED_OUTPUT}")
         logger.info(f"Output: {OUTPUT_PREFIX}")
         logger.info(f"CSV:    {CSV_PATH}")
         logger.info(f"Force:  {force_reprocess}")
@@ -833,7 +833,7 @@ def process_s3_files(force_reprocess=False):
             return
 
         # List TXT files
-        txt_files = list_files(BUCKET_NAME, INPUT_PREFIX, suffix=".txt")
+        txt_files = list_files(BUCKET_NAME, EXTRACTED_OUTPUT, suffix=".txt")
         if not txt_files:
             logger.warning("No TXT files found")
             return
@@ -841,14 +841,16 @@ def process_s3_files(force_reprocess=False):
 
         # Build shared authors
         logger.info("Building shared authors dictionary...")
-        shared_authors_dict = build_shared_authors_dict_s3(BUCKET_NAME, INPUT_PREFIX)
+        shared_authors_dict = build_shared_authors_dict_s3(
+            BUCKET_NAME, EXTRACTED_OUTPUT
+        )
         logger.info(f"Shared authors: {len(shared_authors_dict)} groups")
 
         processed = failed = skipped = 0
 
         for idx, txt_key in enumerate(txt_files, 1):
 
-            relative_key = txt_key[len(INPUT_PREFIX) :]
+            relative_key = txt_key[len(EXTRACTED_OUTPUT) :]
             output_key = f"{OUTPUT_PREFIX}" f"{relative_key.rsplit('.', 1)[0]}.json"
 
             logger.info("")
