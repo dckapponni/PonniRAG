@@ -228,6 +228,11 @@ def is_author_file(s3_key: str) -> bool:
     return s3_key.lower().endswith("authors.json")
 
 
+def is_remaining_file(s3_key: str) -> bool:
+    """Check if S3 key points to a remaining context file."""
+    return "remaining_vol" in s3_key.lower()
+
+
 def load_documents_from_s3() -> List[Dict]:
     """Load and process article documents from S3 with automatic tagging."""
     documents = []
@@ -241,7 +246,9 @@ def load_documents_from_s3() -> List[Dict]:
     for key in keys:
         if is_author_file(key):
             continue
-
+        if is_remaining_file(key):
+            logger.info(f"Skipping remaining file: {key}")
+            continue
         logger.info(f"Loading: {key}")
         try:
             obj = s3.get_object(Bucket=S3_BUCKET, Key=key)

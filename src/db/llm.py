@@ -4,6 +4,7 @@ Handles prompt construction, Gemini API calls (sync/async/streaming),
 and answer post-processing for the Ponni RAG system.
 """
 
+import json
 import logging
 import os
 import re
@@ -11,18 +12,46 @@ import threading
 import time
 from typing import Dict, List
 
+import boto3
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types as genai_types
 from guardrails import ANTI_INJECTION_PREAMBLE, sanitize_output
 from retry import is_retryable_gemini, with_gemini_retry, with_gemini_retry_async
 
+from src.config.config import S3_BUCKET, S3_PREFIX
+
 load_dotenv()
 logger = logging.getLogger(__name__)
 
+
+s3_client = boto3.client("s3")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 _gemini_client = None
+
+
+def load_remaining_context_s3(doc_id: str, max_chars: int = 3000) -> str:
+    """Load the remaining context for a given document ID from S3, concatenating article contents."""
+    try:
+        key = f"{S3_PREFIX}remaining_vol{doc_id}.json"
+
+        response = s3_client.get_object(Bucket=S3_BUCKET, Key=key)
+        data = json.loads(response["Body"].read().decode("utf-8"))
+
+        texts = []
+        for issue in data.get("issues", []):
+            for art in issue.get("articles", []):
+                content = art.get("content", "")
+                if content and len(content) > 50:
+                    texts.append(content[:400])
+
+        return "\n\n".join(texts)[:max_chars]
+
+    except Exception as e:
+        logger.warning(f"S3 remaining load failed for vol{doc_id}: {e}")
+        return ""
+
 
 PONNI_ABOUT_CONTEXT = """பொன்னி இதழ் பற்றிய பின்னணி தகவல்:
 பொன்னி இதழ் திரு. அரு. பெரியண்ணன் மற்றும் திரு. முருகு. சுப்பிரமணியம் ஆகியோரால் 1947ஆம் ஆண்டு பிப்ரவரி மாதம் தொடங்கப்பெற்ற கலை இலக்கிய இதழ். 1947 முதல் 1955 வரை இயங்கியது. முதல் வருடத்தில் மாதம் ஓர் இதழ் என வெளிவந்த பொன்னி 1948 முதல் மாதம் ஈரிதழாக வெளிவந்தது.
@@ -200,6 +229,12 @@ TAMIL_ANSWER_SYSTEM_PROMPT = (
 - நீங்கள் ஏற்கனவே தகவலை அறிந்தவர் போல இயல்பான பதிலை எழுதுக
 - CSV தகவல் (தலைப்பு, ஆசிரியர், தொகுதி) ஆவண உள்ளடக்கத்துடன் சேர்ந்து வந்தால், ஆவண உள்ளடக்கத்திற்கு முன்னுரிமை கொடுக்கவும் — CSV தகவல் துணைத் தகவல் மட்டுமே, முக்கிய பதில் அல்ல
 
+கூடுதல் அறிவு விதி:
+- இது துணை தகவல் மட்டும்
+- இதில் உள்ள தகவல்கள் முழுமையாக அமைப்புடையதாக இருக்காது
+- முக்கிய பதில் மூல ஆவணத்தின் அடிப்படையில் இருக்க வேண்டும்
+- தேவையானபோது மட்டும் பயன்படுத்தவும்
+
 மிக முக்கியம் — தொடர்பில்லாத சூழல் (Irrelevant context rule):
 - இந்த விதி கொடுக்கப்பட்ட ஆவண சூழல் கேள்வியின் தலைப்புக்கு முற்றிலும் வேறு தலைப்பில் இருக்கும்போது மட்டுமே பொருந்தும்
 - ஆவண சூழலில் கேள்வியில் குறிப்பிடப்பட்ட படைப்பின் உரை (text) இருந்தால் (வெளிப்படையான பதில் இல்லாவிட்டாலும்), அந்த உள்ளடக்கத்திலிருந்து பதிலை உருவாக்குக — "தகவல் இல்லை" என்று கூறாதீர்கள்
@@ -250,6 +285,12 @@ Question types:
 3. List / summary question:
    - Mention total counts, key names, and general trends briefly
    - Do not simply list the raw data
+
+Additional Knowledge Rule:
+- The "Additional Knowledge" section is secondary
+- It may contain noisy or unstructured data
+- Use it only if relevant to the question
+- Always prioritize the main document context
 
 General rules:
 - Write in natural English prose
@@ -557,7 +598,26 @@ def _build_user_content(
             f"{doc_label}:\n{context}\n"
             f"========================\n"
         )
+    # 🔥 ADD THIS BLOCK (LLM-only remaining.json)
+    remaining_context = ""
 
+    try:
+        doc_id_match = re.search(
+            r"(?:மலர்|Volume|doc_id)\s*[:\-]?\s*(\d+)", csv_context or ""
+        )
+        if doc_id_match:
+            doc_id = doc_id_match.group(1)
+            remaining_context = load_remaining_context_s3(doc_id)
+    except Exception as e:
+        logger.warning(f"Doc_id extraction failed: {e}")
+
+    if remaining_context:
+        parts.append(
+            f"========================\n"
+            f"{'Additional Knowledge' if en else 'கூடுதல் அறிவு'}:\n"
+            f"{remaining_context}\n"
+            f"========================\n"
+        )
     # Repeat the question after context so it's fresh in the model's attention
     parts.append(f"{q_label}: {question}")
 
