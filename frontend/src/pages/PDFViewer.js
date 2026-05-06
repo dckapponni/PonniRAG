@@ -1,5 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import { Viewer, Worker } from '@react-pdf-viewer/core';
+import { defaultLayoutPlugin } from '@react-pdf-viewer/default-layout';
+import '@react-pdf-viewer/core/lib/styles/index.css';
+import '@react-pdf-viewer/default-layout/lib/styles/index.css';
 import { getTranslation } from '../services/translations';
 import { getPDFLink } from '../services/api';
 
@@ -9,6 +13,8 @@ const PDFViewer = ({ language }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const t = (key) => getTranslation(language, key);
+
+  const defaultLayoutPluginInstance = useMemo(() => defaultLayoutPlugin(), []);
 
   useEffect(() => {
     const fetchPDFLink = async () => {
@@ -51,7 +57,27 @@ const PDFViewer = ({ language }) => {
         </div>
       ) : error ? (
         <p style={{ color: '#64748b', padding: '1rem 0' }}>{t('error_loading_pdf')}: {error}</p>
-      ) : pdfData && pdfData.found ? (
+      ) : pdfData && pdfData.found && pdfData.proxy_url ? (
+        <>
+          <div className="pdf-container">
+            <Worker workerUrl="/pdf.worker.min.js">
+              <Viewer fileUrl={pdfData.proxy_url} plugins={[defaultLayoutPluginInstance]} />
+            </Worker>
+          </div>
+          {pdfData.pdf_url && (
+            <div className="pdf-actions">
+              <a
+                href={pdfData.pdf_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="pdf-link"
+              >
+                {t('open_pdf')}
+              </a>
+            </div>
+          )}
+        </>
+      ) : pdfData && pdfData.found && pdfData.embed_url ? (
         <>
           <div className="pdf-container">
             <iframe

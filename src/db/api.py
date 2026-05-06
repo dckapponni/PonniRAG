@@ -79,6 +79,26 @@ def _issue_cover_s3_key(volume_id: int, issue_name: str) -> Optional[str]:
     return f"{_s3_conf['covers_prefix']}{folder}{filename}"
 
 
+def _issue_pdf_s3_key(volume_id: int, issue_name: str) -> Optional[str]:
+    """Derive S3 key for an issue PDF using convention patterns."""
+    vol_data = next((v for v in _magazine["volumes"] if v["id"] == volume_id), None)
+    if not vol_data:
+        return None
+    iss_data = next(
+        (i for i in vol_data["issues"] if str(i["num"]) == str(issue_name)), None
+    )
+    if not iss_data:
+        return None
+    year = iss_data.get("year", vol_data["year"])
+    folder = _s3_conf["magazine_folder_pattern"].format(vol_id=volume_id)
+    filename = _s3_conf["magazine_file_pattern"].format(
+        vol_id=volume_id,
+        issue_num=issue_name,
+        year=year,
+    )
+    return f"{_s3_conf['magazines']}{folder}{filename}"
+
+
 def _s3_key_with_fallback(key: str) -> list:
     """Return S3 keys to try: original plus alternate extensions."""
     if "." not in key:
@@ -269,6 +289,7 @@ class PDFLinkResponse(BaseModel):
     issue_id: str
     pdf_url: Optional[str] = None
     embed_url: Optional[str] = None
+    proxy_url: Optional[str] = None
     found: bool
 
 
@@ -1056,14 +1077,14 @@ async def get_volume_issues(volume_id: int, request: Request):
     response_model=PDFLinkResponse,
     tags=["Library"],
 )
-async def get_pdf_link(volume_id: int, issue_id: str):
+async def get_pdf_link(volume_id: int, issue_id: str, request: Request):
     """
     Get PDF link for a specific issue.
 
     - **volume_id**: Volume number (1-8)
     - **issue_id**: Issue number or name (e.g., "1", "PONGAL")
 
-    Returns the Google Drive PDF URL and embeddable preview URL.
+    Returns Drive URL, embed URL, and S3-backed proxy stream URL.
     """
     key = f"vol_{volume_id}_issue_{issue_id}"
     pdf_url = PDF_LINKS.get(key)
@@ -1071,18 +1092,98 @@ async def get_pdf_link(volume_id: int, issue_id: str):
     if not pdf_url:
         return PDFLinkResponse(volume_id=volume_id, issue_id=issue_id, found=False)
 
-    # Extract file ID for embed URL
     embed_url = None
     if "/d/" in pdf_url:
         file_id = pdf_url.split("/d/")[1].split("/")[0]
         embed_url = f"https://drive.google.com/file/d/{file_id}/preview"
+
+    proxy_url = None
+    if _issue_pdf_s3_key(volume_id, issue_id):
+        base = str(request.base_url).rstrip("/")
+        proxy_url = (
+            f"{base}/api/library/volumes/{volume_id}" f"/issues/{issue_id}/pdf/stream"
+        )
 
     return PDFLinkResponse(
         volume_id=volume_id,
         issue_id=issue_id,
         pdf_url=pdf_url,
         embed_url=embed_url,
+        proxy_url=proxy_url,
         found=True,
+    )
+
+
+_PDF_CACHE_SECONDS = 2592000  # 30 days; PDFs are immutable
+
+
+@app.api_route(
+    "/api/library/volumes/{volume_id}/issues/{issue_id}/pdf/stream",
+    methods=["GET", "HEAD"],
+    tags=["Library"],
+)
+async def stream_issue_pdf(volume_id: int, issue_id: str, request: Request):
+    """Stream issue PDF from S3 with HTTP Range support for pdf.js lazy loading."""
+    s3_key = _issue_pdf_s3_key(volume_id, issue_id)
+    if not s3_key:
+        raise HTTPException(status_code=404, detail="Issue not found")
+
+    range_header = request.headers.get("range")
+
+    s3_kwargs = {"Bucket": _s3_conf["bucket"], "Key": s3_key}
+    if range_header:
+        s3_kwargs["Range"] = range_header
+
+    try:
+        resp = await asyncio.to_thread(_s3_client.get_object, **s3_kwargs)
+    except ClientError as e:
+        code = e.response["Error"]["Code"]
+        if code in ("NoSuchKey", "404"):
+            raise HTTPException(status_code=404, detail="PDF not found in S3")
+        if code in ("InvalidRange", "416"):
+            raise HTTPException(status_code=416, detail="Invalid range")
+        logger.warning(f"S3 PDF fetch failed for {s3_key}: {e}")
+        raise HTTPException(status_code=502, detail="Upstream S3 error")
+    except (NoCredentialsError, BotoCoreError) as e:
+        logger.warning(f"S3 PDF fetch failed for {s3_key}: {e}")
+        raise HTTPException(status_code=502, detail="Upstream S3 error")
+
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Cache-Control": f"public, max-age={_PDF_CACHE_SECONDS}, immutable",
+        "Content-Length": str(resp["ContentLength"]),
+    }
+    if resp.get("ETag"):
+        headers["ETag"] = resp["ETag"]
+    if resp.get("LastModified"):
+        headers["Last-Modified"] = resp["LastModified"].strftime(
+            "%a, %d %b %Y %H:%M:%S GMT"
+        )
+    if resp.get("ContentRange"):
+        headers["Content-Range"] = resp["ContentRange"]
+
+    status_code = 206 if range_header and resp.get("ContentRange") else 200
+
+    if request.method == "HEAD":
+        resp["Body"].close()
+        return Response(
+            status_code=status_code, headers=headers, media_type="application/pdf"
+        )
+
+    body = resp["Body"]
+
+    def iter_chunks():
+        try:
+            for chunk in body.iter_chunks(chunk_size=65536):
+                yield chunk
+        finally:
+            body.close()
+
+    return StreamingResponse(
+        iter_chunks(),
+        status_code=status_code,
+        headers=headers,
+        media_type="application/pdf",
     )
 
 

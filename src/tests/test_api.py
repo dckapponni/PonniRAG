@@ -20,6 +20,9 @@ MOCK_MAGAZINE_CONFIG = {
         "covers_prefix": "Front_cover_of_volumes/",
         "cover_folder_pattern": "volume {vol_id} cover images/",
         "cover_file_pattern": "VOL{vol_id} - {issue_num} - {year}.jpg",
+        "magazines": "Magazines/",
+        "magazine_folder_pattern": "Vol{vol_id}/",
+        "magazine_file_pattern": "VOL{vol_id} - {issue_num} - {year}.pdf",
     },
     "volumes": [
         {
@@ -747,6 +750,141 @@ class TestPDFLinkEndpoint:
         assert data["found"] is True
         assert data["embed_url"] is None
 
+    @patch("db.api._magazine", MOCK_MAGAZINE_CONFIG)
+    @patch("db.api._s3_conf", MOCK_MAGAZINE_CONFIG["s3"])
+    @patch(
+        "db.api.PDF_LINKS",
+        {"vol_1_issue_1": "https://drive.google.com/file/d/ABC123/view"},
+    )
+    def test_pdf_link_proxy_url_populated(self, client):
+        """proxy_url present when registry resolves an S3 PDF key."""
+        resp = client.get("/api/library/volumes/1/issues/1/pdf")
+        data = resp.json()
+        assert data["found"] is True
+        assert data["proxy_url"] is not None
+        assert data["proxy_url"].endswith("/api/library/volumes/1/issues/1/pdf/stream")
+
+    @patch("db.api._magazine", {"volumes": []})
+    @patch(
+        "db.api.PDF_LINKS",
+        {"vol_1_issue_1": "https://drive.google.com/file/d/ABC123/view"},
+    )
+    def test_pdf_link_proxy_url_none_when_no_s3_key(self, client):
+        """proxy_url is None when no matching issue in registry."""
+        resp = client.get("/api/library/volumes/1/issues/1/pdf")
+        data = resp.json()
+        assert data["found"] is True
+        assert data["proxy_url"] is None
+
+
+# ===================================================================
+# /api/library/volumes/{id}/issues/{issue}/pdf/stream
+# ===================================================================
+
+
+class TestPDFStreamEndpoint:
+    """Tests for GET /api/library/volumes/{id}/issues/{issue}/pdf/stream."""
+
+    @staticmethod
+    def _setup_s3(monkeypatch, body=b"%PDF-1.4 test pdf body bytes"):
+        """Spin up a moto-backed S3 client and patch db.api._s3_client."""
+        import boto3
+        from moto import mock_aws
+
+        ctx = mock_aws()
+        ctx.start()
+        s3 = boto3.client("s3", region_name="us-east-1")
+        s3.create_bucket(Bucket="test-bucket")
+        s3.put_object(
+            Bucket="test-bucket",
+            Key="Magazines/Vol1/VOL1 - 1 - 1947.pdf",  # gitleaks:allow
+            Body=body,
+            ContentType="application/pdf",
+        )
+        monkeypatch.setattr("db.api._s3_client", s3)
+        return ctx, body
+
+    @patch("db.api._magazine", MOCK_MAGAZINE_CONFIG)
+    @patch("db.api._s3_conf", MOCK_MAGAZINE_CONFIG["s3"])
+    def test_stream_pdf_full(self, client, monkeypatch):
+        """Return full PDF body with correct headers on plain GET."""
+        ctx, body = self._setup_s3(monkeypatch)
+        try:
+            resp = client.get("/api/library/volumes/1/issues/1/pdf/stream")
+            assert resp.status_code == 200
+            assert resp.content == body
+            assert resp.headers["content-type"] == "application/pdf"
+            assert resp.headers["accept-ranges"] == "bytes"
+            assert "immutable" in resp.headers["cache-control"]
+            assert resp.headers["content-length"] == str(len(body))
+        finally:
+            ctx.stop()
+
+    @patch("db.api._magazine", MOCK_MAGAZINE_CONFIG)
+    @patch("db.api._s3_conf", MOCK_MAGAZINE_CONFIG["s3"])
+    def test_stream_pdf_range(self, client, monkeypatch):
+        """Return 206 with partial body when Range header provided."""
+        ctx, body = self._setup_s3(monkeypatch)
+        try:
+            resp = client.get(
+                "/api/library/volumes/1/issues/1/pdf/stream",
+                headers={"Range": "bytes=0-9"},
+            )
+            assert resp.status_code == 206
+            assert resp.content == body[:10]
+            assert "content-range" in resp.headers
+            assert resp.headers["accept-ranges"] == "bytes"
+        finally:
+            ctx.stop()
+
+    @patch("db.api._magazine", MOCK_MAGAZINE_CONFIG)
+    @patch("db.api._s3_conf", MOCK_MAGAZINE_CONFIG["s3"])
+    def test_stream_pdf_head(self, client, monkeypatch):
+        """HEAD returns headers without body."""
+        ctx, body = self._setup_s3(monkeypatch)
+        try:
+            resp = client.head("/api/library/volumes/1/issues/1/pdf/stream")
+            assert resp.status_code == 200
+            assert resp.content == b""
+            assert resp.headers["content-length"] == str(len(body))
+            assert resp.headers["content-type"] == "application/pdf"
+        finally:
+            ctx.stop()
+
+    @patch("db.api._magazine", {"volumes": []})
+    def test_stream_pdf_404_unknown_issue(self, client):
+        """Return 404 when registry has no matching issue."""
+        resp = client.get("/api/library/volumes/1/issues/1/pdf/stream")
+        assert resp.status_code == 404
+
+    @patch("db.api._magazine", MOCK_MAGAZINE_CONFIG)
+    @patch("db.api._s3_conf", MOCK_MAGAZINE_CONFIG["s3"])
+    def test_stream_pdf_404_missing_s3_object(self, client, monkeypatch):
+        """Return 404 when registry resolves but S3 has no object."""
+        import boto3
+        from moto import mock_aws
+
+        with mock_aws():
+            s3 = boto3.client("s3", region_name="us-east-1")
+            s3.create_bucket(Bucket="test-bucket")
+            monkeypatch.setattr("db.api._s3_client", s3)
+            resp = client.get("/api/library/volumes/1/issues/1/pdf/stream")
+            assert resp.status_code == 404
+
+    @patch("db.api._magazine", MOCK_MAGAZINE_CONFIG)
+    @patch("db.api._s3_conf", MOCK_MAGAZINE_CONFIG["s3"])
+    def test_stream_pdf_invalid_range(self, client, monkeypatch):
+        """Return 416 when Range exceeds object size."""
+        ctx, _ = self._setup_s3(monkeypatch, body=b"short")
+        try:
+            resp = client.get(
+                "/api/library/volumes/1/issues/1/pdf/stream",
+                headers={"Range": "bytes=9999-99999"},
+            )
+            assert resp.status_code == 416
+        finally:
+            ctx.stop()
+
 
 # ===================================================================
 # /api/library/volumes/{id}/issues/{issue}/articles
@@ -1149,6 +1287,38 @@ class TestS3KeyHelpers:
         assert key is not None
         assert "PONGAL" in key
         assert "1948" in key
+
+    @patch("db.api._magazine", MOCK_MAGAZINE_CONFIG)
+    @patch("db.api._s3_conf", MOCK_MAGAZINE_CONFIG["s3"])
+    def test_issue_pdf_s3_key_found(self):
+        """Return S3 key for existing PDF issue."""
+        from db.api import _issue_pdf_s3_key
+
+        key = _issue_pdf_s3_key(1, "1")
+        assert key == "Magazines/Vol1/VOL1 - 1 - 1947.pdf"  # gitleaks:allow
+
+    @patch("db.api._magazine", MOCK_MAGAZINE_CONFIG)
+    @patch("db.api._s3_conf", MOCK_MAGAZINE_CONFIG["s3"])
+    def test_issue_pdf_s3_key_pongal(self):
+        """PONGAL uses its own year, not volume year."""
+        from db.api import _issue_pdf_s3_key
+
+        key = _issue_pdf_s3_key(1, "PONGAL")
+        assert key == "Magazines/Vol1/VOL1 - PONGAL - 1948.pdf"  # gitleaks:allow
+
+    @patch("db.api._magazine", MOCK_MAGAZINE_CONFIG)
+    def test_issue_pdf_s3_key_vol_not_found(self):
+        """Return None when volume does not exist."""
+        from db.api import _issue_pdf_s3_key
+
+        assert _issue_pdf_s3_key(999, "1") is None
+
+    @patch("db.api._magazine", MOCK_MAGAZINE_CONFIG)
+    def test_issue_pdf_s3_key_issue_not_found(self):
+        """Return None when issue does not exist in volume."""
+        from db.api import _issue_pdf_s3_key
+
+        assert _issue_pdf_s3_key(1, "999") is None
 
 
 class TestS3KeyWithFallback:

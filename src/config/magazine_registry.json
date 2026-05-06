@@ -16,6 +16,8 @@
       "cover_folder_pattern": "volume {vol_id} cover images/",
       "cover_file_pattern": "VOL{vol_id} - {issue_num} - {year}.jpg",
       "magazines": "Magazines/",
+      "magazine_folder_pattern": "Vol{vol_id}/",
+      "magazine_file_pattern": "VOL{vol_id} - {issue_num} - {year}.pdf",
       "snapshots": "qdrant_snapshots/",
       "summary_csv": "summary.csv"
     },
