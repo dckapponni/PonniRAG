@@ -177,7 +177,7 @@ def chunk_text(text: str, size: int) -> List[str]:
     if current_chunk:
         last_chunk = " ".join(current_chunk)
         words_in_chunk = len(re.findall(r"[\u0B80-\u0BFF]+|\w+", last_chunk))
-        if words_in_chunk >= 30:
+        if words_in_chunk >= 10:
             chunks.append(last_chunk)
 
     return chunks
@@ -185,14 +185,14 @@ def chunk_text(text: str, size: int) -> List[str]:
 
 def validate_chunk(chunk: str) -> bool:
     """Validate chunk quality before indexing."""
-    if not chunk or len(chunk) < 50:
+    if not chunk or len(chunk.strip()) < 20:
         return False
 
-    if not re.match(r"^[a-zA-Zஅ-ஹ]", chunk.strip()):
-        return False
+    # if not re.match(r"^[a-zA-Zஅ-ஹ]", chunk.strip()):
+    #     return False
 
     words = len(re.findall(r"[\u0B80-\u0BFF]+|\w+", chunk))
-    if words < 30:
+    if words < 10:
         return False
 
     tamil_chars = len(re.findall(r"[\u0B80-\u0BFF]", chunk))
@@ -291,6 +291,23 @@ def load_documents_from_s3() -> List[Dict]:
 
         chunks = chunk_text(content, CHUNK_SIZE)
 
+        if "PONGAL" in key.upper():
+            print("\n" + "=" * 80)
+            print("TITLE:", article.get("title"))
+            print("TOTAL CHUNKS:", len(chunks))
+
+            for idx, chunk in enumerate(chunks):
+                valid = validate_chunk(chunk)
+
+                print(f"\nCHUNK {idx}")
+                print("VALID:", valid)
+
+                words = len(re.findall(r"[\u0B80-\u0BFF]+|\w+", chunk))
+                print("WORDS:", words)
+
+                print("START:")
+                print(repr(chunk[:120]))
+
         logger.info(
             f"  doc_id={article.get('doc_id')}, "
             f"article_no={article.get('article_no')}: "
@@ -325,7 +342,11 @@ def load_documents_from_s3() -> List[Dict]:
                         "doc_id": article.get("doc_id"),
                         "doc_issue": article.get("doc_issue"),
                         "article_no": article.get("article_no"),
-                        "author_name": article.get("author_name", ""),
+                        "author_name": (
+                            ", ".join(article.get("author_name", []))
+                            if isinstance(article.get("author_name"), list)
+                            else article.get("author_name", "")
+                        ),
                         "title": article.get("title", ""),
                         "year": article.get("year", ""),
                         "source_document": article.get("source_document", ""),

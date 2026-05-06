@@ -326,7 +326,7 @@ class IssueArticlesResponse(BaseModel):
 
     success: bool
     volume_id: int
-    issue_id: int
+    issue_id: str
     count: int
     articles: List[IssueArticleInfo]
 
@@ -1075,7 +1075,7 @@ async def get_pdf_link(volume_id: int, issue_id: str):
     response_model=IssueArticlesResponse,
     tags=["Library"],
 )
-async def get_issue_articles(volume_id: int, issue_id: int):
+async def get_issue_articles(volume_id: int, issue_id: str):
     """
     Get all articles for a specific volume and issue.
 
@@ -1171,6 +1171,8 @@ async def get_issue_articles(volume_id: int, issue_id: int):
         for p in all_points:
             metadata = (p.payload or {}).get("metadata", {})
             doc_issue_str = str(metadata.get("doc_issue", "")).strip()
+            print("DOC ISSUE:", doc_issue_str)
+            print("TARGET:", target_issue)
             if doc_issue_str != str(target_issue):
                 continue
             doc_id = metadata.get("doc_id")

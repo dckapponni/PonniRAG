@@ -19,7 +19,7 @@ from google.genai import types as genai_types
 from guardrails import ANTI_INJECTION_PREAMBLE, sanitize_output
 from retry import is_retryable_gemini, with_gemini_retry, with_gemini_retry_async
 
-from src.config.config import S3_BUCKET, S3_PREFIX
+from config.config import S3_BUCKET, S3_PREFIX
 
 load_dotenv()
 logger = logging.getLogger(__name__)
