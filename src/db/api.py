@@ -785,7 +785,23 @@ async def get_tag_articles(tag_id: str):
                         doc_id=metadata.get("doc_id"),
                         doc_issue=metadata.get("doc_issue"),
                         title=metadata.get("title"),
-                        author_name=metadata.get("author_name"),
+                        author_name=(
+                            metadata.get("author_name", "")
+                            .replace("[", "")
+                            .replace("]", "")
+                            .replace('"', "")
+                            .replace("'", "")
+                            .strip()
+                            if isinstance(metadata.get("author_name"), str)
+                            else [
+                                a.replace("[", "")
+                                .replace("]", "")
+                                .replace('"', "")
+                                .replace("'", "")
+                                .strip()
+                                for a in (metadata.get("author_name") or [])
+                            ]
+                        ),
                         year=metadata.get("year"),
                         tags=metadata.get("tags", []),
                     )
@@ -1187,7 +1203,23 @@ async def get_issue_articles(volume_id: int, issue_id: str):
                     doc_issue=doc_issue_str,
                     article_no=article_no,
                     title=metadata.get("title"),
-                    author_name=metadata.get("author_name"),
+                    author_name=(
+                        metadata.get("author_name", "")
+                        .replace("[", "")
+                        .replace("]", "")
+                        .replace('"', "")
+                        .replace("'", "")
+                        .strip()
+                        if isinstance(metadata.get("author_name"), str)
+                        else [
+                            a.replace("[", "")
+                            .replace("]", "")
+                            .replace('"', "")
+                            .replace("'", "")
+                            .strip()
+                            for a in (metadata.get("author_name") or [])
+                        ]
+                    ),
                     year=metadata.get("year"),
                     tags=metadata.get("tags", []),
                 )
@@ -1283,7 +1315,23 @@ async def get_article_content(
         return ArticleContentResponse(
             success=True,
             title=first_meta.get("title"),
-            author_name=first_meta.get("author_name"),
+            author_name=(
+                first_meta.get("author_name", "")
+                .replace("[", "")
+                .replace("]", "")
+                .replace('"', "")
+                .replace("'", "")
+                .strip()
+                if isinstance(first_meta.get("author_name"), str)
+                else [
+                    a.replace("[", "")
+                    .replace("]", "")
+                    .replace('"', "")
+                    .replace("'", "")
+                    .strip()
+                    for a in (first_meta.get("author_name") or [])
+                ]
+            ),
             year=first_meta.get("year"),
             doc_issue=first_meta.get("doc_issue"),
             tags=first_meta.get("tags", []),
