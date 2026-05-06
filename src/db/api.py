@@ -797,7 +797,11 @@ async def get_tag_articles(tag_id: str):
             )
             for p in points:
                 metadata = (p.payload or {}).get("metadata", {})
-                dedup_key = (metadata.get("doc_id"), metadata.get("doc_issue"))
+                dedup_key = (
+                    metadata.get("doc_id"),
+                    metadata.get("doc_issue"),
+                    metadata.get("article_no"),
+                )
                 if dedup_key in seen:
                     continue
                 seen.add(dedup_key)
