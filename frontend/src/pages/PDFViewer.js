@@ -15,10 +15,7 @@ const PDFViewer = ({ language }) => {
   const t = (key) => getTranslation(language, key);
 
   const defaultLayoutPluginInstance = useMemo(() => defaultLayoutPlugin(), []);
-  const apiBase = process.env.REACT_APP_API_URL || '';
-  const fileUrl = pdfData?.proxy_url
-    ? (pdfData.proxy_url.startsWith('http') ? pdfData.proxy_url : apiBase + pdfData.proxy_url)
-    : null;
+  const fileUrl = pdfData?.proxy_url || null;
 
   useEffect(() => {
     const fetchPDFLink = async () => {
