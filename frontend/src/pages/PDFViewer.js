@@ -65,7 +65,16 @@ const PDFViewer = ({ language }) => {
         <>
           <div className="pdf-container">
             <Worker workerUrl="/pdf.worker.min.js">
-              <Viewer fileUrl={fileUrl} plugins={[defaultLayoutPluginInstance]} />
+              <Viewer
+                key={fileUrl}
+                fileUrl={fileUrl}
+                plugins={[defaultLayoutPluginInstance]}
+                renderError={(err) => (
+                  <div style={{ padding: '1rem', color: '#b91c1c' }}>
+                    {t('error_loading_pdf')}: {err?.message || 'Render failed'}
+                  </div>
+                )}
+              />
             </Worker>
           </div>
           {pdfData.pdf_url && (
