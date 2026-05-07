@@ -1103,10 +1103,7 @@ async def get_pdf_link(volume_id: int, issue_id: str, request: Request):
 
     proxy_url = None
     if _issue_pdf_s3_key(volume_id, issue_id):
-        base = str(request.base_url).rstrip("/")
-        proxy_url = (
-            f"{base}/api/library/volumes/{volume_id}" f"/issues/{issue_id}/pdf/stream"
-        )
+        proxy_url = f"/api/library/volumes/{volume_id}/issues/{issue_id}/pdf/stream"
 
     return PDFLinkResponse(
         volume_id=volume_id,
@@ -1156,6 +1153,9 @@ async def stream_issue_pdf(volume_id: int, issue_id: str, request: Request):
         "Accept-Ranges": "bytes",
         "Cache-Control": f"public, max-age={_PDF_CACHE_SECONDS}, immutable",
         "Content-Length": str(resp["ContentLength"]),
+        "Content-Disposition": (
+            f'inline; filename="vol{volume_id}-issue{issue_id}.pdf"'
+        ),
     }
     if resp.get("ETag"):
         headers["ETag"] = resp["ETag"]

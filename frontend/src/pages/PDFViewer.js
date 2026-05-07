@@ -15,6 +15,10 @@ const PDFViewer = ({ language }) => {
   const t = (key) => getTranslation(language, key);
 
   const defaultLayoutPluginInstance = useMemo(() => defaultLayoutPlugin(), []);
+  const apiBase = process.env.REACT_APP_API_URL || '';
+  const fileUrl = pdfData?.proxy_url
+    ? (pdfData.proxy_url.startsWith('http') ? pdfData.proxy_url : apiBase + pdfData.proxy_url)
+    : null;
 
   useEffect(() => {
     const fetchPDFLink = async () => {
@@ -57,11 +61,11 @@ const PDFViewer = ({ language }) => {
         </div>
       ) : error ? (
         <p style={{ color: '#64748b', padding: '1rem 0' }}>{t('error_loading_pdf')}: {error}</p>
-      ) : pdfData && pdfData.found && pdfData.proxy_url ? (
+      ) : pdfData && pdfData.found && fileUrl ? (
         <>
           <div className="pdf-container">
             <Worker workerUrl="/pdf.worker.min.js">
-              <Viewer fileUrl={pdfData.proxy_url} plugins={[defaultLayoutPluginInstance]} />
+              <Viewer fileUrl={fileUrl} plugins={[defaultLayoutPluginInstance]} />
             </Worker>
           </div>
           {pdfData.pdf_url && (
