@@ -1292,10 +1292,21 @@ async def get_issue_articles(volume_id: int, issue_id: str):
         for p in all_points:
             metadata = (p.payload or {}).get("metadata", {})
             doc_issue_str = str(metadata.get("doc_issue", "")).strip()
-            print("DOC ISSUE:", doc_issue_str)
-            print("TARGET:", target_issue)
-            if doc_issue_str != str(target_issue):
+            normalized_doc_issue = doc_issue_str.strip().lower()
+            normalized_target = str(target_issue).strip().lower()
+
+            if "pongal" in normalized_doc_issue or "பொங்கல்" in normalized_doc_issue:
+                normalized_doc_issue = "pongal"
+
+            if "pongal" in normalized_target or "பொங்கல்" in normalized_target:
+                normalized_target = "pongal"
+
+            print("DOC ISSUE:", normalized_doc_issue)
+            print("TARGET:", normalized_target)
+
+            if normalized_doc_issue != normalized_target:
                 continue
+            print("MATCHED:", metadata.get("title"))
             doc_id = metadata.get("doc_id")
             article_no = str(metadata.get("article_no", ""))
             unique_key = f"{doc_id}_{doc_issue_str}_{article_no}"
