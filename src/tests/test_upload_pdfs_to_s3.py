@@ -217,6 +217,45 @@ class TestProcessIssue:
         assert listing.get("KeyCount", 0) == 0
 
     @mock_aws
+    def test_drive_failure_after_retries_returns_download_failed(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """Persistent gdown failures bubble up as `download_failed` status."""
+        from gdown.exceptions import FileURLRetrievalError
+
+        s3 = boto3.client("s3", region_name="us-east-1")
+        s3.create_bucket(Bucket="test-bucket")
+        s3_conf = {
+            "magazines": "Magazines/",
+            "magazine_folder_pattern": "Vol{vol_id}/",
+            "magazine_file_pattern": "VOL{vol_id} - {issue_num} - {year}.pdf",
+        }
+
+        def always_fail(*args, **kwargs):
+            raise FileURLRetrievalError("permission denied")
+
+        monkeypatch.setattr("scripts.upload_pdfs_to_s3.gdown.download", always_fail)
+        # Skip the actual sleep between retries to keep test fast.
+        monkeypatch.setattr("scripts.upload_pdfs_to_s3.time.sleep", lambda _s: None)
+        monkeypatch.setattr(
+            "scripts.upload_pdfs_to_s3.MANIFEST_PATH", tmp_path / "m.json"
+        )
+
+        status = process_issue(
+            s3=s3,
+            bucket="test-bucket",
+            s3_conf=s3_conf,
+            vol_id=1,
+            vol_year="1947",
+            issue={"num": 6, "pdf_url": "https://drive.google.com/file/d/X/view"},
+            manifest={},
+            force=False,
+        )
+        assert status == "download_failed"
+        listing = s3.list_objects_v2(Bucket="test-bucket")
+        assert listing.get("KeyCount", 0) == 0
+
+    @mock_aws
     def test_skip_when_already_in_manifest(self, tmp_path: Path, monkeypatch):
         """A key already in the manifest with matching S3 size is skipped."""
         s3 = boto3.client("s3", region_name="us-east-1")

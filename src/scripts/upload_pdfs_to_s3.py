@@ -21,14 +21,17 @@ import argparse
 import hashlib
 import json
 import logging
+import random
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Optional
 
 import boto3
 import gdown
 from botocore.exceptions import ClientError
+from gdown.exceptions import FileURLRetrievalError
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
@@ -44,6 +47,35 @@ logger = logging.getLogger("upload_pdfs")
 
 MANIFEST_PATH = Path(__file__).resolve().parent / "upload_manifest.json"
 EOF_TAIL_BYTES = 2048
+DOWNLOAD_RETRIES = 4
+DOWNLOAD_BACKOFF_BASE_S = 5.0
+INTER_ISSUE_SLEEP_S = 2.0
+
+
+def _download_with_retry(file_id: str, output: Path) -> None:
+    """Download from Drive with exponential backoff on retrieval failures."""
+    last_err: Optional[Exception] = None
+    for attempt in range(1, DOWNLOAD_RETRIES + 1):
+        try:
+            gdown.download(id=file_id, output=str(output), quiet=True, fuzzy=True)
+            if output.exists() and output.stat().st_size > 0:
+                return
+            raise FileURLRetrievalError("gdown produced empty output")
+        except FileURLRetrievalError as e:
+            last_err = e
+            wait = DOWNLOAD_BACKOFF_BASE_S * (2 ** (attempt - 1))
+            wait += random.uniform(0, wait * 0.25)  # jitter
+            logger.warning(
+                "[retry %d/%d] gdown failed for %s: %s — sleeping %.1fs",
+                attempt,
+                DOWNLOAD_RETRIES,
+                file_id,
+                e,
+                wait,
+            )
+            time.sleep(wait)
+    assert last_err is not None
+    raise last_err
 
 
 def _drive_file_id(pdf_url: str) -> Optional[str]:
@@ -150,7 +182,11 @@ def process_issue(
     with tempfile.TemporaryDirectory() as td:
         local = Path(td) / "issue.pdf"
         logger.info("[download] vol=%s issue=%s -> %s", vol_id, issue_num, key)
-        gdown.download(id=file_id, output=str(local), quiet=True)
+        try:
+            _download_with_retry(file_id, local)
+        except FileURLRetrievalError as e:
+            logger.error("[download_failed] %s: %s", key, e)
+            return "download_failed"
 
         try:
             _validate_pdf(local)
@@ -208,9 +244,11 @@ def main() -> int:
         "skipped": 0,
         "invalid_source": 0,
         "verify_failed": 0,
+        "download_failed": 0,
         "no_url": 0,
         "bad_url": 0,
     }
+    failures: list = []
 
     for vol in cfg["volumes"]:
         if args.volume is not None and vol["id"] != args.volume:
@@ -218,20 +256,48 @@ def main() -> int:
         for issue in vol["issues"]:
             if args.issue is not None and str(issue["num"]) != str(args.issue):
                 continue
-            status = process_issue(
-                s3=s3,
-                bucket=bucket,
-                s3_conf=s3_conf,
-                vol_id=vol["id"],
-                vol_year=vol["year"],
-                issue=issue,
-                manifest=manifest,
-                force=args.force,
-            )
+            try:
+                status = process_issue(
+                    s3=s3,
+                    bucket=bucket,
+                    s3_conf=s3_conf,
+                    vol_id=vol["id"],
+                    vol_year=vol["year"],
+                    issue=issue,
+                    manifest=manifest,
+                    force=args.force,
+                )
+            except (
+                Exception
+            ) as e:  # noqa: BLE001 — keep batch alive on any per-issue failure
+                logger.exception(
+                    "[unexpected] vol=%s issue=%s: %s", vol["id"], issue["num"], e
+                )
+                status = "download_failed"
             counts[status] = counts.get(status, 0) + 1
+            if status in ("download_failed", "invalid_source", "verify_failed"):
+                failures.append(
+                    {
+                        "volume": vol["id"],
+                        "issue": str(issue["num"]),
+                        "status": status,
+                        "drive_url": issue.get("pdf_url"),
+                    }
+                )
+            time.sleep(INTER_ISSUE_SLEEP_S)
 
     logger.info("Done: %s", counts)
-    return 0 if counts["invalid_source"] == 0 and counts["verify_failed"] == 0 else 1
+    if failures:
+        logger.warning("Failures (%d):", len(failures))
+        for f in failures:
+            logger.warning(
+                "  vol=%s issue=%s status=%s url=%s",
+                f["volume"],
+                f["issue"],
+                f["status"],
+                f["drive_url"],
+            )
+    return 0 if not failures else 1
 
 
 if __name__ == "__main__":
