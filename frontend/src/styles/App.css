@@ -872,6 +872,11 @@ html, body {
   border: none;
 }
 
+.pdf-container .rpv-core__viewer {
+  height: 100%;
+  width: 100%;
+}
+
 .pdf-actions {
   display: flex;
   align-items: center;
