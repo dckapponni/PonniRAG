@@ -872,9 +872,14 @@ html, body {
   border: none;
 }
 
-.pdf-container .rpv-core__viewer {
+.pdf-container > div {
   height: 100%;
   width: 100%;
+}
+
+.pdf-container [data-testid="default-layout__container"],
+.pdf-container .rpv-default-layout__container {
+  height: 100% !important;
 }
 
 .pdf-actions {

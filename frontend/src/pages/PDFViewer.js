@@ -33,7 +33,10 @@ const PDFViewer = ({ language }) => {
     };
   }, [volumeId, issueId]);
 
-  const fileUrl = pdfData && pdfData.found ? pdfData.proxy_url : null;
+  const rawProxy = pdfData && pdfData.found ? pdfData.proxy_url : null;
+  const fileUrl = rawProxy
+    ? (rawProxy.startsWith('http') ? rawProxy : window.location.origin + rawProxy)
+    : null;
 
   return (
     <div className="library-container">
