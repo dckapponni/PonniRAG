@@ -354,6 +354,15 @@ _TAMIL_STOP_WORDS = {
     "தலைப்புகள்",
     "பெயர்கள்",
     "பெயர்களை",
+    # 2-char particles (added with {2,} regex threshold so we filter
+    # noise instead of inflating term-match counts).
+    "ஒரு",
+    "அது",
+    "இது",
+    "அவை",
+    "இவை",
+    "ஆம்",
+    "இல்",
 }
 _ENGLISH_STOP_WORDS = {
     "what",
@@ -421,7 +430,7 @@ def _check_context_relevance(question: str, relevant_docs: list) -> bool:
 
     # --- Extract distinguishing terms from the query ---
     years = set(_re.findall(r"\b(19\d{2}|20\d{2})\b", question))
-    tamil_terms = set(_re.findall(r"[\u0B80-\u0BFF]{3,}", question))
+    tamil_terms = set(_re.findall(r"[\u0B80-\u0BFF]{2,}", question))
     tamil_terms -= _TAMIL_STOP_WORDS
     english_terms = {w.lower() for w in _re.findall(r"[a-zA-Z]{3,}", question)}
     english_terms -= _ENGLISH_STOP_WORDS
@@ -466,7 +475,7 @@ def _check_context_relevance(question: str, relevant_docs: list) -> bool:
     # prefix that is ≥60% of the shorter word (min 3 chars).
     key_terms = tamil_terms | english_terms
     if key_terms:
-        doc_tamil_words = set(_re.findall(r"[\u0B80-\u0BFF]{3,}", all_text))
+        doc_tamil_words = set(_re.findall(r"[\u0B80-\u0BFF]{2,}", all_text))
 
         def _common_prefix_len(a, b):
             n = min(len(a), len(b))
@@ -512,7 +521,7 @@ def _filter_sources_by_relevance(question: str, sources: List[Dict]) -> List[Dic
         return sources
 
     # Extract distinguishing terms from the query
-    tamil_terms = set(_re.findall(r"[\u0B80-\u0BFF]{3,}", question))
+    tamil_terms = set(_re.findall(r"[\u0B80-\u0BFF]{2,}", question))
     tamil_terms -= _TAMIL_STOP_WORDS
     english_terms = {w.lower() for w in _re.findall(r"[a-zA-Z]{3,}", question)}
     english_terms -= _ENGLISH_STOP_WORDS
@@ -530,23 +539,40 @@ def _filter_sources_by_relevance(question: str, sources: List[Dict]) -> List[Dic
                 return i
         return n
 
-    def _doc_match_count(doc):
-        """Count how many query key terms appear in a single doc."""
+    # Build contiguous bigrams from the question's Tamil tokens (ordered
+    # appearance) so we can boost docs whose heading literally contains
+    # a query phrase like "மே தினம்".
+    ordered_tamil_tokens = [
+        tok
+        for tok in _re.findall(r"[\u0B80-\u0BFF]{2,}", question)
+        if tok not in _TAMIL_STOP_WORDS
+    ]
+    query_bigrams = [
+        f"{a} {b}" for a, b in zip(ordered_tamil_tokens, ordered_tamil_tokens[1:])
+    ]
+
+    def _doc_match_count_and_heading_hit(doc):
+        """Return (match_count, heading_hit) for a single doc."""
+        heading = str(doc.get("heading", ""))
+        heading_lower = heading.lower()
         doc_text = " ".join(
             [
                 str(doc.get("content", "")),
-                str(doc.get("heading", "")),
+                heading,
                 _flatten_author(doc.get("author_name", "")),
             ]
         ).lower()
 
-        doc_tamil_words = set(_re.findall(r"[\u0B80-\u0BFF]{3,}", doc_text))
+        doc_tamil_words = set(_re.findall(r"[\u0B80-\u0BFF]{2,}", doc_text))
         matched = 0
+        heading_hit = False
 
         for term in key_terms:
             tl = term.lower()
             if tl in doc_text:
                 matched += 1
+                if tl in heading_lower:
+                    heading_hit = True
                 continue
             for dw in doc_tamil_words:
                 shorter = min(len(dw), len(term))
@@ -556,35 +582,71 @@ def _filter_sources_by_relevance(question: str, sources: List[Dict]) -> List[Dic
                 if cp >= max(3, int(shorter * 0.6)):
                     matched += 1
                     break
-        return matched
 
-    scored = [(s, _doc_match_count(s)) for s in sources]
+        # Bigram boost: contiguous query phrase appearing in heading
+        # is a stronger signal than any single-term heading match.
+        bigram_hit = False
+        for bg in query_bigrams:
+            if bg in heading_lower:
+                bigram_hit = True
+                heading_hit = True
+                break
+
+        return matched, heading_hit, bigram_hit
+
+    scored = []
+    for idx, src in enumerate(sources):
+        count, heading_hit, bigram_hit = _doc_match_count_and_heading_hit(src)
+        scored.append(
+            {
+                "src": src,
+                "count": count,
+                "heading_hit": heading_hit,
+                "bigram_hit": bigram_hit,
+                "original_idx": idx,
+            }
+        )
 
     # Require docs to match a meaningful proportion of key terms.
     # With many key terms, a doc matching just 1 generic word (like
     # "செய்திகள்") is noise. Require at least 30% of terms or 2,
     # whichever is smaller — but always at least 1.
+    # Heading-bigram hits bypass the threshold (a literal phrase match
+    # in the title is stronger evidence than diffuse term overlap).
     n_terms = len(key_terms)
     min_matches = max(1, min(2, int(n_terms * 0.3)))
 
-    filtered = [(s, count) for s, count in scored if count >= min_matches]
+    filtered = [
+        item
+        for item in scored
+        if item["count"] >= min_matches or item["heading_hit"] or item["bigram_hit"]
+    ]
 
     if filtered:
-        # Re-rank: more matching terms → higher rank
-        filtered.sort(key=lambda x: x[1], reverse=True)
-        result = [s for s, _ in filtered]
+        # Sort tiers:
+        #   1. bigram_hit (literal query phrase in heading)
+        #   2. heading_hit (any single query term in heading)
+        #   3. match count (descending)
+        #   4. original retrieval order (semantic+BM25 ranking)
+        filtered.sort(
+            key=lambda t: (
+                0 if t["bigram_hit"] else 1,
+                0 if t["heading_hit"] else 1,
+                -t["count"],
+                t["original_idx"],
+            )
+        )
+        result = [t["src"] for t in filtered]
         logger.info(
-            f"[SOURCES] Filtered {len(sources)} → {len(result)} "
+            f"[SOURCES] Filtered {len(sources)} -> {len(result)} "
             f"relevant sources (min_matches={min_matches}, "
-            f"re-ranked by term match count)"
+            f"sorted by heading_hit, count, original_order)"
         )
         return result
 
-    # No sources met the threshold — show nothing rather than
+    # No sources met the threshold - show nothing rather than
     # misleading the user with unrelated evidence
-    logger.info(
-        f"[SOURCES] No sources met min_matches={min_matches} " f"— suppressing all"
-    )
+    logger.info(f"[SOURCES] No sources met min_matches={min_matches} - suppressing all")
     return []
 
 

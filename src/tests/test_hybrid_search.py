@@ -3577,6 +3577,76 @@ class TestFilterSourcesByRelevance:
         assert len(result) == 1
         assert result[0]["author_name"] == "கருணாநிதி"
 
+    def test_two_char_tamil_token_captured(self):
+        """2-char Tamil tokens like 'மே' must be picked up by the regex."""
+        # Doc heading is the 2-char + 4-char title; only 'மே' connects
+        # them to the query. Under the old {3,} regex 'மே' was dropped
+        # entirely and this doc would not survive filtering.
+        sources = [
+            _make_merged_doc(
+                heading="மே தினம்",
+                content="மே தினம் கவிதை",
+            ),
+        ]
+        result = hs._filter_sources_by_relevance(
+            "பொன்னியில் மே தினம் என்ற தலைப்பு", sources
+        )
+        assert len(result) == 1
+
+    def test_heading_bigram_boost_outranks_higher_count_doc(self):
+        """Heading-phrase docs outrank higher-count docs without a phrase hit.
+
+        A doc whose heading literally contains a query bigram must rank
+        above a doc with more total token matches but no heading-phrase hit.
+        """
+        # "மே தினம்" appears as a contiguous bigram in the question.
+        # First source: heading is exactly that phrase, body has only
+        # one matching token. Second source: heading unrelated, body
+        # has many matching tokens (literary-form discussion).
+        sources = [
+            # Generic literary-form discussion — body matches many tokens.
+            _make_merged_doc(
+                heading="இலக்கிய வடிவங்கள்",
+                content=(
+                    "இலக்கிய வடிவத்தை சுட்டுகிறது என்பது " "எந்த வகை என்பதை ஆராய்கிறது"
+                ),
+            ),
+            # The actual May Day article — body short, heading is the phrase.
+            _make_merged_doc(
+                heading="மே தினம்",
+                content="தொழிலாளர் தினம் பற்றிய கவிதை",
+            ),
+        ]
+        result = hs._filter_sources_by_relevance(
+            "பொன்னியில் மே தினம் என்ற இலக்கிய வடிவத்தை சுட்டுகிறது",
+            sources,
+        )
+        # Both kept, but the heading-bigram doc must be first.
+        assert len(result) >= 1
+        assert result[0]["heading"] == "மே தினம்"
+
+    def test_tiebreaker_preserves_original_retrieval_order(self):
+        """When match count and heading_hit are equal, original order wins."""
+        # Both docs match exactly one term ('கருணாநிதி'), neither has a
+        # heading hit on the query phrase. With the old sort-by-count the
+        # output order was non-deterministic; now it must mirror input.
+        sources = [
+            _make_merged_doc(
+                heading="முதல் கட்டுரை",
+                content="கருணாநிதி பற்றி",
+                author_name="ஆசிரியர் A",
+            ),
+            _make_merged_doc(
+                heading="இரண்டாம் கட்டுரை",
+                content="கருணாநிதி குறித்து",
+                author_name="ஆசிரியர் B",
+            ),
+        ]
+        result = hs._filter_sources_by_relevance("கருணாநிதி படைப்புகள்", sources)
+        assert len(result) == 2
+        assert result[0]["heading"] == "முதல் கட்டுரை"
+        assert result[1]["heading"] == "இரண்டாம் கட்டுரை"
+
 
 if __name__ == "__main__":
     pytest.main(
