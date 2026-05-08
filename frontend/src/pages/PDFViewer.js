@@ -7,13 +7,12 @@ import '@react-pdf-viewer/default-layout/lib/styles/index.css';
 import { getTranslation } from '../services/translations';
 import { getPDFLink } from '../services/api';
 
-const defaultLayoutPluginInstance = defaultLayoutPlugin();
-
 const PDFViewer = ({ language }) => {
   const { volumeId, issueId } = useParams();
   const [pdfData, setPdfData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const defaultLayoutPluginInstance = defaultLayoutPlugin();
   const t = (key) => getTranslation(language, key);
 
   useEffect(() => {
