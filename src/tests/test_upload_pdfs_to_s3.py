@@ -8,6 +8,7 @@ from moto import mock_aws
 
 from scripts.upload_pdfs_to_s3 import (
     _drive_file_id,
+    _linearize_pdf,
     _s3_key_for_issue,
     _validate_pdf,
     _verify_s3_object,
@@ -16,27 +17,16 @@ from scripts.upload_pdfs_to_s3 import (
 
 
 def _make_valid_pdf_bytes() -> bytes:
-    """Tiny structurally-valid PDF (header + one obj + xref + trailer + EOF)."""
-    # Pad with a comment line to push total size past the 256-byte minimum.
-    padding = b"% " + b"x" * 200 + b"\n"
-    body = (
-        b"%PDF-1.4\n"
-        + padding
-        + b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
-        b"2 0 obj\n<< /Type /Pages /Count 0 /Kids [] >>\nendobj\n"
-    )
-    xref_offset = len(body)
-    xref = (
-        b"xref\n0 3\n"
-        b"0000000000 65535 f \n"
-        b"0000000009 00000 n \n"
-        b"0000000056 00000 n \n"
-    )
-    trailer = (
-        b"trailer\n<< /Size 3 /Root 1 0 R >>\n"
-        b"startxref\n" + str(xref_offset).encode() + b"\n%%EOF\n"
-    )
-    return body + xref + trailer
+    """Build a minimal one-page PDF via pikepdf (qpdf-compatible)."""
+    import io
+
+    import pikepdf
+
+    pdf = pikepdf.Pdf.new()
+    pdf.add_blank_page(page_size=(612, 792))  # US-letter
+    buf = io.BytesIO()
+    pdf.save(buf)
+    return buf.getvalue()
 
 
 class TestDriveFileId:
@@ -77,6 +67,23 @@ class TestS3KeyForIssue:
         assert _s3_key_for_issue(s3_conf, 1, "PONGAL", "1948") == (
             "Magazines/Vol1/VOL1 - PONGAL - 1948.pdf"  # gitleaks:allow
         )
+
+
+class TestLinearizePdf:
+    """Tests for the qpdf-backed linearization step."""
+
+    def test_linearized_output_is_valid_and_marked_linearized(self, tmp_path: Path):
+        """Linearized output passes validation and pikepdf reports linearized."""
+        import pikepdf
+
+        src = tmp_path / "src.pdf"
+        src.write_bytes(_make_valid_pdf_bytes())
+        dst = tmp_path / "dst.pdf"
+        _linearize_pdf(src, dst)
+        assert dst.exists()
+        _validate_pdf(dst)
+        with pikepdf.open(str(dst)) as pdf:
+            assert pdf.is_linearized
 
 
 class TestValidatePdf:
@@ -174,12 +181,18 @@ class TestProcessIssue:
             force=False,
         )
         assert status == "ok"
-        # Verify object actually present and valid
-        head = s3.head_object(
+        # Verify object actually present and linearized (uploaded body is
+        # the linearized output, with a different size than the source).
+        import io as _io
+
+        import pikepdf
+
+        body = s3.get_object(
             Bucket="test-bucket",
             Key="Magazines/Vol1/VOL1 - 6 - 1947.pdf",  # gitleaks:allow
-        )
-        assert head["ContentLength"] == len(valid_bytes)
+        )["Body"].read()
+        with pikepdf.open(_io.BytesIO(body)) as pdf:
+            assert pdf.is_linearized
         assert manifest_file.exists()
 
     @mock_aws

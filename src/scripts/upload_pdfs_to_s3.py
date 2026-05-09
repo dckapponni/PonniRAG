@@ -30,6 +30,7 @@ from typing import Optional
 
 import boto3
 import gdown
+import pikepdf
 from botocore.exceptions import ClientError
 from gdown.exceptions import FileURLRetrievalError
 from pypdf import PdfReader
@@ -106,6 +107,16 @@ def _validate_pdf(path: Path) -> None:
         raise ValueError("missing %%EOF marker in trailer")
     # Full structural parse — catches malformed xref/trailer.
     PdfReader(str(path), strict=False)
+
+
+def _linearize_pdf(src: Path, dst: Path) -> None:
+    """Rewrite the PDF in linearized ("Fast Web View") form.
+
+    Linearized PDFs let pdf.js render the first page before the entire
+    file downloads — major win for time-to-first-paint on large scans.
+    """
+    with pikepdf.open(str(src)) as pdf:
+        pdf.save(str(dst), linearize=True)
 
 
 def _sha256(path: Path) -> str:
@@ -194,12 +205,26 @@ def process_issue(
             logger.error("[invalid] %s: %s", key, e)
             return "invalid_source"
 
-        digest = _sha256(local)
-        size = local.stat().st_size
+        linearized = Path(td) / "issue.linearized.pdf"
+        try:
+            _linearize_pdf(local, linearized)
+            _validate_pdf(linearized)
+        except (pikepdf.PdfError, ValueError, PdfReadError) as e:
+            logger.error("[linearize_failed] %s: %s", key, e)
+            return "linearize_failed"
 
-        logger.info("[upload] %s (%d bytes)", key, size)
+        upload_path = linearized
+        digest = _sha256(upload_path)
+        size = upload_path.stat().st_size
+
+        logger.info(
+            "[upload] %s (%d bytes, linearized from %d)",
+            key,
+            size,
+            local.stat().st_size,
+        )
         s3.upload_file(
-            str(local),
+            str(upload_path),
             bucket,
             key,
             ExtraArgs={"ContentType": "application/pdf"},
@@ -245,6 +270,7 @@ def main() -> int:
         "invalid_source": 0,
         "verify_failed": 0,
         "download_failed": 0,
+        "linearize_failed": 0,
         "no_url": 0,
         "bad_url": 0,
     }
@@ -275,7 +301,12 @@ def main() -> int:
                 )
                 status = "download_failed"
             counts[status] = counts.get(status, 0) + 1
-            if status in ("download_failed", "invalid_source", "verify_failed"):
+            if status in (
+                "download_failed",
+                "invalid_source",
+                "verify_failed",
+                "linearize_failed",
+            ):
                 failures.append(
                     {
                         "volume": vol["id"],
