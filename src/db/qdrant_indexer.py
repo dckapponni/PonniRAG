@@ -6,14 +6,12 @@ snapshot-based change detection.
 """
 
 import argparse
-import hashlib
 import json
 import logging
 import os
 import re
 import unicodedata
 import uuid
-from collections import Counter
 from typing import Dict, List
 
 import boto3
@@ -81,31 +79,16 @@ def dense_embed_query(text: str) -> List[float]:
     return dense_model.encode(f"query: {text}", normalize_embeddings=True).tolist()
 
 
-def _deterministic_token_hash(token: str) -> int:
-    """Deterministic token hash using MD5, consistent across processes.
-
-    Python's built-in hash() is randomized per process (PYTHONHASHSEED),
-    which causes sparse vectors at query time to mismatch those created
-    at indexing time.  MD5 is deterministic and fast for this use case.
-    """
-    return int(hashlib.md5(token.encode("utf-8")).hexdigest(), 16) % (2**31)
-
-
 def sparse_embed(text: str) -> models.SparseVector:
-    """Generate BM25-style sparse embedding for text."""
-    text = unicodedata.normalize("NFC", text)
-    tokens = re.findall(r"\b\w+\b", text.lower())
-    counts = Counter(tokens)
+    """Generate BM25 sparse embedding for indexing via fastembed.
 
-    indices: List[int] = []
-    values: List[float] = []
+    Replaces the previous tf-hash scheme. The runtime query encoder
+    in ``sparse.sparse_embed_query`` uses the same ``Qdrant/bm25`` model
+    so index-time and query-time tokens line up exactly.
+    """
+    from src.db.sparse import sparse_embed_doc
 
-    for token, freq in counts.items():
-        idx = _deterministic_token_hash(token)
-        indices.append(idx)
-        values.append(float(freq))
-
-    return models.SparseVector(indices=indices, values=values)
+    return sparse_embed_doc(text)
 
 
 def split_into_sentences(text: str) -> List[str]:

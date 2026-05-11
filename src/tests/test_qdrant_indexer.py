@@ -208,11 +208,15 @@ class TestEmbeddingFunctions:
         assert len(sparse_vector.indices) == len(sparse_vector.values)
 
     def test_sparse_embed_empty_text(self):
-        """Test sparse embedding with empty text."""
+        """Empty text yields a non-empty placeholder so Qdrant accepts the point."""
         text = ""
         sparse_vector = sparse_embed(text)
-        assert len(sparse_vector.indices) == 0
-        assert len(sparse_vector.values) == 0
+        # Qdrant rejects truly empty sparse vectors, so sparse_embed_doc
+        # falls back to a no-op [0]/[0.0] placeholder when the encoder
+        # returns no tokens. With the conftest mock we always get the
+        # mock's three deterministic indices/values back.
+        assert len(sparse_vector.indices) == len(sparse_vector.values)
+        assert len(sparse_vector.indices) >= 1
 
     def test_sparse_embed_repeated_words(self):
         """Test sparse embedding with repeated words."""
@@ -1219,16 +1223,6 @@ def test_save_snapshot_failure(mock_client_class, mock_save):
     with patch("db.qdrant_indexer.logger") as mock_logger:
         _save_snapshot_and_metadata(mock_client, Mock())
         assert mock_logger.error.called
-
-
-from db.qdrant_indexer import _deterministic_token_hash  # noqa: E402
-
-
-def test_deterministic_token_hash():
-    """Test deterministic token hash output."""
-    h1 = _deterministic_token_hash("test")
-    h2 = _deterministic_token_hash("test")
-    assert h1 == h2
 
 
 # ================================================================

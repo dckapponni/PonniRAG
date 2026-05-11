@@ -4,12 +4,9 @@ Provides dense/sparse embeddings, Qdrant client management,
 CSV semantic search, health checks, and hybrid vector search.
 """
 
-import hashlib
 import logging
 import os
-import re
 import unicodedata
-from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List
 
@@ -212,31 +209,17 @@ def dense_embed_query(text: str):
         ).tolist()
 
 
-def _deterministic_token_hash(token: str) -> int:
-    """Compute deterministic token hash using MD5.
-
-    Python's built-in hash() is randomized per process
-    (PYTHONHASHSEED), which causes sparse vectors at query
-    time to mismatch those created at indexing time.
-    """
-    return int(hashlib.md5(token.encode("utf-8")).hexdigest(), 16) % (2**31)
-
-
 def sparse_embed(text: str):
-    """Generate sparse BM25-style embedding for text."""
-    text = unicodedata.normalize("NFC", text)
-    tokens = re.findall(r"[\w\u0B80-\u0BFF]+", text.lower())
-    counts = defaultdict(int)
-    for t in tokens:
-        counts[t] += 1
-    indices, values = [], []
-    for token, freq in counts.items():
-        indices.append(_deterministic_token_hash(token))
-        values.append(float(freq))
-    if not indices:
-        indices = [0]
-        values = [0.0]
-    return models.SparseVector(indices=indices, values=values)
+    """Generate sparse BM25 embedding for a search query.
+
+    Delegates to the shared fastembed ``Qdrant/bm25`` encoder so that
+    indexer and runtime tokenize identically. The legacy tf-hash
+    implementation diverged between index and query time, leaving the
+    sparse branch effectively dead and the RRF fusion degenerate.
+    """
+    from sparse import sparse_embed_query
+
+    return sparse_embed_query(text)
 
 
 def search_csv_semantic(question: str, top_k: int = 5):
