@@ -64,6 +64,7 @@ from llm import (
     generate_llm_answer_stream,
 )
 from qdrant_client import models
+from reranker import rerank_sources
 from search import _select_relevant_docs  # ✅ required
 from search import retrieve_all_chunks_for_document  # noqa: F401 — re-export
 from search import (
@@ -650,6 +651,24 @@ def _filter_sources_by_relevance(question: str, sources: List[Dict]) -> List[Dic
     return []
 
 
+def _rerank_or_filter(question: str, sources: List[Dict]) -> List[Dict]:
+    """Cross-encoder rerank with lexical filter as fallback.
+
+    Tries the cross-encoder first; on disable / load failure / inference
+    error, falls back to the legacy token-overlap filter. Always returns
+    a list (possibly empty) suitable for the UI sources panel.
+    """
+    if not sources:
+        return sources
+
+    reranked, ok = rerank_sources(question, sources)
+    if ok:
+        return reranked
+
+    logger.info("[SOURCES] Reranker unavailable — using lexical filter fallback")
+    return _filter_sources_by_relevance(question, sources)
+
+
 def truncate_query(question: str, max_length: int = MAX_QUERY_LENGTH) -> str:
     """Normalize Unicode to NFC and truncate to max_length at a word boundary.
 
@@ -918,7 +937,7 @@ def ask_question(
                 question, merged_docs, history, language
             )
 
-        sources = _filter_sources_by_relevance(question, format_sources(merged_docs))
+        sources = _rerank_or_filter(question, format_sources(merged_docs))
 
         # Suppress sources when the answer indicates the data is not available
         if _answer_indicates_no_data(answer):
@@ -1181,7 +1200,7 @@ async def ask_question_async(
                 question, merged_docs, history, language
             )
 
-        sources = _filter_sources_by_relevance(question, format_sources(merged_docs))
+        sources = _rerank_or_filter(question, format_sources(merged_docs))
 
         # Suppress sources when the answer indicates the data is not available
         if _answer_indicates_no_data(answer):
@@ -1476,7 +1495,7 @@ def ask_question_stream(
             accumulated_tokens = [answer]
             yield {"type": "token", "content": answer}
 
-        sources = _filter_sources_by_relevance(question, format_sources(merged_docs))
+        sources = _rerank_or_filter(question, format_sources(merged_docs))
 
         if fallback_reason:
             yield {"type": "fallback", "reason": fallback_reason}
