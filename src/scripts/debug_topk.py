@@ -74,9 +74,23 @@ def main(limit: int = 30):
         pl = p.payload or {}
         meta = pl.get("metadata", {}) or {}
         heading = meta.get("heading") or pl.get("heading") or ""
+        title = meta.get("title") or ""
         text = pl.get("text") or pl.get("content") or ""
-        if "மே தினம்" in heading or "மே தினம்" in text:
-            print(f"  hit at rank {i}: heading={heading[:80]!r}")
+        if "மே தினம்" in heading or "மே தினம்" in text or "மே தினம்" in title:
+            print(
+                f"  raw rank {i}: title={title[:60]!r} heading={heading[:60]!r} "
+                f"chunk_id={meta.get('chunk_id')} doc_id={meta.get('doc_id')}"
+            )
+
+    print("\nmatches 'மே தினம்' in merged pool:")
+    for i, d in enumerate(merged, 1):
+        h = d.get("heading") or ""
+        c = d.get("content") or ""
+        if "மே தினம்" in h or "மே தினம்" in c:
+            print(
+                f"  merged rank {i}: score={d.get('score'):.4f} "
+                f"heading={h[:60]!r} word_count={d.get('word_count')}"
+            )
 
 
 if __name__ == "__main__":
