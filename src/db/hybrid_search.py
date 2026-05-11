@@ -651,22 +651,26 @@ def _filter_sources_by_relevance(question: str, sources: List[Dict]) -> List[Dic
     return []
 
 
-def _rerank_or_filter(question: str, sources: List[Dict]) -> List[Dict]:
+def _rerank_or_filter(question: str, merged_docs: List[Dict]) -> List[Dict]:
     """Cross-encoder rerank with lexical filter as fallback.
 
-    Tries the cross-encoder first; on disable / load failure / inference
-    error, falls back to the legacy token-overlap filter. Always returns
-    a list (possibly empty) suitable for the UI sources panel.
-    """
-    if not sources:
-        return sources
+    Reranker path: format the full merged pool (skip the score-gap
+    selector) and let the cross-encoder reorder candidates.
 
-    reranked, ok = rerank_sources(question, sources)
+    Fallback path: when the reranker is disabled or fails, fall back
+    to the legacy pipeline — score-gap filter + lexical token-overlap.
+    """
+    if not merged_docs:
+        return []
+
+    full_sources = format_sources(merged_docs, apply_filter=False)
+    reranked, ok = rerank_sources(question, full_sources)
     if ok:
         return reranked
 
     logger.info("[SOURCES] Reranker unavailable — using lexical filter fallback")
-    return _filter_sources_by_relevance(question, sources)
+    legacy_sources = format_sources(merged_docs, apply_filter=True)
+    return _filter_sources_by_relevance(question, legacy_sources)
 
 
 def truncate_query(question: str, max_length: int = MAX_QUERY_LENGTH) -> str:
@@ -937,7 +941,7 @@ def ask_question(
                 question, merged_docs, history, language
             )
 
-        sources = _rerank_or_filter(question, format_sources(merged_docs))
+        sources = _rerank_or_filter(question, merged_docs)
 
         # Suppress sources when the answer indicates the data is not available
         if _answer_indicates_no_data(answer):
@@ -1200,7 +1204,7 @@ async def ask_question_async(
                 question, merged_docs, history, language
             )
 
-        sources = _rerank_or_filter(question, format_sources(merged_docs))
+        sources = _rerank_or_filter(question, merged_docs)
 
         # Suppress sources when the answer indicates the data is not available
         if _answer_indicates_no_data(answer):
@@ -1495,7 +1499,7 @@ def ask_question_stream(
             accumulated_tokens = [answer]
             yield {"type": "token", "content": answer}
 
-        sources = _rerank_or_filter(question, format_sources(merged_docs))
+        sources = _rerank_or_filter(question, merged_docs)
 
         if fallback_reason:
             yield {"type": "fallback", "reason": fallback_reason}

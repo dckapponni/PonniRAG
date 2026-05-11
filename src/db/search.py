@@ -311,9 +311,16 @@ def build_context_from_docs(
     return "\n\n".join(context_parts), n
 
 
-def format_sources(merged_docs: List[Dict]) -> List[Dict]:
-    """Format source documents for display."""
-    relevant = _select_relevant_docs(merged_docs)
+def format_sources(merged_docs: List[Dict], apply_filter: bool = True) -> List[Dict]:
+    """Format source documents for display.
+
+    When apply_filter is True (default), the score-gap filter
+    `_select_relevant_docs` runs first — appropriate when the caller
+    wants the legacy lexical-style top sources. When False, the full
+    merged pool is formatted as-is — used by the cross-encoder
+    reranker so it can see all candidates before its own selection.
+    """
+    relevant = _select_relevant_docs(merged_docs) if apply_filter else merged_docs
 
     logger = logging.getLogger(__name__)
     sources = []
