@@ -42,6 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 QDRANT_HOST = os.environ.get("QDRANT_HOST", "localhost")
 QDRANT_PORT = int(os.environ.get("QDRANT_PORT", "6333"))
 COLLECTION_NAME = "qdrant_indexer"
+RAG_DEBUG = os.environ.get("RAG_DEBUG", "0").lower() in ("1", "true", "yes")
 
 EMBEDDING_MODEL = "intfloat/multilingual-e5-large"
 CSV_PATH = BASE_DIR / "data" / "summary.csv"
@@ -323,19 +324,27 @@ class HybridQdrantSearch:
             )
         search_filter = models.Filter(must=filter_conditions)
 
+        dense_vec = dense_embed_query(query)
+        sparse_vec = sparse_embed(query)
+
+        if RAG_DEBUG:
+            self._debug_branch_compare(
+                query, dense_vec, sparse_vec, search_filter, score_threshold, limit
+            )
+
         response = with_qdrant_retry(
             self.client.query_points,
             collection_name=COLLECTION_NAME,
             prefetch=[
                 models.Prefetch(
-                    query=dense_embed_query(query),
+                    query=dense_vec,
                     using="dense",
                     filter=search_filter,
                     score_threshold=score_threshold,
                     limit=limit * 2,
                 ),
                 models.Prefetch(
-                    query=sparse_embed(query),
+                    query=sparse_vec,
                     using="sparse",
                     filter=search_filter,
                     limit=limit,
@@ -346,3 +355,82 @@ class HybridQdrantSearch:
             with_payload=True,
         )
         return response.points
+
+    def _debug_branch_compare(
+        self, query, dense_vec, sparse_vec, search_filter, score_threshold, limit
+    ):
+        """Log dense-only and sparse-only top hits to diagnose RRF fusion.
+
+        Enabled via RAG_DEBUG=1. Issues two extra queries per call —
+        do not enable in production.
+        """
+        try:
+            dense_resp = with_qdrant_retry(
+                self.client.query_points,
+                collection_name=COLLECTION_NAME,
+                query=dense_vec,
+                using="dense",
+                query_filter=search_filter,
+                score_threshold=score_threshold,
+                limit=10,
+                with_payload=True,
+            )
+            sparse_resp = with_qdrant_retry(
+                self.client.query_points,
+                collection_name=COLLECTION_NAME,
+                query=sparse_vec,
+                using="sparse",
+                query_filter=search_filter,
+                limit=10,
+                with_payload=True,
+            )
+        except Exception as e:
+            logger.warning(f"[RAG_DEBUG] branch_compare failed: {e}")
+            return
+
+        dense_pts = dense_resp.points
+        sparse_pts = sparse_resp.points
+
+        def _heading(p):
+            pl = p.payload or {}
+            meta = pl.get("metadata", {}) or {}
+            return (meta.get("heading") or pl.get("heading") or "")[:60]
+
+        logger.info(f"[RAG_DEBUG] query={query[:80]!r}")
+        logger.info(
+            f"[RAG_DEBUG] dense_hits={len(dense_pts)} sparse_hits={len(sparse_pts)}"
+        )
+
+        sparse_token_count = (
+            len(sparse_vec.indices) if hasattr(sparse_vec, "indices") else 0
+        )
+        nonzero_sparse = (
+            sum(1 for v in sparse_vec.values if v > 0)
+            if hasattr(sparse_vec, "values")
+            else 0
+        )
+        logger.info(
+            f"[RAG_DEBUG] sparse_tokens={sparse_token_count} nonzero={nonzero_sparse}"
+        )
+
+        logger.info("[RAG_DEBUG] --- dense top-10 ---")
+        for i, p in enumerate(dense_pts, 1):
+            logger.info(
+                f"[RAG_DEBUG] dense {i:2d}. id={p.id} score={p.score:.4f} "
+                f"heading={_heading(p)!r}"
+            )
+        logger.info("[RAG_DEBUG] --- sparse top-10 ---")
+        for i, p in enumerate(sparse_pts, 1):
+            logger.info(
+                f"[RAG_DEBUG] sparse {i:2d}. id={p.id} score={p.score:.4f} "
+                f"heading={_heading(p)!r}"
+            )
+
+        dense_ids = {p.id for p in dense_pts}
+        sparse_ids = {p.id for p in sparse_pts}
+        overlap = dense_ids & sparse_ids
+        logger.info(
+            f"[RAG_DEBUG] top10_overlap={len(overlap)}/10 "
+            f"dense_only={len(dense_ids - sparse_ids)} "
+            f"sparse_only={len(sparse_ids - dense_ids)}"
+        )
