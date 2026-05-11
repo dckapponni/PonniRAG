@@ -17,32 +17,46 @@ logger = logging.getLogger(__name__)
 
 
 def retrieve_all_chunks_for_document(
-    client: QdrantClient, doc_id: str, doc_issue: str, volume: str
+    client: QdrantClient,
+    doc_id: str,
+    doc_issue: str,
+    volume: str,
+    title: str = None,
 ) -> List[Dict]:
-    """Retrieve all chunks for a specific document."""
+    """Retrieve all chunks for a specific document.
+
+    When ``title`` is provided, results are further restricted to
+    chunks whose ``metadata.title`` matches — the schema's ``doc_id``
+    represents a magazine *issue*, so filtering by title isolates a
+    single article inside the issue. Pass ``None`` (default) to keep
+    legacy issue-level retrieval.
+    """
+    must = [
+        models.FieldCondition(key="type", match=models.MatchValue(value="article")),
+        models.FieldCondition(
+            key="metadata.doc_id", match=models.MatchValue(value=doc_id)
+        ),
+        models.FieldCondition(
+            key="metadata.doc_issue", match=models.MatchValue(value=doc_issue)
+        ),
+        models.FieldCondition(
+            key="metadata.volume", match=models.MatchValue(value=volume)
+        ),
+    ]
+    if title:
+        must.append(
+            models.FieldCondition(
+                key="metadata.title", match=models.MatchValue(value=title)
+            )
+        )
+
     all_chunks = []
     offset = None
     while True:
         points, offset = with_qdrant_retry(
             client.scroll,
             collection_name=COLLECTION_NAME,
-            scroll_filter=models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="type", match=models.MatchValue(value="article")
-                    ),
-                    models.FieldCondition(
-                        key="metadata.doc_id", match=models.MatchValue(value=doc_id)
-                    ),
-                    models.FieldCondition(
-                        key="metadata.doc_issue",
-                        match=models.MatchValue(value=doc_issue),
-                    ),
-                    models.FieldCondition(
-                        key="metadata.volume", match=models.MatchValue(value=volume)
-                    ),
-                ]
-            ),
+            scroll_filter=models.Filter(must=must),
             limit=100,
             offset=offset,
             with_payload=True,
@@ -54,7 +68,19 @@ def retrieve_all_chunks_for_document(
 
 
 def merge_consecutive_chunks(client: QdrantClient, points) -> List[Dict]:
-    """Merge consecutive chunks from the same document."""
+    """Merge consecutive chunks from the same article.
+
+    ``doc_id`` in this schema identifies a magazine *issue*; an issue
+    contains many articles, each with its own ``metadata.title``. The
+    merge key therefore includes title so each article is grouped
+    independently — without it, all articles in an issue would
+    collapse into a single 50k-word "document" and the original
+    article boundaries (and headings) would be lost.
+
+    Chunks with an empty/missing title fall back to issue-level
+    grouping (legacy behavior), since there is no article boundary
+    to use.
+    """
     seen_docs = set()
     merged_docs = []
 
@@ -64,10 +90,12 @@ def merge_consecutive_chunks(client: QdrantClient, points) -> List[Dict]:
             continue
 
         metadata = payload.get("metadata", {})
+        title = metadata.get("title", "") or ""
         doc_key = (
             metadata.get("volume"),
             metadata.get("doc_id"),
             metadata.get("doc_issue"),
+            title,
         )
 
         if doc_key in seen_docs:
@@ -79,6 +107,7 @@ def merge_consecutive_chunks(client: QdrantClient, points) -> List[Dict]:
             doc_id=metadata.get("doc_id"),
             doc_issue=metadata.get("doc_issue"),
             volume=metadata.get("volume"),
+            title=title or None,
         )
 
         if not all_chunks:
