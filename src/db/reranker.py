@@ -17,6 +17,7 @@ the legacy lexical filter. Controlled by env flags:
 
 import logging
 import os
+import re
 import threading
 import unicodedata
 from typing import Dict, List, Tuple
@@ -29,6 +30,36 @@ RERANKER_TOP_IN = int(os.environ.get("RERANKER_TOP_IN", "30"))
 RERANKER_TOP_OUT = int(os.environ.get("RERANKER_TOP_OUT", "10"))
 RERANKER_MAX_CHARS = int(os.environ.get("RERANKER_MAX_CHARS", "800"))
 RERANKER_BATCH = int(os.environ.get("RERANKER_BATCH", "16"))
+RERANKER_PIN_HEADING_MATCHES = os.environ.get(
+    "RERANKER_PIN_HEADING_MATCHES", "1"
+).lower() in ("1", "true", "yes")
+
+# Minimum length of a Tamil/Latin token to be eligible for heading-phrase
+# matching. Single-char tokens overmatch; very short ones tend to be
+# inflectional fragments.
+_HEADING_PHRASE_MIN_TOKEN = 2
+# A "phrase" is N+ consecutive content tokens from the query appearing
+# verbatim (separated by whitespace) in a candidate heading.
+_HEADING_PHRASE_MIN_NGRAM = 2
+
+_TAMIL_STOP = {
+    "உள்ள",
+    "என்ற",
+    "என்று",
+    "என்ன",
+    "எந்த",
+    "ஒரு",
+    "இது",
+    "அது",
+    "இந்த",
+    "அந்த",
+    "மற்றும்",
+    "பற்றி",
+    "பற்றிய",
+    "எனும்",
+    "யாவை",
+    "உள்ளது",
+}
 
 _model = None
 _model_lock = threading.Lock()
@@ -69,6 +100,73 @@ def get_reranker():
             )
             return None
     return _model
+
+
+def _query_content_tokens(question: str) -> List[str]:
+    """Extract ordered content tokens from a query, stripping stopwords."""
+    q = unicodedata.normalize("NFC", question).lower()
+    tokens = re.findall(r"[஀-௿a-z0-9]+", q)
+    return [
+        t
+        for t in tokens
+        if len(t) >= _HEADING_PHRASE_MIN_TOKEN and t not in _TAMIL_STOP
+    ]
+
+
+def _query_phrases(question: str) -> List[str]:
+    """Build consecutive n-gram phrases from query content tokens.
+
+    Yields longer phrases first so a literal title match like
+    "மே தினம்" wins over a single-token coincidence.
+    """
+    toks = _query_content_tokens(question)
+    phrases = []
+    for n in range(min(4, len(toks)), _HEADING_PHRASE_MIN_NGRAM - 1, -1):
+        for i in range(len(toks) - n + 1):
+            phrases.append(" ".join(toks[i : i + n]))
+    return phrases
+
+
+def _pin_heading_matches(question: str, sources: List[Dict], top_in: int) -> List[Dict]:
+    """Reorder ``sources`` so that heading-phrase matches lead.
+
+    Any candidate whose heading contains a multi-token query phrase
+    (with stopwords removed) is moved to the front, preserving the
+    relative order among matches and among non-matches. Without this
+    pin, a rank-68 candidate whose title literally equals the query
+    phrase ("மே தினம்") never enters the cross-encoder's slice.
+    """
+    if not RERANKER_PIN_HEADING_MATCHES or not sources:
+        return sources
+
+    phrases = _query_phrases(question)
+    if not phrases:
+        return sources
+
+    matches: List[Dict] = []
+    rest: List[Dict] = []
+    matched_idx_in_pool: List[int] = []
+
+    for idx, src in enumerate(sources):
+        heading = unicodedata.normalize("NFC", str(src.get("heading") or "")).lower()
+        if heading and any(p in heading for p in phrases):
+            matches.append(src)
+            matched_idx_in_pool.append(idx)
+        else:
+            rest.append(src)
+
+    if not matches:
+        return sources
+
+    logger.info(
+        f"[RERANK] heading-phrase pin: {len(matches)} match(es) "
+        f"raised from original ranks {matched_idx_in_pool[:10]}"
+    )
+
+    # Cap the lead block at top_in so we still rerank a healthy pool.
+    head = matches[:top_in]
+    tail_budget = max(0, top_in - len(head))
+    return head + rest[:tail_budget] + matches[top_in:] + rest[tail_budget:]
 
 
 def _doc_text(src: Dict) -> str:
@@ -113,7 +211,8 @@ def rerank_sources(
     top_in = top_in or RERANKER_TOP_IN
     top_out = top_out or RERANKER_TOP_OUT
 
-    candidates = sources[:top_in]
+    pool = _pin_heading_matches(question, sources, top_in)
+    candidates = pool[:top_in]
     question_norm = unicodedata.normalize("NFC", question)
 
     pairs = [(question_norm, _doc_text(s)) for s in candidates]
