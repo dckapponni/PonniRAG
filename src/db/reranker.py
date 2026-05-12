@@ -41,6 +41,24 @@ RERANKER_BATCH = int(os.environ.get("RERANKER_BATCH", "16"))
 RERANKER_PIN_HEADING_MATCHES = os.environ.get(
     "RERANKER_PIN_HEADING_MATCHES", "1"
 ).lower() in ("1", "true", "yes")
+# When heading-pin finds a high-confidence match, return pinned docs
+# (plus a small filler) directly — without running the cross-encoder at
+# all. Saves ~10-30s of CPU on title-style queries.
+RERANKER_SKIP_CE_ON_CLEAR_WIN = os.environ.get(
+    "RERANKER_SKIP_CE_ON_CLEAR_WIN", "1"
+).lower() in ("1", "true", "yes")
+# Minimum phrase length (in tokens) that counts as a "clear win" — a
+# 3-token phrase in a heading is far less likely to be a coincidence
+# than a 2-token one, but 2-token matches still skip CE if the pin
+# returns very few matches.
+RERANKER_CLEAR_WIN_MIN_PHRASE = int(
+    os.environ.get("RERANKER_CLEAR_WIN_MIN_PHRASE", "2")
+)
+# Cap on number of pinned matches that still qualifies as "clear" — if
+# many docs share the heading phrase, we still need CE to pick among them.
+RERANKER_CLEAR_WIN_MAX_MATCHES = int(
+    os.environ.get("RERANKER_CLEAR_WIN_MAX_MATCHES", "3")
+)
 
 # Minimum length of a Tamil/Latin token to be eligible for heading-phrase
 # matching. Single-char tokens overmatch; very short ones tend to be
@@ -133,6 +151,43 @@ def _query_phrases(question: str) -> List[str]:
         for i in range(len(toks) - n + 1):
             phrases.append(" ".join(toks[i : i + n]))
     return phrases
+
+
+def _clear_winner_matches(question: str, sources: List[Dict]) -> List[Dict]:
+    """Return heading-phrase matches that justify skipping the cross-encoder.
+
+    A match is "clear" when:
+      - The matched query phrase has at least
+        ``RERANKER_CLEAR_WIN_MIN_PHRASE`` content tokens.
+      - The total number of matching docs is at most
+        ``RERANKER_CLEAR_WIN_MAX_MATCHES`` (otherwise we need CE to
+        pick among them).
+
+    The returned list preserves original retrieval order. An empty
+    list means there is no clear winner and the caller should run CE.
+    """
+    if not RERANKER_SKIP_CE_ON_CLEAR_WIN or not sources:
+        return []
+
+    phrases = _query_phrases(question)
+    if not phrases:
+        return []
+
+    qualifying_phrases = [
+        p for p in phrases if len(p.split()) >= RERANKER_CLEAR_WIN_MIN_PHRASE
+    ]
+    if not qualifying_phrases:
+        return []
+
+    matches: List[Dict] = []
+    for src in sources:
+        heading = unicodedata.normalize("NFC", str(src.get("heading") or "")).lower()
+        if heading and any(p in heading for p in qualifying_phrases):
+            matches.append(src)
+
+    if not matches or len(matches) > RERANKER_CLEAR_WIN_MAX_MATCHES:
+        return []
+    return matches
 
 
 def _pin_heading_matches(question: str, sources: List[Dict], top_in: int) -> List[Dict]:
@@ -252,12 +307,30 @@ def rerank_sources(
     if not is_enabled():
         return [], False
 
+    top_in = top_in or RERANKER_TOP_IN
+    top_out = top_out or RERANKER_TOP_OUT
+
+    # Clear-winner short-circuit: avoid the cross-encoder entirely when
+    # 1–N docs literally contain a multi-token query phrase in their
+    # heading. Saves the full CE pass (~10-30s on CPU) for the typical
+    # "give me article X" / "what does X say about Y" pattern.
+    winners = _clear_winner_matches(question, sources)
+    if winners:
+        kept = winners[:top_out]
+        result = []
+        for src in kept:
+            out = dict(src)
+            out["rerank_score"] = 1.0  # sentinel — heading-pin bypass
+            result.append(out)
+        logger.info(
+            f"[RERANK] clear-winner bypass: {len(result)} doc(s) returned "
+            f"without cross-encoder"
+        )
+        return result, True
+
     model = get_reranker()
     if model is None:
         return [], False
-
-    top_in = top_in or RERANKER_TOP_IN
-    top_out = top_out or RERANKER_TOP_OUT
 
     pool = _pin_heading_matches(question, sources, top_in)
     candidates = pool[:top_in]

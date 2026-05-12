@@ -6,6 +6,7 @@ and search to sub-modules (cache, embeddings, search, llm, etc.).
 """
 
 import asyncio
+import concurrent.futures
 import logging
 import re as _re
 import threading
@@ -81,6 +82,13 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+# Background pool for overlapping the cross-encoder reranker with the
+# LLM streaming call — keeps a small number of CPU-bound reranks off the
+# request thread so token streaming is not blocked.
+_rerank_executor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=2, thread_name_prefix="rerank"
+)
 
 # ---------------------------------------------------------------------------
 # Content vocabulary cache — built lazily from Qdrant document headings
@@ -1453,6 +1461,15 @@ def ask_question_stream(
                 [f"{idx}. {row}" for idx, row in enumerate(csv_results, 1)]
             )
 
+        # Kick off the reranker on a worker thread BEFORE streaming the
+        # LLM tokens. The cross-encoder is CPU-bound and slow (~10-30s);
+        # running it concurrently with the Gemini stream hides most of
+        # the latency, so the user sees the answer immediately and the
+        # evidence panel populates ~as soon as the answer finishes.
+        rerank_future = _rerank_executor.submit(
+            _rerank_or_filter, question, merged_docs
+        )
+
         # Pre-check Gemini health before streaming LLM
         gemini_health = check_gemini_health()
         if not gemini_health["healthy"]:
@@ -1470,7 +1487,11 @@ def ask_question_stream(
                         "Sorry, the LLM service is currently unavailable.",
                     ),
                 }
-            yield {"type": "sources", "sources": format_sources(merged_docs)}
+            try:
+                yield {"type": "sources", "sources": rerank_future.result(timeout=60)}
+            except Exception as e:
+                logger.warning(f"Rerank future failed in degraded path: {e!r}")
+                yield {"type": "sources", "sources": format_sources(merged_docs)}
             return
 
         # Stream LLM tokens and accumulate for caching
@@ -1499,7 +1520,11 @@ def ask_question_stream(
             accumulated_tokens = [answer]
             yield {"type": "token", "content": answer}
 
-        sources = _rerank_or_filter(question, merged_docs)
+        try:
+            sources = rerank_future.result(timeout=90)
+        except Exception as e:
+            logger.warning(f"Rerank future failed: {e!r}; falling back inline")
+            sources = _rerank_or_filter(question, merged_docs)
 
         if fallback_reason:
             yield {"type": "fallback", "reason": fallback_reason}
