@@ -1278,10 +1278,39 @@ _KNOWN_QUERY_WORDS = {
     "தொடர்கதைகள்",
 }
 
-# Minimum fuzzy score to accept a token-level correction
-_SPELLING_TOKEN_THRESHOLD = 0.75
-# Minimum fuzzy score for whole-title correction
-_SPELLING_TITLE_THRESHOLD = 0.72
+# Minimum fuzzy score to accept a token-level correction.
+# Raised from 0.75 → 0.88 to stop false "corrections" of valid Tamil
+# content words (e.g. வடிவத்தை → படித்தவை at 0.75 wrecked recall).
+_SPELLING_TOKEN_THRESHOLD = 0.88
+# Minimum fuzzy score for whole-title correction.
+_SPELLING_TITLE_THRESHOLD = 0.85
+# Structural guards layered on top of the fuzzy score — the score alone
+# is not a reliable signal between unrelated Tamil agglutinative forms
+# that happen to share a suffix.
+_SPELLING_MIN_PREFIX_MATCH = 3  # require ≥3 leading chars in common
+_SPELLING_MAX_LEN_DIFF = 2  # reject candidates whose length differs by more
+
+
+def _safe_to_correct(original: str, candidate: str) -> bool:
+    """Structural guard: only accept a correction if shapes are close.
+
+    A real misspelling differs from the intended word by a small edit
+    near the middle/end of the token, so the leading letters and total
+    length should be close. Without this guard, a high fuzzy score from
+    shared Tamil suffixes (e.g. ``-த்தை``) is enough to swap an
+    unrelated content word — silently destroying recall.
+    """
+    if not original or not candidate:
+        return False
+    if abs(len(original) - len(candidate)) > _SPELLING_MAX_LEN_DIFF:
+        return False
+    common = 0
+    for a, b in zip(original, candidate):
+        if a == b:
+            common += 1
+        else:
+            break
+    return common >= _SPELLING_MIN_PREFIX_MATCH
 
 
 def _get_title_vocab(df: pd.DataFrame) -> list:
@@ -1332,9 +1361,10 @@ def _correct_query_words(question: str) -> str:
                 best_score = score
                 best_match = known
 
-        # Use a higher threshold (0.80) for question words to avoid
-        # wrongly "correcting" title/author words into question words
-        if best_match and best_score >= 0.80:
+        # Use a higher threshold (0.88) for question words to avoid
+        # wrongly "correcting" title/author words into question words.
+        # The structural guard further rejects suffix-coincidence matches.
+        if best_match and best_score >= 0.88 and _safe_to_correct(word, best_match):
             logger.info(
                 f"[SPELLING] query word '{word}' → '{best_match}' "
                 f"(score: {best_score:.2f})"
@@ -1430,11 +1460,22 @@ def correct_query_spelling(
                     best_score = score
                     best_match = author_word
 
-        if best_match and best_score >= _SPELLING_TOKEN_THRESHOLD:
+        if (
+            best_match
+            and best_score >= _SPELLING_TOKEN_THRESHOLD
+            and _safe_to_correct(word_stripped, best_match)
+        ):
             logger.info(
                 f"[SPELLING] '{word}' → '{best_match}' " f"(score: {best_score:.2f})"
             )
             corrected = corrected.replace(word, best_match, 1)
+        elif best_match and best_score >= _SPELLING_TOKEN_THRESHOLD:
+            # Score passed but structural guard rejected — log so we can tune.
+            logger.debug(
+                f"[SPELLING] rejected '{word}' → '{best_match}' "
+                f"(score={best_score:.2f}, len_diff="
+                f"{abs(len(word_stripped) - len(best_match))})"
+            )
 
     if corrected != question:
         logger.info(f"[SPELLING] Query corrected: '{question}' → '{corrected}'")
