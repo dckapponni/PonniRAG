@@ -34,6 +34,19 @@ services:
       - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-ap-south-1}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      # Retrieval debug logging — leave off in prod, set to 1 to diagnose RRF
+      - RAG_DEBUG=${RAG_DEBUG:-0}
+      # Cross-encoder reranker
+      - ENABLE_RERANKER=${ENABLE_RERANKER:-1}
+      - RERANKER_MODEL=${RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}
+      - RERANKER_TOP_IN=${RERANKER_TOP_IN:-30}
+      - RERANKER_TOP_OUT=${RERANKER_TOP_OUT:-5}
+      - RERANKER_MIN_OUT=${RERANKER_MIN_OUT:-3}
+      - RERANKER_SCORE_FLOOR_RATIO=${RERANKER_SCORE_FLOOR_RATIO:-0.4}
+      - RERANKER_GAP_RATIO=${RERANKER_GAP_RATIO:-0.5}
+      - RERANKER_MAX_CHARS=${RERANKER_MAX_CHARS:-800}
+      - RERANKER_BATCH=${RERANKER_BATCH:-16}
+      - RERANKER_PIN_HEADING_MATCHES=${RERANKER_PIN_HEADING_MATCHES:-1}
     restart: unless-stopped
 
   frontend:

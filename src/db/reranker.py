@@ -27,7 +27,15 @@ logger = logging.getLogger(__name__)
 ENABLE_RERANKER = os.environ.get("ENABLE_RERANKER", "1").lower() in ("1", "true", "yes")
 RERANKER_MODEL = os.environ.get("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
 RERANKER_TOP_IN = int(os.environ.get("RERANKER_TOP_IN", "30"))
-RERANKER_TOP_OUT = int(os.environ.get("RERANKER_TOP_OUT", "10"))
+RERANKER_TOP_OUT = int(os.environ.get("RERANKER_TOP_OUT", "5"))
+RERANKER_MIN_OUT = int(os.environ.get("RERANKER_MIN_OUT", "3"))
+# After sorting by cross-encoder score, drop a candidate when its score
+# falls below ``RERANKER_SCORE_FLOOR_RATIO`` × top_score *or* below
+# ``RERANKER_GAP_RATIO`` × previous_score. Adaptive cut keeps the number
+# of sources tight (typically 3–5) when only a few docs are clearly
+# relevant, instead of padding to a fixed top-N with mediocre matches.
+RERANKER_SCORE_FLOOR_RATIO = float(os.environ.get("RERANKER_SCORE_FLOOR_RATIO", "0.4"))
+RERANKER_GAP_RATIO = float(os.environ.get("RERANKER_GAP_RATIO", "0.5"))
 RERANKER_MAX_CHARS = int(os.environ.get("RERANKER_MAX_CHARS", "800"))
 RERANKER_BATCH = int(os.environ.get("RERANKER_BATCH", "16"))
 RERANKER_PIN_HEADING_MATCHES = os.environ.get(
@@ -169,6 +177,46 @@ def _pin_heading_matches(question: str, sources: List[Dict], top_in: int) -> Lis
     return head + rest[:tail_budget] + matches[top_in:] + rest[tail_budget:]
 
 
+def _adaptive_cutoff(scored: list, max_keep: int) -> List[Dict]:
+    """Pick top sources using cross-encoder score gaps, not a fixed count.
+
+    Always keeps at least ``RERANKER_MIN_OUT`` sources so the UI is never
+    empty when the reranker did run. After the minimum is satisfied, a
+    candidate is dropped when its score falls below either:
+
+    * ``RERANKER_SCORE_FLOOR_RATIO`` × top_score — absolute relevance floor.
+    * ``RERANKER_GAP_RATIO`` × previous_score — sharp drop-off between
+      consecutive results.
+
+    Together they yield a tight 3–5 source list when only a few docs are
+    clearly relevant, and a fuller list (up to ``max_keep``) when several
+    are roughly comparable.
+    """
+    if not scored:
+        return []
+
+    top_score = float(scored[0][1])
+    floor = top_score * RERANKER_SCORE_FLOOR_RATIO
+    min_keep = min(RERANKER_MIN_OUT, len(scored))
+    cap = min(max_keep, len(scored))
+
+    kept: List[Dict] = []
+    prev_score = top_score
+    for src, score in scored[:cap]:
+        s = float(score)
+        if len(kept) >= min_keep:
+            if s < floor:
+                break
+            if prev_score > 0 and s < prev_score * RERANKER_GAP_RATIO:
+                break
+        out = dict(src)
+        out["rerank_score"] = s
+        kept.append(out)
+        prev_score = s
+
+    return kept
+
+
 def _doc_text(src: Dict) -> str:
     """Build the text passed to the cross-encoder for a single source."""
     parts = [
@@ -226,11 +274,7 @@ def rerank_sources(
         )
         scored = list(zip(candidates, scores))
         scored.sort(key=lambda t: float(t[1]), reverse=True)
-        reranked = []
-        for src, score in scored[:top_out]:
-            out = dict(src)
-            out["rerank_score"] = float(score)
-            reranked.append(out)
+        reranked = _adaptive_cutoff(scored, top_out)
     except Exception as e:
         logger.warning(f"Cross-encoder rerank failed ({e!r}); falling back")
         return [], False
