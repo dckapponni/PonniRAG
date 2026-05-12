@@ -388,6 +388,23 @@ async def lifespan(app: FastAPI):
                 _author_system_cache[csv_path] = EnhancedAuthorQuerySystem(csv_path)
         logger.info("Author query system cached at startup")
 
+    # Pre-warm ML models so the first user query does not pay the
+    # cold-start tax (dense E5 ~5s, BM25 ~3s, cross-encoder ~15s on CPU).
+    # Combined this can exceed the reverse-proxy timeout (504).
+    try:
+        from embeddings import get_embed_model
+        from reranker import get_reranker
+        from sparse import get_bm25_model
+
+        get_embed_model()
+        logger.info("Dense embedding model warm")
+        get_bm25_model()
+        logger.info("Sparse BM25 model warm")
+        get_reranker()
+        logger.info("Cross-encoder reranker warm")
+    except Exception as e:
+        logger.warning(f"Model pre-warm failed (will lazy-load on first call): {e!r}")
+
     # Validate Gemini API key (also primes the health check cache)
     gemini_health = check_gemini_health()
     if gemini_health["healthy"]:
