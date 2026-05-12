@@ -21,14 +21,16 @@ from hybrid_search import (  # noqa: E402
     merge_consecutive_chunks,
 )
 
-QUERY = "பொன்னியில் உள்ள மே தினம் என்ற தலைப்பு எந்த இலக்கிய வடிவத்தை சுட்டுகிறது"
+DEFAULT_QUERY = (
+    "பொன்னியில் உள்ள மே தினம் என்ற தலைப்பு எந்த இலக்கிய வடிவத்தை சுட்டுகிறது"
+)
 
 
-def main(limit: int = 30):
+def main(limit: int = 30, query: str = DEFAULT_QUERY, needle: str = None):
     """Run the query and print retrieval, merge, select, filter, and rerank stages."""
     client = get_qdrant_client()
     vocab = _build_content_vocab()
-    sq = correct_query_spelling(QUERY, str(CSV_PATH), vocab)
+    sq = correct_query_spelling(query, str(CSV_PATH), vocab)
     print(f"corrected query: {sq}\n")
 
     searcher = HybridQdrantSearch(client)
@@ -58,41 +60,45 @@ def main(limit: int = 30):
 
     print("\n--- format_sources -> _filter_sources_by_relevance (lexical baseline) ---")
     srcs = format_sources(rel)
-    filtered = _filter_sources_by_relevance(QUERY, srcs)
+    filtered = _filter_sources_by_relevance(query, srcs)
     for i, s in enumerate(filtered[:20], 1):
         print(f"{i:3d}. heading={(s.get('heading') or '')[:80]!r}")
 
     print("\n--- _rerank_or_filter (cross-encoder, prod path: full merged pool) ---")
-    reranked = _rerank_or_filter(QUERY, merged)
+    reranked = _rerank_or_filter(query, merged)
     for i, s in enumerate(reranked[:20], 1):
         ce = s.get("rerank_score")
         ce_str = f"ce={ce:.4f}" if ce is not None else "ce=NA(fallback)"
         print(f"{i:3d}. {ce_str} heading={(s.get('heading') or '')[:80]!r}")
 
-    print("\nmatches 'மே தினம்' in raw retrieval:")
-    for i, p in enumerate(pts, 1):
-        pl = p.payload or {}
-        meta = pl.get("metadata", {}) or {}
-        heading = meta.get("heading") or pl.get("heading") or ""
-        title = meta.get("title") or ""
-        text = pl.get("text") or pl.get("content") or ""
-        if "மே தினம்" in heading or "மே தினம்" in text or "மே தினம்" in title:
-            print(
-                f"  raw rank {i}: title={title[:60]!r} heading={heading[:60]!r} "
-                f"chunk_id={meta.get('chunk_id')} doc_id={meta.get('doc_id')}"
-            )
+    if needle:
+        print(f"\nmatches {needle!r} in raw retrieval:")
+        for i, p in enumerate(pts, 1):
+            pl = p.payload or {}
+            meta = pl.get("metadata", {}) or {}
+            heading = meta.get("heading") or pl.get("heading") or ""
+            title = meta.get("title") or ""
+            text = pl.get("text") or pl.get("content") or ""
+            if needle in heading or needle in text or needle in title:
+                print(
+                    f"  raw rank {i}: title={title[:60]!r} "
+                    f"heading={heading[:60]!r} "
+                    f"chunk_id={meta.get('chunk_id')} doc_id={meta.get('doc_id')}"
+                )
 
-    print("\nmatches 'மே தினம்' in merged pool:")
-    for i, d in enumerate(merged, 1):
-        h = d.get("heading") or ""
-        c = d.get("content") or ""
-        if "மே தினம்" in h or "மே தினம்" in c:
-            print(
-                f"  merged rank {i}: score={d.get('score'):.4f} "
-                f"heading={h[:60]!r} word_count={d.get('word_count')}"
-            )
+        print(f"\nmatches {needle!r} in merged pool:")
+        for i, d in enumerate(merged, 1):
+            h = d.get("heading") or ""
+            c = d.get("content") or ""
+            if needle in h or needle in c:
+                print(
+                    f"  merged rank {i}: score={d.get('score'):.4f} "
+                    f"heading={h[:60]!r} word_count={d.get('word_count')}"
+                )
 
 
 if __name__ == "__main__":
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 30
-    main(n)
+    q = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_QUERY
+    nd = sys.argv[3] if len(sys.argv) > 3 else None
+    main(n, q, nd)
