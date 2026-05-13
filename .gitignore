@@ -19,4 +19,8 @@ env/
 src/db/qdrant_data_tags/
 !report/
 !report/htmlcov/
+/src/scripts/debug_took.py
+src/scripts/debug_took.py
+src/scripts/upload_manifest.json
+/src/scripts/upload_manifest.json
 !report/htmlcov/**
