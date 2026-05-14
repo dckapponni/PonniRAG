@@ -1,8 +1,14 @@
-"""Article Tagger for Ponni Magazine articles.
+"""Article tagger for Ponni Magazine.
 
-Hybrid NLP approach: rule-based patterns + TF-IDF fallback.
-Assigns 1-3 tags per article from 15 predefined categories.
-No LLM calls -- fully offline and deterministic.
+Assigns 1–3 category tags per article using a two-stage pipeline:
+rule-based title matching first, TF-IDF cosine-similarity fallback second.
+No LLM calls — fully offline and deterministic.
+
+Usage::
+
+    tagger = ArticleTagger()
+    tagger.train_tfidf(articles)
+    tags = tagger.tag_article(article)
 """
 
 import logging
@@ -242,7 +248,12 @@ class ArticleTagger:
     """Hybrid article tagger: rule-based patterns + TF-IDF fallback."""
 
     def __init__(self):
-        """Initialize tagger with taxonomy, rules, and empty TF-IDF state."""
+        """Initialize the ArticleTagger instance.
+
+        Sets up the category taxonomy, rule-based pattern registry, and
+        placeholders for the TF-IDF vectorizer and category vectors.
+        Both TF-IDF attributes remain None until :meth:`train_tfidf` is called.
+        """
         self.taxonomy = TAXONOMY
         self.rules = RULE_PATTERNS
         self.tfidf = None
@@ -250,7 +261,18 @@ class ArticleTagger:
         self.category_ids = list(TAXONOMY.keys())
 
     def train_tfidf(self, articles: List[Dict]):
-        """Train TF-IDF on full corpus. Called once during indexing."""
+        """Train a TF-IDF vectorizer on the full article corpus.
+
+        Builds a vocabulary from article titles and the first 500 characters of
+        each article's content, then computes a representative TF-IDF vector for
+        each taxonomy category using :data:`_CATEGORY_KEYWORDS`.  Must be called
+        once before :meth:`_tfidf_classify` is used.  If ``articles`` is empty,
+        logs a warning and returns without training.
+
+        Args:
+            articles: List of article dicts, each containing at minimum a
+                ``"title"`` key and optionally a ``"content"`` key.
+        """
         if not articles:
             logger.warning("No articles to train TF-IDF on")
             return
@@ -281,7 +303,25 @@ class ArticleTagger:
         )
 
     def tag_article(self, article: Dict) -> List[str]:
-        """Assign 1-3 category IDs. Rules first, TF-IDF fallback."""
+        """Assign between one and three taxonomy category IDs to an article.
+
+        Applies classification in two stages:
+
+        1. Rule-based matching via :meth:`_apply_rules` (exact title, substring,
+        and serial-title heuristics).  Returns immediately if any rules match.
+        2. TF-IDF cosine-similarity fallback via :meth:`_tfidf_classify` when no
+        rules match.
+
+        Falls back to ``["GENERAL"]`` when both stages produce no results.
+
+        Args:
+            article: Dict containing at minimum a ``"title"`` key.  A
+                ``"content"`` key is used by the TF-IDF fallback if present.
+
+        Returns:
+            List of 1–3 taxonomy category ID strings (e.g. ``["FICTION"]`` or
+            ``["POETRY", "CLASSICAL_LIT"]``).
+        """
         tags = self._apply_rules(article)
         if tags:
             return tags[:3]
@@ -293,14 +333,48 @@ class ArticleTagger:
         return ["GENERAL"]
 
     def get_tamil_tags(self, tag_ids: List[str]) -> List[str]:
-        """Map tag IDs to Tamil display names."""
+        """Map taxonomy category IDs to their Tamil display names.
+
+        Unknown IDs are silently skipped rather than raising an error.
+
+        Args:
+            tag_ids: List of taxonomy category ID strings
+                (e.g. ``["FICTION", "POETRY"]``).
+
+        Returns:
+            List of Tamil display name strings in the same order as the
+            recognised input IDs (e.g. ``["புனைவு", "கவிதை"]``).
+        """
         return [self.taxonomy[tid]["tamil"] for tid in tag_ids if tid in self.taxonomy]
 
     def _apply_rules(self, article: Dict) -> List[str]:
-        """Apply rule-based classification. Return matching category IDs."""
+        """Classify an article using deterministic rule-based pattern matching.
+
+        Applies three checks in order for each category defined in
+        :data:`RULE_PATTERNS`:
+
+        1. **Serial detection** — if the article title appears in
+        :data:`_SERIAL_TITLES` and the article has at least one author,
+        ``"FICTION"`` is prepended to the result.
+        2. **Exact title match** — strips and compares the title against each
+        ``title_exact`` entry (case-sensitive after stripping).
+        3. **Substring match** — checks whether any ``title_contains`` keyword
+        appears anywhere in the title.
+
+        A category is added at most once regardless of how many patterns match.
+
+        Args:
+            article: Dict containing at minimum a ``"title"`` key.  The
+                ``"author_name"`` key is used for serial detection and may be
+                a string or a list of strings.
+
+        Returns:
+            Ordered list of matched category ID strings.  Empty list when no
+            rules match.
+        """
         title = (article.get("title") or "").strip()
 
-        # ✅ FIX: handle author as list safely
+        #  FIX: handle author as list safely
         author = article.get("author_name", [])
         if isinstance(author, str):
             author_list = [author.strip()]
@@ -311,11 +385,11 @@ class ArticleTagger:
 
         tags = []
 
-        # ✅ Serial detection
+        #  Serial detection
         if title in _SERIAL_TITLES and author_list:
             tags.append("FICTION")
 
-        # ✅ MAIN RULE LOOP (you accidentally removed this earlier)
+        #  MAIN RULE LOOP (you accidentally removed this earlier)
         for cat_id, patterns in self.rules.items():
             if cat_id in tags:
                 continue
@@ -338,7 +412,30 @@ class ArticleTagger:
         return tags
 
     def _tfidf_classify(self, article: Dict) -> List[str]:
-        """Classify articles using TF-IDF when rules do not match."""
+        """Classify an article using TF-IDF cosine similarity against category keywords.
+
+        Transforms the article text (title + first 500 characters of content)
+        into a TF-IDF vector and computes cosine similarity against each
+        pre-computed category vector.  Only categories whose similarity meets
+        :data:`TFIDF_THRESHOLD` are considered.  ``"GENERAL"`` is excluded from
+        results when at least one other category qualifies.
+
+        Returns ``["GENERAL"]`` in any of the following situations:
+
+        - The TF-IDF model has not been trained yet.
+        - The article text is empty.
+        - No category reaches the similarity threshold.
+        - All qualifying categories are ``"GENERAL"``.
+
+        Args:
+            article: Dict containing at minimum a ``"title"`` key.  A
+                ``"content"`` key is used when present; only the first 500
+                characters are considered.
+
+        Returns:
+            List of 1–3 category ID strings sorted by similarity score
+            descending, or ``["GENERAL"]`` when classification is inconclusive.
+        """
         if self.tfidf is None or self.category_vectors is None:
             return ["GENERAL"]
 

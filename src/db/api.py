@@ -1,6 +1,29 @@
-"""FastAPI REST API for Ponni RAG System.
+"""FastAPI REST API for the Ponni RAG System.
 
-Provides endpoints for search, question answering, and library access.
+This module provides the HTTP API layer for the Ponni Tamil Literary Archive
+Retrieval-Augmented Generation (RAG) system. It exposes endpoints for:
+
+- Semantic search and question answering (hybrid dense + sparse retrieval)
+- Streaming AI-generated answers via Server-Sent Events (SSE)
+- Browsing the digital library (volumes, issues, PDFs, cover images)
+- Author and topic discovery via CSV-backed metadata
+- Article tag/category listing with per-tag article counts
+- Full article content retrieval from Qdrant vector store
+- Health monitoring for the database and LLM backends
+
+Typical usage:
+    Run directly with uvicorn::
+
+        uvicorn api:app --host 0.0.0.0 --port 8000 --reload
+
+    Or via the ``__main__`` guard at the bottom of this file.
+
+Dependencies:
+    - FastAPI + Uvicorn (HTTP framework)
+    - Qdrant (vector store)
+    - Google Gemini (LLM backend, via ``llm`` module)
+    - AWS S3 via boto3 (image and PDF storage)
+    - EnhancedAuthorQuerySystem (CSV-based author/topic queries)
 """
 
 import asyncio
@@ -50,9 +73,23 @@ _s3_client = boto3.client(
 # Image cache duration (browser Cache-Control header)
 _IMAGE_CACHE_SECONDS = 3600  # 1 hour
 
+_MAX_HISTORY_CONTENT = 15000  # Truncate long history entries instead of rejecting
+
 
 def _volume_cover_s3_key(volume_id: int) -> Optional[str]:
-    """Derive S3 key for a volume cover image."""
+    """Return the S3 object key for a volume's cover image.
+
+    Looks up the volume entry in the magazine registry and derives the
+    key using the configured ``covers_prefix`` and the volume's
+    ``cover_image`` filename.
+
+    Args:
+        volume_id: Integer volume identifier (e.g. 1, 2, …).
+
+    Returns:
+        The full S3 key string, or ``None`` if the volume is not found
+        or has no ``cover_image`` entry in the registry.
+    """
     vol_data = next((v for v in _magazine["volumes"] if v["id"] == volume_id), None)
     if not vol_data or not vol_data.get("cover_image"):
         return None
@@ -60,7 +97,17 @@ def _volume_cover_s3_key(volume_id: int) -> Optional[str]:
 
 
 def _issue_cover_s3_key(volume_id: int, issue_name: str) -> Optional[str]:
-    """Derive S3 key for an issue cover image using convention patterns."""
+    """Return the S3 object key for an issue's cover image.
+
+    Uses the magazine registry to derive the key
+    Args:
+        volume_id: Integer volume identifier (e.g. 1, 2, …).
+        issue_name: String issue identifier (e.g. "1", "2", …).
+
+    Returns:
+        The full S3 key string, or ``None`` if the volume or issue is not found
+        or has no ``cover_image`` entry in the registry.
+    """
     vol_data = next((v for v in _magazine["volumes"] if v["id"] == volume_id), None)
     if not vol_data:
         return None
@@ -80,7 +127,16 @@ def _issue_cover_s3_key(volume_id: int, issue_name: str) -> Optional[str]:
 
 
 def _issue_pdf_s3_key(volume_id: int, issue_name: str) -> Optional[str]:
-    """Derive S3 key for an issue PDF using convention patterns."""
+    """Return the S3 object key for an issue's PDF.
+
+    Args:
+        volume_id: Integer volume identifier (e.g. 1, 2, …).
+        issue_name: String issue identifier (e.g. "1", "2", …).
+
+    Returns:
+        The full S3 key string, or ``None`` if the volume or issue is not found
+        or has no ``pdf_url`` entry in the registry.
+    """
     vol_data = next((v for v in _magazine["volumes"] if v["id"] == volume_id), None)
     if not vol_data:
         return None
@@ -100,7 +156,19 @@ def _issue_pdf_s3_key(volume_id: int, issue_name: str) -> Optional[str]:
 
 
 def _s3_key_with_fallback(key: str) -> list:
-    """Return S3 keys to try: original plus alternate extensions."""
+    """Return a list of S3 keys to attempt, cycling through image extensions.
+
+    When the stored image extension is unknown, this helper returns the
+    original key followed by alternatives with ``.jpg``, ``.png``, and
+    ``.jpeg`` extensions so callers can try each in order.
+
+    Args:
+        key: Primary S3 object key (may include any extension).
+
+    Returns:
+        Ordered list of candidate keys. The original key is always first.
+        If ``key`` has no extension, only the original key is returned.
+    """
     if "." not in key:
         return [key]
     base, ext = key.rsplit(".", 1)
@@ -112,7 +180,19 @@ def _s3_key_with_fallback(key: str) -> list:
 
 
 def _fetch_s3_image(key: str) -> Optional[dict]:
-    """Fetch an image from S3, trying alternate extensions on failure."""
+    """Download an image from S3, retrying with alternate file extensions.
+
+    Iterates through candidate keys produced by :func:`_s3_key_with_fallback`
+    and returns the first successful result.  Logs a warning if all
+    candidates fail.
+
+    Args:
+        key: Primary S3 object key for the image.
+
+    Returns:
+        A dict with keys ``"body"`` (``bytes``) and ``"content_type"``
+        (``str``) on success, or ``None`` if the image cannot be retrieved.
+    """
     for candidate in _s3_key_with_fallback(key):
         try:
             resp = _s3_client.get_object(Bucket=_s3_conf["bucket"], Key=candidate)
@@ -136,19 +216,37 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
-_MAX_HISTORY_CONTENT = 15000  # Truncate long history entries instead of rejecting
+# Pydantic request / response models
 
 
 class HistoryMessage(BaseModel):
-    """A single conversation turn (user or assistant)."""
+    """A single turn in a multi-turn conversation.
+
+    Attributes:
+        role: Speaker role — must be ``"user"`` or ``"assistant"``.
+        content: Text content of the turn (non-empty).
+    """
 
     role: str = Field(..., pattern=r"^(user|assistant)$")
     content: str = Field(..., min_length=1)
 
 
 class QuestionRequest(BaseModel):
-    """Request model for asking questions."""
+    """Request body for the ``/api/ask`` and ``/api/ask/stream`` endpoints.
+
+    Attributes:
+        question: Natural-language question in Tamil or English.
+        use_llm: When ``True`` (default) an LLM synthesises a prose answer
+            from retrieved passages.  When ``False`` only source passages
+            are returned.
+        tags: Optional list of taxonomy tag IDs (e.g. ``["FICTION"]``) used
+            to restrict retrieval to articles in those categories.
+        history: Optional list of prior conversation turns for context.
+            Each turn is truncated to :data:`_MAX_HISTORY_CONTENT` characters
+            before being passed to the LLM.
+        language: Target response language — ``"ta"`` (Tamil, default) or
+            ``"en"`` (English).
+    """
 
     question: str = Field(..., min_length=1, description="The question to ask")
     use_llm: bool = Field(default=True, description="Use LLM for answer generation")
@@ -164,7 +262,18 @@ class QuestionRequest(BaseModel):
 
 
 class SourceDocument(BaseModel):
-    """Response model for source documents."""
+    """A single retrieved passage returned alongside an answer.
+
+    Attributes:
+        volume: Source volume identifier.
+        heading: Article heading or title.
+        doc_issue: Issue identifier within the volume.
+        content: Passage text.
+        word_count: Word count of the passage.
+        chunks_merged: Number of vector chunks merged into this passage.
+        score: Retrieval similarity score (0–1).
+        tags: Taxonomy tag IDs assigned to the parent article.
+    """
 
     volume: Optional[str] = None
     heading: Optional[str] = None
@@ -177,7 +286,17 @@ class SourceDocument(BaseModel):
 
 
 class QuestionResponse(BaseModel):
-    """Response model for question answering."""
+    """Response body for the ``/api/ask`` and ``/api/search`` endpoints.
+
+    Attributes:
+        answer: LLM-generated answer text (empty string when ``use_llm``
+            is ``False`` or retrieval returns no results).
+        sources: Retrieved source passages that informed the answer.
+        query_type: Internal classifier label (e.g. ``"hybrid"``).
+        error: Structured error info when the pipeline fails non-fatally.
+        fallback_reason: Human-readable reason if the system fell back to
+            a simpler retrieval strategy.
+    """
 
     answer: str
     sources: List[Dict[str, Any]] = []
@@ -187,7 +306,15 @@ class QuestionResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    """Response model for health check."""
+    """Response body for the ``/health`` endpoint.
+
+    Attributes:
+        status: Overall system status — ``"healthy"`` or ``"degraded"``.
+        database: Qdrant health details (keys vary by client version).
+        llm: Gemini API health details including latency.
+        api: Always ``"healthy"`` — indicates the FastAPI process itself
+            is responsive.
+    """
 
     status: str
     database: Dict[str, Any]
@@ -196,14 +323,26 @@ class HealthResponse(BaseModel):
 
 
 class AuthorInfo(BaseModel):
-    """Response model for author information."""
+    """Author name and article count summary.
+
+    Attributes:
+        name: Author's display name (may be in Tamil).
+        count: Total number of articles attributed to this author.
+    """
 
     name: str
     count: int
 
 
 class AuthorsListResponse(BaseModel):
-    """Response model for list of all authors."""
+    """Response body for ``GET /api/authors``.
+
+    Attributes:
+        success: ``True`` when the query completed without errors.
+        total_authors: Number of distinct authors in the archive.
+        total_articles: Total articles across all authors.
+        authors: Sorted list of :class:`AuthorInfo` objects.
+    """
 
     success: bool
     total_authors: int
@@ -212,7 +351,14 @@ class AuthorsListResponse(BaseModel):
 
 
 class ArticleInfo(BaseModel):
-    """Response model for article information."""
+    """Lightweight article summary used in author/topic queries.
+
+    Attributes:
+        title: Article title.
+        author: Author name.
+        year: Publication year (alias ``ஆண்டு``).
+        issue: Issue identifier (alias ``இதழ்``).
+    """
 
     title: str
     author: str
@@ -226,7 +372,16 @@ class ArticleInfo(BaseModel):
 
 
 class AuthorArticlesResponse(BaseModel):
-    """Response model for articles by author."""
+    """Response body for ``GET /api/authors/{author_name}/articles``.
+
+    Attributes:
+        success: ``True`` when the query completed without errors.
+        author: The author name as supplied in the request.
+        matched_author: Normalised/fuzzy-matched name used for the lookup.
+        count: Number of articles found.
+        articles: List of article dicts (title, year, issue, …).
+        message: Human-readable status message (present on partial failure).
+    """
 
     success: bool
     author: str
@@ -237,7 +392,15 @@ class AuthorArticlesResponse(BaseModel):
 
 
 class TopicSearchResponse(BaseModel):
-    """Response model for topic search."""
+    """Response body for ``GET /api/topics/search``.
+
+    Attributes:
+        success: ``True`` when the query completed without errors.
+        topic: Topic keyword as used for the search.
+        count: Number of matching articles.
+        articles: List of article dicts whose titles contain the keyword.
+        message: Human-readable status message (present on partial failure).
+    """
 
     success: bool
     topic: str
@@ -247,14 +410,27 @@ class TopicSearchResponse(BaseModel):
 
 
 class IssueInfo(BaseModel):
-    """Response model for issue information."""
+    """Article count for a single issue.
+
+    Attributes:
+        issue_number: Issue identifier string.
+        article_count: Number of articles in the issue.
+    """
 
     issue_number: str
     article_count: int
 
 
 class IssueStatsResponse(BaseModel):
-    """Response model for issue statistics."""
+    """Response body for ``GET /api/issues/stats``.
+
+    Attributes:
+        success: ``True`` when the query completed without errors.
+        count: Number of distinct issues in the archive.
+        total_articles: Total articles across all issues.
+        issues: Per-issue article count summaries.
+        message: Human-readable status message (present on partial failure).
+    """
 
     success: bool
     count: int
@@ -264,7 +440,14 @@ class IssueStatsResponse(BaseModel):
 
 
 class VolumeInfo(BaseModel):
-    """Response model for volume information."""
+    """Metadata for a single volume in the digital library.
+
+    Attributes:
+        id: Volume number (1–8).
+        year: Publication year or year range (e.g. ``"2018-2020"``).
+        issue_count: Number of issues in this volume.
+        cover_image_url: Proxy URL for the volume cover image.
+    """
 
     id: int
     year: str
@@ -273,7 +456,15 @@ class VolumeInfo(BaseModel):
 
 
 class VolumeIssue(BaseModel):
-    """Response model for volume issue."""
+    """Metadata for a single issue within a volume.
+
+    Attributes:
+        issue_number: Issue identifier string.
+        year: Publication year for this specific issue.
+        has_pdf: ``True`` if a PDF is available for this issue.
+        pdf_url: Direct Google Drive URL, or ``None``.
+        cover_image_url: Proxy URL for the issue cover image.
+    """
 
     issue_number: str
     year: str
@@ -283,7 +474,17 @@ class VolumeIssue(BaseModel):
 
 
 class PDFLinkResponse(BaseModel):
-    """Response model for PDF link."""
+    """Response body for ``GET /api/library/volumes/{volume_id}/issues/{issue_id}/pdf``.
+
+    Attributes:
+        volume_id: Volume identifier.
+        issue_id: Issue identifier.
+        pdf_url: Direct Google Drive URL, or ``None`` if unavailable.
+        embed_url: Google Drive embed/preview URL, or ``None``.
+        proxy_url: Server-side S3 stream URL (avoids CORS), or ``None``
+            if S3 key cannot be derived.
+        found: ``False`` when no PDF record exists for the requested issue.
+    """
 
     volume_id: int
     issue_id: str
@@ -294,7 +495,14 @@ class PDFLinkResponse(BaseModel):
 
 
 class TagInfo(BaseModel):
-    """Response model for a tag/category."""
+    """A taxonomy category with article count.
+
+    Attributes:
+        id: Machine-readable tag identifier (e.g. ``"FICTION"``).
+        tamil: Tamil display label.
+        english: English display label.
+        count: Number of articles tagged with this category.
+    """
 
     id: str
     tamil: str
@@ -303,14 +511,28 @@ class TagInfo(BaseModel):
 
 
 class TagsResponse(BaseModel):
-    """Response model for listing all tags."""
+    """Response body for ``GET /api/tags``.
+
+    Attributes:
+        success: ``True`` when the query completed without errors.
+        tags: Full taxonomy, sorted by article count descending.
+    """
 
     success: bool
     tags: List[TagInfo]
 
 
 class TagArticleInfo(BaseModel):
-    """Response model for an article associated with a tag."""
+    """Lightweight article record returned by tag-based listing.
+
+    Attributes:
+        doc_id: Volume/document identifier.
+        doc_issue: Issue identifier.
+        title: Article title.
+        author_name: Author name(s); may be a string or list of strings.
+        year: Publication year string.
+        tags: All taxonomy tag IDs on this article.
+    """
 
     doc_id: Optional[str] = None
     doc_issue: Optional[str] = None
@@ -321,7 +543,15 @@ class TagArticleInfo(BaseModel):
 
 
 class TagArticlesResponse(BaseModel):
-    """Response model for articles under a tag."""
+    """Response body for ``GET /api/tags/{tag_id}/articles``.
+
+    Attributes:
+        success: ``True`` when the query completed without errors.
+        tag_id: The requested tag identifier.
+        tag_tamil: Tamil display label for the tag.
+        count: Number of articles in this category.
+        articles: Deduplicated list of articles bearing the tag.
+    """
 
     success: bool
     tag_id: str
@@ -331,7 +561,17 @@ class TagArticlesResponse(BaseModel):
 
 
 class IssueArticleInfo(BaseModel):
-    """Response model for an article within a specific issue."""
+    """Article record for issue-level listings.
+
+    Attributes:
+        doc_id: Volume/document identifier.
+        doc_issue: Issue identifier.
+        article_no: Sequential article number within the issue.
+        title: Article title.
+        author_name: Author name(s); may be a string or list of strings.
+        year: Publication year string.
+        tags: Taxonomy tag IDs on this article.
+    """
 
     doc_id: Optional[str] = None
     doc_issue: Optional[str] = None
@@ -343,7 +583,15 @@ class IssueArticleInfo(BaseModel):
 
 
 class IssueArticlesResponse(BaseModel):
-    """Response model for articles in a volume/issue."""
+    """Response for ``GET /api/library/volumes/{volume_id}/issues/{issue_id}/articles``.
+
+    Attributes:
+        success: ``True`` when the query completed without errors.
+        volume_id: Requested volume identifier.
+        issue_id: Requested issue identifier.
+        count: Number of articles returned.
+        articles: Deduplicated article records for the issue.
+    """
 
     success: bool
     volume_id: int
@@ -353,7 +601,20 @@ class IssueArticlesResponse(BaseModel):
 
 
 class ArticleContentResponse(BaseModel):
-    """Response model for full article content."""
+    """Response body for ``GET /api/articles/content``.
+
+    Attributes:
+        success: ``True`` when the query completed without errors.
+        title: Article title.
+        author_name: Author name(s); may be a string or list of strings.
+        year: Publication year string.
+        doc_issue: Issue identifier.
+        tags: Taxonomy tag IDs on this article.
+        content: Full article text produced by concatenating all vector
+            chunks in chunk-ID order.
+        word_count: Number of whitespace-delimited tokens in ``content``.
+        chunk_count: Number of vector chunks merged to produce ``content``.
+    """
 
     success: bool
     title: Optional[str] = None
@@ -368,7 +629,25 @@ class ArticleContentResponse(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize resources on startup and cleanup on shutdown."""
+    """Manage application startup and shutdown tasks.
+
+    Startup sequence:
+        1. Verify Qdrant connectivity and log point count.
+        2. Pre-cache the :class:`EnhancedAuthorQuerySystem` from CSV.
+        3. Pre-warm ML models (dense E5, sparse BM25, cross-encoder) to
+           avoid cold-start timeouts on the first user request.
+        4. Validate the Gemini API key and log round-trip latency.
+
+    Shutdown:
+        Logs a shutdown message.  Resource cleanup is handled by the
+        underlying libraries (Qdrant client, boto3 session).
+
+    Args:
+        app: The FastAPI application instance (injected by FastAPI).
+
+    Yields:
+        Control to the running application.
+    """
     logger.info("Starting Ponni RAG API...")
 
     # Check database health on startup
@@ -421,9 +700,16 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Ponni RAG API...")
 
 
+# FastAPI application
 app = FastAPI(
     title="Ponni RAG API",
-    description="REST API for the Ponni Tamil Literary Archive RAG System",
+    description=(
+        "REST API for the **Ponni Tamil Literary Archive** RAG System.\n\n"
+        "Provides semantic search, AI-powered question answering, and full "
+        "digital-library access for the Ponni magazine archive.  All search "
+        "endpoints use hybrid dense (E5) + sparse (BM25) retrieval with "
+        "cross-encoder reranking, filtered to passages with ≥ 80 % similarity."
+    ),
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -440,10 +726,14 @@ app.add_middleware(
 
 @app.get("/health", response_model=HealthResponse, tags=["Health"])
 async def health_check():
-    """
-    Check API, database, and LLM health status.
+    """Check the health of all system components.
 
-    Returns the health status of the API, Qdrant database, and Gemini LLM.
+    Runs Qdrant and Gemini health probes concurrently and returns an
+    aggregated status.  The overall status is ``"degraded"`` if either
+    backend is unavailable.
+
+    Returns:
+        :class:`HealthResponse` with per-component health detail.
     """
     db_health = check_qdrant_health()
     llm_health = await asyncio.to_thread(check_gemini_health)
@@ -462,7 +752,20 @@ async def health_check():
 
 @app.get("/api/debug/s3", tags=["Health"])
 async def debug_s3(request: Request):
-    """Debug S3 connectivity — check credentials and test image proxy."""
+    """Diagnose S3 connectivity and credential configuration.
+
+    Performs a ``HeadObject`` call against the first volume cover to verify
+    that the S3 client has valid credentials and that the expected object
+    exists.  Returns sample proxy URLs for manual verification.
+
+    Args:
+        request: Incoming HTTP request (used to derive the base URL).
+
+    Returns:
+        Dict with keys ``credentials`` (bool), ``object_exists`` (bool),
+        ``object_size`` (int), and sample proxy URLs.  An ``error`` key
+        is included if an unexpected exception occurs.
+    """
     base = str(request.base_url).rstrip("/")
     result = {"credentials": False, "error": None}
     try:
@@ -489,7 +792,12 @@ async def debug_s3(request: Request):
 
 @app.get("/", tags=["Health"])
 async def root():
-    """Return root endpoint with API information."""
+    """Return basic API metadata.
+
+    Returns:
+        Dict with ``name``, ``version``, ``description``, ``docs``, and
+        ``health`` keys.
+    """
     return {
         "name": "Ponni RAG API",
         "version": "1.0.0",
@@ -501,7 +809,19 @@ async def root():
 
 @app.get("/api/images/volumes/{volume_id}/cover", tags=["Images"])
 async def get_volume_cover(volume_id: int):
-    """Proxy volume cover image from S3. Never expires."""
+    """Stream the cover image for a specific issue from S3.
+
+    Args:
+        volume_id: Integer volume identifier (1–8).
+        issue_name: Issue identifier string (e.g. ``"1"``, ``"PONGAL"``).
+
+    Returns:
+        Raw image bytes with the appropriate ``Content-Type``.
+
+    Raises:
+        HTTPException 404: Issue not found in registry, or cover image
+            absent from S3.
+    """
     key = _volume_cover_s3_key(volume_id)
     if not key:
         raise HTTPException(status_code=404, detail="Volume not found")
@@ -517,7 +837,21 @@ async def get_volume_cover(volume_id: int):
 
 @app.get("/api/images/volumes/{volume_id}/issues/{issue_name}/cover", tags=["Images"])
 async def get_issue_cover(volume_id: int, issue_name: str):
-    """Proxy issue cover image from S3. Never expires."""
+    """Stream an about-page image from S3.
+
+    Only filenames matching the pattern ``about{1-9}.{png|jpg}`` are
+    permitted to prevent path-traversal attacks.
+
+    Args:
+        filename: Image filename (e.g. ``"about1.png"``).
+
+    Returns:
+        Raw image bytes with the appropriate ``Content-Type``.
+
+    Raises:
+        HTTPException 404: Filename is not in the allowed set, or the
+            image is absent from S3.
+    """
     key = _issue_cover_s3_key(volume_id, issue_name)
     if not key:
         raise HTTPException(status_code=404, detail="Issue not found")
@@ -533,7 +867,21 @@ async def get_issue_cover(volume_id: int, issue_name: str):
 
 @app.api_route("/api/images/about/{filename}", methods=["GET", "HEAD"], tags=["Images"])
 async def get_about_image(filename: str):
-    """Proxy about page images from S3. Never expires."""
+    """Stream an about-page image from S3.
+
+    Only filenames matching the pattern ``about{1-9}.{png|jpg}`` are
+    permitted to prevent path-traversal attacks.
+
+    Args:
+        filename: Image filename (e.g. ``"about1.png"``).
+
+    Returns:
+        Raw image bytes with the appropriate ``Content-Type``.
+
+    Raises:
+        HTTPException 404: Filename is not in the allowed set, or the
+            image is absent from S3.
+    """
     # Only allow specific filenames to prevent path traversal
     allowed = {f"about{i}.{ext}" for i in range(1, 10) for ext in ("png", "jpg")}
     if filename not in allowed:
@@ -568,15 +916,23 @@ def _truncate_history(request: "QuestionRequest"):
 
 @app.post("/api/ask", response_model=QuestionResponse, tags=["Search"])
 async def ask_question_endpoint(request: QuestionRequest):
-    """
-    Ask a question and get an AI-generated answer with sources.
+    """Answer a question using hybrid retrieval and an LLM.
 
-    This endpoint performs hybrid search (dense + sparse vectors) and
-    optionally uses an LLM to generate a comprehensive answer.
-    Results are filtered by score threshold (>= 80% similarity).
+    Performs hybrid dense + sparse vector search against the Qdrant
+    collection, reranks candidates with a cross-encoder, and optionally
+    calls the Gemini LLM to synthesise a prose answer from the top
+    passages.  Only passages with ≥ 80 % similarity score are returned.
 
-    - **question**: The question to ask (in Tamil or English)
-    - **use_llm**: Whether to use LLM for answer generation
+    Args:
+        request: Question, language, optional tag filters, and optional
+            conversation history.
+
+    Returns:
+        :class:`QuestionResponse` containing the answer text and source
+        passages.
+
+    Raises:
+        HTTPException 500: Unexpected error during retrieval or generation.
     """
     try:
         logger.info(f"Question received: {request.question[:100]}...")
@@ -608,13 +964,18 @@ async def ask_question_endpoint(request: QuestionRequest):
 
 @app.post("/api/ask/stream", tags=["Search"])
 async def ask_question_stream_endpoint(request: QuestionRequest):
-    """
-    Ask a question and get a streaming AI-generated answer via SSE.
+    """Stream an AI-generated answer token-by-token via Server-Sent Events.
 
-    Streams tokens as Server-Sent Events:
-    - event: token — individual answer tokens
-    - event: sources — source documents (JSON array)
-    - event: done — signals completion
+    The generator yields SSE frames until the answer is complete, then
+    emits a ``sources`` frame followed by ``done``.  On error an ``error``
+    frame is emitted before the generator exits.
+
+    Args:
+        request: Same shape as :func:`ask_question_endpoint`.
+
+    Returns:
+        :class:`StreamingResponse` with ``text/event-stream`` media type
+        and headers that disable proxy buffering.
     """
     history = _truncate_history(request)
 
@@ -674,12 +1035,22 @@ async def search_endpoint(
         default=None, description="Comma-separated tag IDs to filter by"
     ),
 ):
-    """
-    Search the archive with a query string.
+    """Search the archive with a URL query parameter.
 
-    GET alternative to POST /api/ask for simpler search queries.
-    Results are filtered by score threshold (>= 80% similarity).
-    Optionally filter by tags (comma-separated, e.g. tags=FICTION,POETRY).
+    GET-friendly alternative to ``POST /api/ask``.  Accepts the same
+    hybrid retrieval pipeline with optional LLM synthesis.  Only
+    passages with ≥ 80 % similarity are returned.
+
+    Args:
+        q: Search query string (Tamil or English).
+        use_llm: When ``True``, an LLM generates a prose answer.
+        tags: Optional comma-separated tag IDs to filter results.
+
+    Returns:
+        :class:`QuestionResponse` containing passages and optional answer.
+
+    Raises:
+        HTTPException 500: Unexpected error during retrieval or generation.
     """
     try:
         tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
@@ -707,11 +1078,14 @@ async def search_endpoint(
 
 @app.get("/api/tags", response_model=TagsResponse, tags=["Tags"])
 async def list_tags():
-    """
-    List all 15 article categories with article counts.
+    """List all 15 article taxonomy categories with article counts.
 
-    Scrolls the Qdrant collection to aggregate tag counts across all articles.
-    Returns the full taxonomy with counts.
+    Scrolls the Qdrant collection to count how many articles belong to
+    each category.  If Qdrant is unavailable, returns the full taxonomy
+    with zero counts so that UI dropdowns still populate.
+
+    Returns:
+        :class:`TagsResponse` with tags sorted by count descending.
     """
     try:
         client = get_qdrant_client()
@@ -777,10 +1151,21 @@ async def list_tags():
     "/api/tags/{tag_id}/articles", response_model=TagArticlesResponse, tags=["Tags"]
 )
 async def get_tag_articles(tag_id: str):
-    """
-    Get all articles for a specific tag/category.
+    """Retrieve all articles associated with a given taxonomy category.
 
-    Scrolls Qdrant for articles matching the tag, deduplicates by doc_id + doc_issue.
+    Scrolls the Qdrant collection for chunk-0 article points that carry
+    the requested tag, deduplicates by ``(doc_id, doc_issue, article_no)``,
+    and returns the cleaned list.
+
+    Args:
+        tag_id: Taxonomy tag identifier (e.g. ``"FICTION"``).
+
+    Returns:
+        :class:`TagArticlesResponse` with a deduplicated article list.
+
+    Raises:
+        HTTPException 404: ``tag_id`` is not in the known taxonomy.
+        HTTPException 500: Unexpected error during Qdrant scroll.
     """
     if tag_id not in TAXONOMY:
         raise HTTPException(status_code=404, detail=f"Unknown tag ID: {tag_id}")
@@ -868,11 +1253,17 @@ async def get_tag_articles(tag_id: str):
 
 @app.get("/api/authors", response_model=AuthorsListResponse, tags=["Authors"])
 async def list_authors():
-    """
-    List all authors in the Ponni archive with article counts.
+    """List every author in the archive with their article count.
 
-    Returns a sorted list of all unique authors and the number of
-    articles each has written.
+    Delegates to :class:`EnhancedAuthorQuerySystem`, which is pre-cached
+    at startup.  The result is sorted by article count descending.
+
+    Returns:
+        :class:`AuthorsListResponse` with total author/article counts.
+
+    Raises:
+        HTTPException 404: Author CSV is missing from the filesystem.
+        HTTPException 500: Author system failed to load or query.
     """
     try:
         if not CSV_PATH.exists():
@@ -915,12 +1306,20 @@ async def list_authors():
     tags=["Authors"],
 )
 async def get_author_articles(author_name: str):
-    """
-    Get all articles written by a specific author.
+    """Retrieve all articles written by a specific author.
 
-    - **author_name**: Name of the author (supports Tamil names)
+    Author matching is fuzzy — the system normalises the supplied name
+    and returns the closest match, reported in ``matched_author``.
 
-    Returns a list of articles with titles, years, and issue numbers.
+    Args:
+        author_name: Author name to look up (Tamil or transliterated).
+
+    Returns:
+        :class:`AuthorArticlesResponse` with matched author and article list.
+
+    Raises:
+        HTTPException 404: Author CSV is missing from the filesystem.
+        HTTPException 500: Unexpected error during author lookup.
     """
     try:
         if not CSV_PATH.exists():
@@ -956,12 +1355,20 @@ async def get_author_articles(author_name: str):
 async def search_by_topic(
     topic: str = Query(..., min_length=1, description="Topic to search for")
 ):
-    """
-    Find articles about a specific topic.
+    """Find articles whose titles contain a specific keyword.
 
-    - **topic**: Topic keyword to search in article titles
+    The search is case-insensitive substring matching performed by
+    :class:`EnhancedAuthorQuerySystem`.
 
-    Returns articles whose titles contain the topic keyword.
+    Args:
+        topic: Topic keyword (Tamil or English).
+
+    Returns:
+        :class:`TopicSearchResponse` with matching article list.
+
+    Raises:
+        HTTPException 404: Author/topic CSV is missing from the filesystem.
+        HTTPException 500: Unexpected error during topic search.
     """
     try:
         if not CSV_PATH.exists():
@@ -994,11 +1401,17 @@ async def search_by_topic(
 
 @app.get("/api/issues/stats", response_model=IssueStatsResponse, tags=["Issues"])
 async def get_issue_statistics():
-    """
-    Get statistics about all issues in the archive.
+    """Return article counts for every issue in the archive.
 
-    Returns the total number of issues, articles per issue,
-    and summary statistics.
+    Delegates to :func:`get_issue_count` which reads the CSV index.
+
+    Returns:
+        :class:`IssueStatsResponse` with total issue count, total article
+        count, and per-issue breakdown.
+
+    Raises:
+        HTTPException 404: Issue CSV is missing from the filesystem.
+        HTTPException 500: Unexpected error during computation.
     """
     try:
         if not CSV_PATH.exists():
@@ -1025,11 +1438,17 @@ async def get_issue_statistics():
 
 @app.get("/api/library/volumes", response_model=List[VolumeInfo], tags=["Library"])
 async def list_volumes(request: Request):
-    """
-    List all volumes in the Ponni digital library.
+    """List all volumes in the Ponni digital library.
 
-    Returns volume information including year, issue count, and proxy
-    cover image URL.
+    Derives year ranges from per-issue year fields so multi-year volumes
+    display an accurate range (e.g. ``"2018-2020"``).
+
+    Args:
+        request: Incoming HTTP request (used to derive the base URL for
+            cover image proxy URLs).
+
+    Returns:
+        List of :class:`VolumeInfo` objects, one per volume.
     """
     base = str(request.base_url).rstrip("/")
     result = []
@@ -1058,12 +1477,18 @@ async def list_volumes(request: Request):
     tags=["Library"],
 )
 async def get_volume_issues(volume_id: int, request: Request):
-    """
-    Get all issues for a specific volume.
+    """List all issues for a given volume.
 
-    - **volume_id**: Volume number (1-8)
+    Args:
+        volume_id: Volume number (1–8).
+        request: Incoming HTTP request (used to derive the base URL for
+            cover image proxy URLs).
 
-    Returns list of issues with PDF availability and proxy cover image URL.
+    Returns:
+        List of :class:`VolumeIssue` objects in registry order.
+
+    Raises:
+        HTTPException 404: Volume not found, or no issues registered.
     """
     base = str(request.base_url).rstrip("/")
     vol_data = next((v for v in _magazine["volumes"] if v["id"] == volume_id), None)
@@ -1099,13 +1524,24 @@ async def get_volume_issues(volume_id: int, request: Request):
     tags=["Library"],
 )
 async def get_pdf_link(volume_id: int, issue_id: str, request: Request):
-    """
-    Get PDF link for a specific issue.
+    """Return PDF access URLs for a specific issue.
 
-    - **volume_id**: Volume number (1-8)
-    - **issue_id**: Issue number or name (e.g., "1", "PONGAL")
+    Three URL types are returned when available:
 
-    Returns Drive URL, embed URL, and S3-backed proxy stream URL.
+    - ``pdf_url`` — direct Google Drive link.
+    - ``embed_url`` — Google Drive embed/preview URL (for ``<iframe>`` use).
+    - ``proxy_url`` — server-side S3 stream path that avoids Drive CORS
+      restrictions and supports HTTP Range requests for pdf.js lazy-loading.
+
+    Args:
+        volume_id: Volume number (1–8).
+        issue_id: Issue identifier (e.g. ``"1"``, ``"PONGAL"``).
+        request: Incoming HTTP request (not currently used, reserved for
+            future base-URL construction).
+
+    Returns:
+        :class:`PDFLinkResponse`; ``found`` is ``False`` when no PDF
+        record exists.
     """
     key = f"vol_{volume_id}_issue_{issue_id}"
     pdf_url = PDF_LINKS.get(key)
@@ -1141,7 +1577,30 @@ _PDF_CACHE_SECONDS = 2592000  # 30 days; PDFs are immutable
     tags=["Library"],
 )
 async def stream_issue_pdf(volume_id: int, issue_id: str, request: Request):
-    """Stream issue PDF from S3 with HTTP Range support for pdf.js lazy loading."""
+    """Stream an issue PDF from S3 with HTTP Range request support.
+
+    Supports byte-range requests so that pdf.js (used in the frontend)
+    can lazy-load only the pages it needs.  PDFs are served with a
+    30-day ``Cache-Control: immutable`` header.
+
+    ``HEAD`` requests return headers only; the S3 response body is
+    closed immediately without reading.
+
+    Args:
+        volume_id: Volume number (1–8).
+        issue_id: Issue identifier (e.g. ``"1"``, ``"PONGAL"``).
+        request: Incoming HTTP request; the ``Range`` header is forwarded
+            to S3 when present.
+
+    Returns:
+        Streaming PDF response with ``Accept-Ranges``, ``ETag``, and
+        ``Content-Length`` headers.
+
+    Raises:
+        HTTPException 404: Issue not in registry, or PDF absent from S3.
+        HTTPException 416: Requested byte range is invalid.
+        HTTPException 502: Unexpected S3 or credential error.
+    """
     s3_key = _issue_pdf_s3_key(volume_id, issue_id)
     if not s3_key:
         raise HTTPException(status_code=404, detail="Issue not found")
@@ -1214,15 +1673,26 @@ async def stream_issue_pdf(volume_id: int, issue_id: str, request: Request):
     tags=["Library"],
 )
 async def get_issue_articles(volume_id: int, issue_id: str):
-    """
-    Get all articles for a specific volume and issue.
+    """Return all articles for a specific volume and issue.
 
-    Replicates the Streamlit fetch_issue_articles logic:
-    1. Query Qdrant for chunk_0 articles with matching doc_id (volume).
-    2. Fallback: fetch all chunk_0 articles, filter client-side.
-    3. Build position-based mapping from sorted doc_issue values.
-    4. Filter by mapped doc_issue for the requested issue_id.
-    5. Deduplicate by doc_id + doc_issue + article_no.
+    Retrieval strategy (applied in order):
+
+    1. Query Qdrant for chunk-0 article points with ``doc_id == volume_id``.
+    2. **Fallback:** if no points are found, fetch *all* chunk-0 articles and
+       filter client-side by ``doc_id``.
+    3. Normalise ``doc_issue`` values (e.g. map Pongal variants to a
+       canonical form) and filter to those matching ``issue_id``.
+    4. Deduplicate by ``(doc_id, doc_issue, article_no)`` and return.
+
+    Args:
+        volume_id: Volume number (1–8).
+        issue_id: Issue identifier string (e.g. ``"1"``, ``"PONGAL"``).
+
+    Returns:
+        :class:`IssueArticlesResponse` with deduplicated article records.
+
+    Raises:
+        HTTPException 500: Unexpected error during Qdrant scroll.
     """
     try:
         client = get_qdrant_client()
@@ -1383,10 +1853,24 @@ async def get_article_content(
         default=None, description="Article number within the issue"
     ),
 ):
-    """
-    Get the full content of a specific article by concatenating all its chunks.
+    """Retrieve the full text of an article by concatenating its vector chunks.
 
-    Identifies the article by doc_id + doc_issue + optional article_no.
+    Scrolls Qdrant for all chunks matching the supplied identifiers, sorts
+    them by ``chunk_id``, and joins their ``content`` fields with newlines.
+    Metadata (title, author, year, tags) is taken from the first chunk.
+
+    Args:
+        doc_id: Volume/document identifier (e.g. ``"3"``).
+        doc_issue: Issue identifier (e.g. ``"1"``, ``"PONGAL"``).
+        article_no: Optional article number.  When omitted, all articles
+            in the issue are concatenated (useful for issue-level export).
+
+    Returns:
+        :class:`ArticleContentResponse` with full content and metadata.
+        Returns a successful empty response when no chunks are found.
+
+    Raises:
+        HTTPException 500: Unexpected error during Qdrant scroll.
     """
     try:
         client = get_qdrant_client()
@@ -1480,6 +1964,7 @@ async def get_article_content(
         )
 
 
+# Entry point
 if __name__ == "__main__":
     import uvicorn
 

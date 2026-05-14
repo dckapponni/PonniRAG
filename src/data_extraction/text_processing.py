@@ -1,4 +1,8 @@
-"""Text processing utilities for Tamil document analysis."""
+"""Text processing utilities for Tamil document analysis.
+
+Provides the core text normalization, validation, and author-matching
+primitives used throughout the extraction pipeline:
+"""
 
 import logging
 import re

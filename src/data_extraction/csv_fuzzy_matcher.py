@@ -1,4 +1,30 @@
-"""CSV fuzzy matching utilities for Tamil document article extraction."""
+"""CSV fuzzy matching utilities for Tamil document article extraction.
+
+Provides the CSV-driven extraction path that is fully independent of
+the TOC (பொருளடக்கம்) section. All article metadata — title, author,
+volume, issue, and year — is sourced from ``summary.csv``; only the
+article body text is located by fuzzy-matching each CSV title against
+the raw document lines.
+
+Key responsibilities:
+
+- **Filename / text parsing** — :func:`extract_malar_ithal_from_filename`
+  and :func:`extract_malar_ithal_from_text` extract மலர் and இதழ்
+  identifiers used to filter the relevant CSV rows.
+- **CSV row matching** — :func:`match_csv_rows` joins document
+  identifiers to CSV rows using exact then fuzzy இதழ் matching,
+  handling special cases such as ``"பொங்கல் மலர்"``.
+- **Title boundary detection** — :func:`find_article_boundary_fuzzy`
+  locates the standalone (non-TOC) occurrence of each CSV title in
+  the full document and determines the end boundary from the next
+  title.
+- **Skip-phrase filtering** — section-header and page-marker lines
+  are excluded from both title search and extracted content so that
+  OCR noise does not corrupt article bodies.
+- **Multi-author field parsing** — bracket-wrapped comma-separated
+  author fields (e.g. ``[பாண்டியன், நா. வேத்தரசன்]``) are handled
+  correctly via :func:`parse_author_field`.
+"""
 
 import logging
 import re
@@ -686,9 +712,7 @@ def extract_articles_from_csv(lines, csv_df, file_path):
             )
             logger.warning(f"  Could not extract '{title[:40]}' " f"- {reason}")
 
-    # ----------------------------------------------------------------
     # Build authors_list — one entry per unique author across all rows
-    # ----------------------------------------------------------------
     authors_list = []
     unique_authors = set()
 

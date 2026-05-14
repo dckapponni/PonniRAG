@@ -1,4 +1,26 @@
-"""Article separation pipeline for Tamil documents."""
+"""Article separation pipeline for Tamil documents.
+
+Orchestrates the end-to-end extraction of structured articles from
+raw Tamil OCR text files stored in S3. The pipeline runs in four
+sequential steps for each document:
+
+1. **Filename parsing** — extracts மலர் (volume), இதழ் (issue), and
+   year from the S3 key or falls back to document text.
+2. **TOC processing** — locates the பொருளடக்கம் / ஆகியோரின் section,
+   extracts author names for pattern matching, and marks TOC lines
+   as processed. Used exclusively by pattern extraction; CSV
+   extraction does not depend on the TOC.
+3. **CSV extraction** — searches the full document for article titles
+   listed in ``summary.csv``, matching by fuzzy title similarity
+   rather than TOC position.
+4. **Pattern extraction** — runs Pattern A, B, and C extractors on
+   all remaining unprocessed lines, followed by intro-section and
+   remaining-content passes as safety nets.
+
+After all files are processed, per-volume ``remaining_vol{X}.json``
+files are written to S3 grouping leftover content from CSV-paired
+issues.
+"""
 
 import logging
 import re

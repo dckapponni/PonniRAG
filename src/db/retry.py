@@ -12,13 +12,30 @@ import time
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Exception predicates
-# ---------------------------------------------------------------------------
-
-
 def is_retryable_qdrant(exc: Exception) -> bool:
-    """Return True if the Qdrant exception is transient and worth retrying."""
+    """Return True if the Qdrant exception is transient and worth retrying.
+
+    Checks the exception against the following categories in order:
+
+    - **Standard library transients**: ``ConnectionError``, ``TimeoutError``,
+      ``OSError``.
+    - **httpx transport errors**: any ``httpx.TransportError`` subclass
+      (connection refused, timeout, etc.). Skipped gracefully if ``httpx``
+      is not installed.
+    - **Qdrant client errors**: ``ResponseHandlingException`` (always
+      retryable) and ``UnexpectedResponse`` with HTTP status codes
+      ``429``, ``502``, ``503``, or ``504``. Skipped gracefully if
+      ``qdrant_client`` is not installed.
+    - **Resource exhaustion**: exceptions whose class name is
+      ``"ResourceExhaustedResponse"``.
+
+    Args:
+        exc (Exception): The exception raised by a Qdrant API call.
+
+    Returns:
+        bool: ``True`` if the error is likely transient and the call should
+        be retried; ``False`` if it is a permanent or unrecognized error.
+    """
     if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
         return True
 
@@ -56,7 +73,28 @@ def is_retryable_qdrant(exc: Exception) -> bool:
 
 
 def is_retryable_gemini(exc: Exception) -> bool:
-    """Return True if the Gemini exception is transient and worth retrying."""
+    """Return True if the Gemini exception is transient and worth retrying.
+
+    Checks the exception against the following categories in order:
+
+    - **Standard library transients**: ``ConnectionError``, ``TimeoutError``,
+      ``OSError``.
+    - **httpx transport errors**: any ``httpx.TransportError`` subclass.
+      Skipped gracefully if ``httpx`` is not installed.
+    - **google-genai errors**: ``ServerError`` (always retryable),
+      ``ClientError`` with HTTP status ``429`` (rate limit), and
+      ``APIError`` with status codes ``429``, ``500``, ``502``, ``503``,
+      or ``504``. Skipped gracefully if ``google.genai`` is not installed.
+    - **Message-based fallback**: any exception whose string representation
+      contains ``"rate limit"`` or ``"resource exhausted"`` (case-insensitive).
+
+    Args:
+        exc (Exception): The exception raised by a Gemini API call.
+
+    Returns:
+        bool: ``True`` if the error is likely transient and the call should
+        be retried; ``False`` if it is a permanent or unrecognized error.
+    """
     if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
         return True
 
@@ -94,9 +132,21 @@ def is_retryable_gemini(exc: Exception) -> bool:
     return False
 
 
-# ---------------------------------------------------------------------------
-# Backoff computation
-# ---------------------------------------------------------------------------
+def _default_not_retryable(e: Exception) -> bool:
+    """Return False for all exceptions, treating every error as non-retryable.
+
+    Used as the default ``is_retryable`` predicate in :func:`retry_sync`
+    and :func:`retry_async` when the caller does not supply one, ensuring
+    that unguarded calls fail fast on the first exception rather than
+    silently retrying.
+
+    Args:
+        e (Exception): The caught exception (unused).
+
+    Returns:
+        bool: Always ``False``.
+    """
+    return False
 
 
 def _compute_delay(
@@ -105,9 +155,29 @@ def _compute_delay(
     maximum: float,
     jitter: float,
 ) -> float:
-    """Compute delay with exponential backoff and random jitter.
+    """Compute a retry delay using exponential backoff with random jitter.
 
-    delay = min(base * 2^attempt, maximum) * (1 ± jitter)
+    Calculates the delay as:
+
+    .. code-block:: text
+
+        delay = min(base * 2^attempt, maximum) * (1 ± jitter)
+
+    The jitter factor is sampled uniformly from
+    ``[-jitter, +jitter]``, so the actual multiplier is drawn from
+    ``(1 - jitter, 1 + jitter)``. The result is clamped to a minimum
+    of ``0`` to guard against negative values when ``jitter > 1``.
+
+    Args:
+        attempt (int): Zero-based attempt index. ``0`` yields approximately
+            ``base`` seconds; each subsequent attempt doubles the delay.
+        base (float): Base delay in seconds for the first retry.
+        maximum (float): Hard ceiling on the pre-jitter delay in seconds.
+        jitter (float): Fractional jitter range. ``0`` disables jitter;
+            ``0.25`` introduces ±25 % randomness.
+
+    Returns:
+        float: Delay in seconds, always non-negative.
     """
     delay = min(base * (2**attempt), maximum)
     if jitter > 0:
@@ -130,17 +200,40 @@ def retry_sync(
     jitter: float = 0.25,
     is_retryable=None,
 ):
-    """Run synchronous retry loop with exponential backoff.
+    """Run a synchronous function with exponential-backoff retry.
 
-    Calls fn(*args, **kwargs) up to max_attempts times. Non-retryable
-    exceptions propagate immediately.
+    Calls ``fn(*args, **kwargs)`` up to ``max_attempts`` times. On each
+    failure the exception is passed to ``is_retryable``; non-retryable
+    exceptions and final-attempt failures propagate immediately without
+    sleeping. Retryable failures are logged at WARNING level and followed
+    by a :func:`time.sleep` of the computed backoff delay.
+
+    Args:
+        fn (callable): Synchronous function to call.
+        args (tuple): Positional arguments forwarded to ``fn``.
+        kwargs (dict | None): Keyword arguments forwarded to ``fn``.
+            Defaults to an empty dict.
+        max_attempts (int): Total number of attempts including the first
+            call. Defaults to ``3``.
+        base_delay (float): Base retry delay in seconds. Defaults to
+            ``0.5``.
+        max_delay (float): Maximum retry delay in seconds. Defaults to
+            ``4.0``.
+        jitter (float): Fractional jitter applied to each delay.
+            Defaults to ``0.25``.
+        is_retryable (callable | None): Single-argument predicate that
+            receives the caught exception and returns ``True`` if it is
+            worth retrying. When ``None``, all exceptions are treated as
+            non-retryable and propagate on the first failure.
+
+    Returns:
+        Any: The return value of ``fn`` on success.
+
+    Raises:
+        Exception: Re-raises the last exception when all attempts are
+        exhausted or when ``is_retryable`` returns ``False``.
     """
     kwargs = kwargs or {}
-
-    def _default_not_retryable(e):
-        """Return False for all exceptions."""
-        return False
-
     check_retryable = is_retryable or _default_not_retryable
 
     last_exc = None
@@ -175,16 +268,39 @@ async def retry_async(
     jitter: float = 0.25,
     is_retryable=None,
 ):
-    """Async retry loop with exponential backoff.
+    """Run an async function with exponential-backoff retry.
 
-    Calls await fn(*args, **kwargs) up to max_attempts times.
+    Async counterpart of :func:`retry_sync`. Calls ``await fn(*args,
+    **kwargs)`` up to ``max_attempts`` times and uses
+    ``asyncio.sleep`` between attempts so the event loop is not blocked
+    during the backoff window.
+
+    Args:
+        fn (coroutine function): Async function to call.
+        args (tuple): Positional arguments forwarded to ``fn``.
+        kwargs (dict | None): Keyword arguments forwarded to ``fn``.
+            Defaults to an empty dict.
+        max_attempts (int): Total number of attempts including the first
+            call. Defaults to ``3``.
+        base_delay (float): Base retry delay in seconds. Defaults to
+            ``0.5``.
+        max_delay (float): Maximum retry delay in seconds. Defaults to
+            ``4.0``.
+        jitter (float): Fractional jitter applied to each delay.
+            Defaults to ``0.25``.
+        is_retryable (callable | None): Single-argument predicate that
+            receives the caught exception and returns ``True`` if it is
+            worth retrying. When ``None``, all exceptions are treated as
+            non-retryable and propagate on the first failure.
+
+    Returns:
+        Any: The return value of ``await fn(...)`` on success.
+
+    Raises:
+        Exception: Re-raises the last exception when all attempts are
+        exhausted or when ``is_retryable`` returns ``False``.
     """
     kwargs = kwargs or {}
-
-    def _default_not_retryable(e):
-        """Return False for all exceptions."""
-        return False
-
     check_retryable = is_retryable or _default_not_retryable
 
     last_exc = None
@@ -209,13 +325,25 @@ async def retry_async(
     raise last_exc  # pragma: no cover
 
 
-# ---------------------------------------------------------------------------
-# Service-specific convenience wrappers
-# ---------------------------------------------------------------------------
-
-
 def with_qdrant_retry(fn, *args, **kwargs):
-    """Retry a Qdrant call: 3 attempts, 0.5s→4s backoff, 25% jitter."""
+    """Retry a Qdrant API call with service-tuned exponential backoff.
+
+    Convenience wrapper around :func:`retry_sync` pre-configured for
+    Qdrant: 3 attempts, base delay of 0.5 s, maximum delay of 4 s, and
+    25 % jitter. Uses :func:`is_retryable_qdrant` to classify exceptions.
+
+    Args:
+        fn (callable): Qdrant client method to call.
+        *args: Positional arguments forwarded to ``fn``.
+        **kwargs: Keyword arguments forwarded to ``fn``.
+
+    Returns:
+        Any: The return value of ``fn`` on success.
+
+    Raises:
+        Exception: Re-raises the last exception after all retry attempts
+        are exhausted or on a non-retryable error.
+    """
     return retry_sync(
         fn,
         args=args,
@@ -229,7 +357,26 @@ def with_qdrant_retry(fn, *args, **kwargs):
 
 
 def with_gemini_retry(fn, *args, **kwargs):
-    """Retry a Gemini call: 3 attempts, 1s→8s backoff, 25% jitter."""
+    """Retry a synchronous Gemini API call with service-tuned exponential backoff.
+
+    Convenience wrapper around :func:`retry_sync` pre-configured for
+    Gemini: 3 attempts, base delay of 1 s, maximum delay of 8 s, and
+    25 % jitter. The longer base and maximum delays account for Gemini's
+    rate-limit recovery windows, which are typically longer than Qdrant's.
+    Uses :func:`is_retryable_gemini` to classify exceptions.
+
+    Args:
+        fn (callable): Synchronous Gemini API method to call.
+        *args: Positional arguments forwarded to ``fn``.
+        **kwargs: Keyword arguments forwarded to ``fn``.
+
+    Returns:
+        Any: The return value of ``fn`` on success.
+
+    Raises:
+        Exception: Re-raises the last exception after all retry attempts
+        are exhausted or on a non-retryable error.
+    """
     return retry_sync(
         fn,
         args=args,
@@ -243,7 +390,24 @@ def with_gemini_retry(fn, *args, **kwargs):
 
 
 async def with_gemini_retry_async(fn, *args, **kwargs):
-    """Async retry a Gemini call: 3 attempts, 1s→8s backoff, 25% jitter."""
+    """Retry an async Gemini API call with service-tuned exponential backoff.
+
+    Async convenience wrapper around :func:`retry_async` pre-configured for
+    Gemini: 3 attempts, base delay of 1 s, maximum delay of 8 s, and 25 %
+    jitter. Uses :func:`is_retryable_gemini` to classify exceptions.
+
+    Args:
+        fn (coroutine function): Async Gemini API method to call.
+        *args: Positional arguments forwarded to ``fn``.
+        **kwargs: Keyword arguments forwarded to ``fn``.
+
+    Returns:
+        Any: The return value of ``await fn(...)`` on success.
+
+    Raises:
+        Exception: Re-raises the last exception after all retry attempts
+        are exhausted or on a non-retryable error.
+    """
     return await retry_async(
         fn,
         args=args,

@@ -1,4 +1,20 @@
-"""Pattern-based article extraction for Tamil documents."""
+"""Pattern-based article extraction for Tamil documents.
+
+Implements three forward and reverse scan strategies for extracting
+structured articles from raw Tamil document lines when CSV metadata
+is unavailable or incomplete:
+
+- **Pattern A** (``HEADING → AUTHOR → CONTENT``): locates an author
+  line and searches backward for a preceding heading.
+- **Pattern B** (``AUTHOR → HEADING → CONTENT``): locates an author
+  line and searches forward for a following heading.
+- **Pattern C** (``HEADING → CONTENT → AUTHOR``): supports both a
+  standalone trailing author (reverse scan) and an embedded author
+  signature at the end of content (common in Tamil poems).
+
+All patterns respect a shared ``processed_lines`` boolean mask so
+that lines claimed by one extractor are invisible to the others.
+"""
 
 import logging
 

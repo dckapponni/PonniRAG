@@ -54,21 +54,21 @@ from guardrails import (
     sanitize_query,
     validate_history,
 )
-from llm import _build_csv_user_content  # ✅ required
-from llm import _get_csv_system_prompt  # ✅ required
-from llm import is_content_display_query  # ✅ required
 from llm import (
+    _build_csv_user_content,
+    _get_csv_system_prompt,
     check_gemini_health,
     generate_extractive_answer,
     generate_llm_answer,
     generate_llm_answer_async,
     generate_llm_answer_stream,
+    is_content_display_query,
 )
 from qdrant_client import models
 from reranker import rerank_sources
-from search import _select_relevant_docs  # ✅ required
 from search import retrieve_all_chunks_for_document  # noqa: F401 — re-export
 from search import (
+    _select_relevant_docs,
     build_context_from_docs,
     extract_key_facts,
     format_answer_output,
@@ -90,17 +90,27 @@ _rerank_executor = concurrent.futures.ThreadPoolExecutor(
     max_workers=2, thread_name_prefix="rerank"
 )
 
-# ---------------------------------------------------------------------------
-# Content vocabulary cache — built lazily from Qdrant document headings
-# ---------------------------------------------------------------------------
 _content_vocab_cache: dict = {"vocab": None, "lock": threading.Lock()}
 
 
 def _build_content_vocab() -> List[str]:
-    """Build vocabulary of Tamil words from Qdrant document headings.
+    """Build a vocabulary of Tamil words from Qdrant document headings.
 
-    Scrolls through all article points and extracts unique Tamil words
-    (>= 4 chars) from the title/heading field. Cached for the session.
+    Lazily scrolls through all ``"article"`` type points in the Qdrant
+    collection and extracts unique Tamil words of four or more characters
+    from each point's ``metadata.title`` field. The result is cached
+    in ``_content_vocab_cache`` for the lifetime of the process so the
+    scroll is performed at most once per session.
+
+    Returns:
+        List[str]: A deduplicated list of Tamil Unicode words (each at least
+        4 characters long) extracted from article headings. Returns an empty
+        list if the Qdrant client is unavailable or an error occurs during
+        the scroll.
+
+    Note:
+        Thread-safe: uses ``_content_vocab_cache["lock"]`` to prevent
+        concurrent builds.
     """
     with _content_vocab_cache["lock"]:
         if _content_vocab_cache["vocab"] is not None:
@@ -151,7 +161,15 @@ def _build_content_vocab() -> List[str]:
 
 
 def verify_files():
-    """Verify existence of critical files (CSV)."""
+    """Verify the existence and size of critical runtime files.
+
+    Checks that the CSV data file referenced by ``CSV_PATH`` is present on
+    disk. Logs the file path and its size in kilobytes when found, or logs
+    an error if it is missing. Called once at module import time.
+
+    Returns:
+        None
+    """
     logger.info("Verifying critical files...")
     if CSV_PATH.exists():
         logger.info(f"CSV found: {CSV_PATH}")
@@ -167,21 +185,46 @@ _LLM_MIN_ANSWER_LENGTH = 150  # Minimum chars for an LLM answer to be considered
 
 
 def _msg(language: str, ta: str, en: str) -> str:
-    """Return the appropriate message based on language."""
+    """Return the appropriate message string for the given language code.
+
+    Args:
+        language (str): BCP-47 language code. Pass ``"en"`` for English;
+            any other value returns the Tamil string.
+        ta (str): Tamil message string.
+        en (str): English message string.
+
+    Returns:
+        str: ``en`` when ``language == "en"``; ``ta`` otherwise.
+    """
     return en if language == "en" else ta
 
 
 def _llm_fallback_answer(question: str, merged_docs, history, language: str = "ta"):
-    """Try cache then extractive fallback when LLM answer is insufficient.
+    """Produce a fallback answer when the primary LLM response is insufficient.
 
-    Called when the LLM returns an empty or too-short answer (rate limit,
-    server error, timeout). Tries the response cache first (even in
-    history mode — a stale LLM answer is better than extractive), then
-    falls back to keyword-based extractive answer.
+    Attempts two fallback strategies in order:
+
+    1. **Response cache** — looks up the question in ``_response_cache``.
+       A cached answer is preferred over extractive even in conversation-history
+       mode (a stale but coherent answer beats keyword extraction).
+    2. **Extractive answer** — calls :func:`extract_key_facts` and
+       :func:`generate_extractive_answer` on the merged document pool.
+       If the extractive result is still too short (< 50 chars), returns a
+       generic "information is in the sources" message.
+
+    Args:
+        question (str): The original user question, used for cache lookup
+            and extractive fact selection.
+        merged_docs: List of merged document dicts from
+            :func:`merge_consecutive_chunks`, used for extractive generation.
+        history: Validated conversation history (may be ``None``).
+        language (str): BCP-47 language code controlling the language of the
+            last-resort message. Defaults to ``"ta"``.
 
     Returns:
-        (answer, fallback_reason): answer string and reason tag for the
-        response metadata ("cached_response" or "extractive").
+        Tuple[str, str]: A two-element tuple of ``(answer, fallback_reason)``
+        where ``fallback_reason`` is one of ``"cached_response"`` or
+        ``"extractive"``.
     """
     # Try cache — this helps in history mode where cache was skipped at the top
     cached = _response_cache.get(question)
@@ -284,12 +327,38 @@ _HAS_MEANINGFUL_CONTENT = _re.compile(r"[\w\u0B80-\u0BFF]")
 
 
 def _query_has_meaningful_content(question: str) -> bool:
-    """Check if the query has a meaningful character."""
+    """Check whether a query contains at least one meaningful character.
+
+    A query is considered meaningful if it contains at least one alphanumeric,
+    Tamil Unicode, or CJK character. Queries consisting entirely of
+    punctuation, whitespace, or special characters are rejected.
+
+    Args:
+        question (str): User query string, already sanitized.
+
+    Returns:
+        bool: ``True`` if the query has at least one word character or Tamil
+        codepoint; ``False`` otherwise.
+    """
     return bool(_HAS_MEANINGFUL_CONTENT.search(question))
 
 
 def _answer_indicates_no_data(answer: str) -> bool:
-    """Check if the LLM answer indicates the requested data is not available."""
+    """Detect whether an LLM answer states that the requested data is unavailable.
+
+    Scans the answer text against ``_NO_DATA_PATTERNS`` — a compiled list
+    of Tamil and English regex patterns covering common phrases such as
+    "not indexed", "data not available", "not found", and their Tamil
+    equivalents. When matched, the caller should suppress sources to avoid
+    presenting misleading partial keyword matches to the user.
+
+    Args:
+        answer (str): Raw LLM-generated answer text.
+
+    Returns:
+        bool: ``True`` if any no-data pattern matches; ``False`` if the
+        answer is empty or no pattern matches.
+    """
     if not answer:
         return False
     for pattern in _NO_DATA_PATTERNS:
@@ -424,15 +493,38 @@ _ENGLISH_STOP_WORDS = {
 
 
 def _check_context_relevance(question: str, relevant_docs: list) -> bool:
-    """Check if retrieved documents are actually relevant to the query.
+    """Check whether retrieved documents are genuinely relevant to the query.
 
-    Extracts distinguishing entities (years, names, specific terms) from
-    the question and verifies at least some appear in the retrieved docs.
-    Returns False when documents are likely fuzzy/partial keyword matches
-    that don't actually address the user's question.
+    Extracts distinguishing entities from the question — four-digit years,
+    Tamil content words (excluding stop words in ``_TAMIL_STOP_WORDS``), and
+    English content words (excluding stop words in ``_ENGLISH_STOP_WORDS``) —
+    then verifies that at least some of those entities appear in the pool of
+    retrieved documents.
 
-    This is deliberately conservative — it only returns False when it is
-    confident the docs are irrelevant (key entities completely missing).
+    Matching strategy:
+
+    - **Year queries**: if the question contains a year (``19xx``/``20xx``),
+      at least one document must reference that year. A year match alone is
+      treated as sufficient evidence and returns ``True`` immediately.
+    - **Key-term queries**: at least one distinguishing Tamil or English term
+      must appear in the document pool. Tamil matching uses a common-prefix
+      heuristic (``≥ 60 %`` of the shorter word, minimum 3 chars) to handle
+      agglutinative suffixes.
+
+    This function is intentionally conservative: it only returns ``False``
+    when it is confident the documents are irrelevant (key entities completely
+    absent). Generic queries with no distinguishing terms always return ``True``.
+
+    Args:
+        question (str): User query string.
+        relevant_docs (list): List of document dicts selected for context,
+            each expected to contain keys such as ``"content"``, ``"heading"``,
+            ``"doc_issue"``, ``"volume"``, and ``"author_name"``.
+
+    Returns:
+        bool: ``True`` if the documents appear relevant to the query or if
+        relevance cannot be determined; ``False`` when key entities from the
+        question are absent from all retrieved documents.
     """
     if not relevant_docs:
         return False
@@ -462,7 +554,6 @@ def _check_context_relevance(question: str, relevant_docs: list) -> bool:
         author_val = doc.get("author_name", "")
         all_text_parts.append(_flatten_author(author_val))
 
-    # ✅ FIX: Combine into single text
     all_text = " ".join(all_text_parts).lower()
 
     # --- Year check ---
@@ -519,12 +610,35 @@ def _check_context_relevance(question: str, relevant_docs: list) -> bool:
 
 
 def _filter_sources_by_relevance(question: str, sources: List[Dict]) -> List[Dict]:
-    """Filter sources to only include docs relevant to the question.
+    """Filter source documents to retain only those relevant to the question.
 
-    Checks each source individually: a doc is kept if at least one
-    distinguishing term from the question appears in its heading,
-    content, or author name.  Uses the same prefix-matching logic
-    as _check_context_relevance for Tamil agglutinative forms.
+    Scores each source document individually by counting how many distinguishing
+    terms from the query appear in its heading, content, or author name. Tamil
+    matching uses the same common-prefix heuristic as
+    :func:`_check_context_relevance`. Additionally, contiguous bigrams from
+    the query's Tamil tokens are checked against each document's heading for
+    a stronger phrase-level signal.
+
+    Scoring and filtering rules:
+
+    - A document must match at least ``min_matches`` terms, where
+      ``min_matches = max(1, min(2, int(n_terms * 0.3)))``.
+    - Documents with a heading hit (any single query term) or a heading
+      bigram hit (a literal two-word query phrase) bypass the threshold.
+    - Surviving documents are sorted by: bigram heading hit → single-term
+      heading hit → match count (descending) → original retrieval order.
+    - If no documents survive, an empty list is returned rather than
+      showing unrelated evidence to the user.
+
+    Args:
+        question (str): User query string.
+        sources (List[Dict]): Formatted source document dicts, each expected
+            to contain ``"heading"``, ``"content"``, and ``"author_name"`` keys.
+
+    Returns:
+        List[Dict]: A filtered and re-ranked subset of ``sources``, or the
+        original list unchanged if no distinguishing terms can be extracted
+        from the query.
     """
     if not sources:
         return sources
@@ -660,13 +774,23 @@ def _filter_sources_by_relevance(question: str, sources: List[Dict]) -> List[Dic
 
 
 def _rerank_or_filter(question: str, merged_docs: List[Dict]) -> List[Dict]:
-    """Cross-encoder rerank with lexical filter as fallback.
+    """Rerank or filter source documents with an automatic fallback.
 
-    Reranker path: format the full merged pool (skip the score-gap
-    selector) and let the cross-encoder reorder candidates.
+    Attempts to rerank the full merged document pool using the cross-encoder
+    reranker via :func:`rerank_sources`. If the reranker is unavailable or
+    returns an error, falls back to the legacy pipeline: score-gap selection
+    via :func:`format_sources` (``apply_filter=True``) followed by lexical
+    token-overlap filtering via :func:`_filter_sources_by_relevance`.
 
-    Fallback path: when the reranker is disabled or fails, fall back
-    to the legacy pipeline — score-gap filter + lexical token-overlap.
+    Args:
+        question (str): User query string used for reranking and lexical
+            relevance scoring.
+        merged_docs (List[Dict]): Pool of merged document dicts from
+            :func:`merge_consecutive_chunks`.
+
+    Returns:
+        List[Dict]: Reranked or filtered source documents, or an empty list
+        if ``merged_docs`` is empty.
     """
     if not merged_docs:
         return []
@@ -682,12 +806,32 @@ def _rerank_or_filter(question: str, merged_docs: List[Dict]) -> List[Dict]:
 
 
 def truncate_query(question: str, max_length: int = MAX_QUERY_LENGTH) -> str:
-    """Normalize Unicode to NFC and truncate to max_length at a word boundary.
+    """Normalize and truncate a query to a safe maximum length.
 
-    NFC normalization ensures visually identical Tamil text always has
-    identical byte representation (composed form).  Truncation prevents
-    embedding latency spikes (E5 tokenizer caps at 512 tokens) and
-    wasted LLM prompt budget (question is injected twice).
+    Applies two transformations before enforcing the length cap:
+
+    1. **Unicode NFC normalization** via ``normalize_unicode`` — ensures
+       visually identical Tamil text always has the same byte representation
+       (composed form), so cache lookups and embedding calls are consistent.
+    2. **Query sanitization** via :func:`sanitize_query` — strips control
+       characters, neutralizes injection separators, and collapses whitespace.
+
+    If the result exceeds ``max_length``, it is truncated at the last
+    whitespace boundary that falls in the second half of the allowed window,
+    avoiding mid-character splits in Tamil text.
+
+    Args:
+        question (str): Raw user query string.
+        max_length (int): Maximum allowed character count. Defaults to
+            ``MAX_QUERY_LENGTH`` from ``config.config``.
+
+    Returns:
+        str: Normalized, sanitized, and length-bounded query string.
+
+    Note:
+        Truncation prevents embedding latency spikes (the E5 tokenizer caps
+        at 512 tokens) and avoids wasting LLM prompt budget, since the
+        question is injected into the prompt twice.
     """
     from tamil_text import normalize_unicode
 
@@ -710,11 +854,6 @@ def truncate_query(question: str, max_length: int = MAX_QUERY_LENGTH) -> str:
     return truncated
 
 
-# ============================================================================
-# ORCHESTRATOR FUNCTIONS
-# ============================================================================
-
-
 def ask_question(
     question: str,
     return_formatted: bool = False,
@@ -723,27 +862,53 @@ def ask_question(
     history: List[Dict] = None,
     language: str = "ta",
 ) -> Dict:
-    """Answer a question using hybrid search and LLM generation.
+    """Answer a question using hybrid search and LLM generation (synchronous).
 
-    Primary entry point for processing user queries. Handles
-    database health checks, author queries, vector search,
-    document merging, LLM generation, and source formatting.
-    Results are filtered by score threshold rather than a fixed
-    top_k count. CSV queries are checked BEFORE vector search
-    to return direct data without LLM.
+    Primary entry point for single-turn and multi-turn query processing.
+    Executes the following pipeline in order:
+
+    1. **Input validation** — truncates, sanitizes, and checks for meaningful
+       content; rejects high-severity injection attempts.
+    2. **Health check** — verifies Qdrant availability; returns a safe error
+       response if the database is unhealthy.
+    3. **Response cache** — returns a cached result immediately on a hit
+       (skipped when ``history`` is provided).
+    4. **CSV author query** — if the CSV file exists and the query matches an
+       author/metadata pattern, retrieves structured data and passes it to the
+       LLM for summarization before returning. Bypasses vector search entirely.
+    5. **Hybrid vector search** — runs dense + sparse search against Qdrant,
+       merges consecutive chunks, selects relevant documents, and builds LLM
+       context.
+    6. **LLM answer generation** — calls :func:`generate_llm_answer`; falls
+       back to cache or extractive answer if the result is empty or too short.
+    7. **Source reranking / filtering** — reranks with the cross-encoder or
+       falls back to lexical filtering; suppresses sources when the answer
+       indicates missing data or the retrieved docs are irrelevant.
+    8. **Cache store** — persists the result for future cache hits
+       (skipped when ``history`` is provided).
 
     Args:
-        question: User's question in Tamil or English.
-        return_formatted: If True, return formatted string;
-            if False, return dict. Defaults to False.
-        use_llm: If True, use LLM for answer generation;
-            if False, use extractive fallback. Defaults True.
-        filter_tags: Optional tag filter list.
-        history: Conversation history.
-        language: Response language code.
+        question (str): User query in Tamil or English.
+        return_formatted (bool): If ``True``, return a formatted string via
+            :func:`format_answer_output`; if ``False``, return a dict.
+            Defaults to ``False``.
+        use_llm (bool): If ``True``, call the LLM for answer generation;
+            if ``False``, use the extractive fallback directly.
+            Defaults to ``True``.
+        filter_tags (List[str]): Optional list of tags to filter Qdrant search
+            results. Pass ``None`` to disable tag filtering.
+        history (List[Dict]): Validated conversation history as a list of
+            ``{"role": str, "content": str}`` dicts, or ``None`` for
+            single-turn queries.
+        language (str): BCP-47 language code for all generated messages and
+            LLM prompts. Defaults to ``"ta"`` (Tamil).
 
     Returns:
-        dict or str depending on return_formatted.
+        Dict or str: When ``return_formatted=False``, a dict containing at
+        minimum ``"answer"`` (str) and ``"sources"`` (list), with optional
+        keys ``"fallback_reason"`` (str), ``"query_type"`` (str), and
+        ``"error"`` (str). When ``return_formatted=True``, a formatted
+        string produced by :func:`format_answer_output`.
     """
     question = truncate_query(question)
     history = validate_history(history)
@@ -996,12 +1161,36 @@ async def ask_question_async(
     history: List[Dict] = None,
     language: str = "ta",
 ) -> Dict:
-    """Answer a question asynchronously for FastAPI.
+    """Answer a question asynchronously for use in FastAPI request handlers.
 
-    Uses asyncio.to_thread for sync I/O operations (Qdrant,
-    embeddings) and Gemini async LLM calls. This allows multiple
-    user requests to be processed concurrently without blocking
-    the event loop.
+    Mirrors the pipeline of :func:`ask_question` exactly, but offloads all
+    synchronous I/O (Qdrant, embeddings, CSV lookups, spell correction) to a
+    thread pool via ``asyncio.to_thread``, and calls the native async Gemini
+    interface via :func:`generate_llm_answer_async`. This allows multiple
+    concurrent requests to be served without blocking the event loop.
+
+    Args:
+        question (str): User query in Tamil or English.
+        return_formatted (bool): If ``True``, return a formatted string via
+            :func:`format_answer_output`; if ``False``, return a dict.
+            Defaults to ``False``.
+        use_llm (bool): If ``True``, call the LLM for answer generation;
+            if ``False``, use the extractive fallback directly.
+            Defaults to ``True``.
+        filter_tags (List[str]): Optional list of tags to filter Qdrant search
+            results. Pass ``None`` to disable tag filtering.
+        history (List[Dict]): Validated conversation history as a list of
+            ``{"role": str, "content": str}`` dicts, or ``None`` for
+            single-turn queries.
+        language (str): BCP-47 language code for all generated messages and
+            LLM prompts. Defaults to ``"ta"`` (Tamil).
+
+    Returns:
+        Dict or str: When ``return_formatted=False``, a dict containing at
+        minimum ``"answer"`` (str) and ``"sources"`` (list), with optional
+        keys ``"fallback_reason"`` (str), ``"query_type"`` (str), and
+        ``"error"`` (str). When ``return_formatted=True``, a formatted
+        string produced by :func:`format_answer_output`.
     """
     question = truncate_query(question)
     history = validate_history(history)
@@ -1260,12 +1449,40 @@ def ask_question_stream(
     history: List[Dict] = None,
     language: str = "ta",
 ):
-    """Stream answer tokens for a question.
+    """Stream answer tokens for a question as a generator.
 
-    Yields dicts: {"type": "token", "content": str} for answer
-    tokens, and {"type": "sources", "sources": list} at the end.
-    For non-streamable responses (CSV queries, errors), yields
-    complete answer as single token.
+    Executes the same pipeline as :func:`ask_question` but yields incremental
+    results rather than returning a single dict. Intended for server-sent
+    events (SSE) or WebSocket endpoints where the client should display tokens
+    as they arrive.
+
+    Yield protocol — each yielded value is a dict with a ``"type"`` key:
+
+    - ``{"type": "token", "content": str}`` — one or more answer text chunks.
+      Non-streamable paths (CSV queries, cache hits, errors) yield the complete
+      answer as a single token dict.
+    - ``{"type": "sources", "sources": list}`` — always the final yield;
+      contains the filtered/reranked source list (may be empty).
+    - ``{"type": "fallback", "reason": str}`` — emitted before the sources
+      dict when the extractive fallback was used (``reason`` is one of
+      ``"cached_response"`` or ``"extractive"``).
+
+    Cross-encoder reranking is overlapped with LLM token streaming by
+    submitting it to ``_rerank_executor`` before the first token is yielded,
+    so source latency is hidden behind the answer stream.
+
+    Args:
+        question (str): User query in Tamil or English.
+        filter_tags (List[str]): Optional list of tags to filter Qdrant search
+            results. Pass ``None`` to disable tag filtering.
+        history (List[Dict]): Validated conversation history as a list of
+            ``{"role": str, "content": str}`` dicts, or ``None`` for
+            single-turn queries.
+        language (str): BCP-47 language code for all generated messages and
+            LLM prompts. Defaults to ``"ta"`` (Tamil).
+
+    Yields:
+        Dict: Token, sources, or fallback dicts as described above.
     """
     question = truncate_query(question)
     history = validate_history(history)

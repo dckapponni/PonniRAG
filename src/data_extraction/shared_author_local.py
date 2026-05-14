@@ -1,4 +1,11 @@
-"""Local shared author detection without S3 dependency."""
+"""Local shared author detection without S3 dependency.
+
+Provides a lookahead utility for detecting known author names in
+upcoming document lines during content extraction. Mirrors the
+interface of :mod:`shared_author` but imports no S3 utilities,
+making it safe to use in contexts where S3 access is unavailable
+or undesired.
+"""
 
 import logging
 

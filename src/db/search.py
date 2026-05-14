@@ -23,13 +23,33 @@ def retrieve_all_chunks_for_document(
     volume: str,
     title: str = None,
 ) -> List[Dict]:
-    """Retrieve all chunks for a specific document.
+    """Retrieve all stored chunks for a specific article from Qdrant.
 
-    When ``title`` is provided, results are further restricted to
-    chunks whose ``metadata.title`` matches — the schema's ``doc_id``
-    represents a magazine *issue*, so filtering by title isolates a
-    single article inside the issue. Pass ``None`` (default) to keep
-    legacy issue-level retrieval.
+    Scrolls through the collection with a filter requiring ``type="article"``
+    and matching ``metadata.doc_id``, ``metadata.doc_issue``, and
+    ``metadata.volume``. When ``title`` is provided, an additional
+    ``metadata.title`` filter is applied to isolate a single article within
+    an issue; without it, all articles in the issue are returned (legacy
+    behavior).
+
+    Because ``doc_id`` in this schema identifies a magazine issue rather than
+    an individual article, the ``title`` parameter is the primary mechanism
+    for article-level isolation.
+
+    Args:
+        client (QdrantClient): Connected Qdrant client instance.
+        doc_id (str): Magazine issue identifier stored in
+            ``metadata.doc_id``.
+        doc_issue (str): Issue label stored in ``metadata.doc_issue``.
+        volume (str): Volume identifier stored in ``metadata.volume``.
+        title (str | None): Article title to further restrict results to a
+            single article. Pass ``None`` for issue-level retrieval.
+            Defaults to ``None``.
+
+    Returns:
+        List[Dict]: List of Qdrant ``ScoredPoint`` or ``Record`` objects
+        for all matching chunks, in the order returned by the scroll API.
+        Returns an empty list if no chunks match the filter.
     """
     must = [
         models.FieldCondition(key="type", match=models.MatchValue(value="article")),
@@ -68,18 +88,34 @@ def retrieve_all_chunks_for_document(
 
 
 def merge_consecutive_chunks(client: QdrantClient, points) -> List[Dict]:
-    """Merge consecutive chunks from the same article.
+    """Merge all chunks belonging to the same article into a single document.
 
-    ``doc_id`` in this schema identifies a magazine *issue*; an issue
-    contains many articles, each with its own ``metadata.title``. The
-    merge key therefore includes title so each article is grouped
-    independently — without it, all articles in an issue would
-    collapse into a single 50k-word "document" and the original
-    article boundaries (and headings) would be lost.
+    Groups search result points by the composite key
+    ``(volume, doc_id, doc_issue, title)`` — including title ensures that
+    distinct articles within the same issue are merged independently rather
+    than collapsing into a single 50 k-word issue blob. Points whose title
+    is empty fall back to issue-level grouping (legacy behavior).
 
-    Chunks with an empty/missing title fall back to issue-level
-    grouping (legacy behavior), since there is no article boundary
-    to use.
+    For each unique document key, retrieves all chunks via
+    :func:`retrieve_all_chunks_for_document`, sorts them by ``chunk_id``,
+    and joins their content into a single whitespace-normalized string.
+    Documents with fewer than 50 words after merging are discarded.
+
+    The resulting list is sorted by the retrieval score of the first
+    matching point (descending).
+
+    Args:
+        client (QdrantClient): Connected Qdrant client instance used for
+            chunk retrieval.
+        points: Iterable of Qdrant point objects returned by a hybrid search,
+            each expected to carry a ``payload`` dict and a ``score`` field.
+
+    Returns:
+        List[Dict]: List of merged document dicts, each containing:
+        ``"volume"``, ``"doc_id"``, ``"doc_issue"``, ``"heading"``,
+        ``"author_name"``, ``"content"``, ``"word_count"``,
+        ``"chunk_count"``, ``"score"``, and ``"tags"``.
+        Sorted by ``"score"`` descending.
     """
     seen_docs = set()
     merged_docs = []
@@ -152,7 +188,30 @@ def merge_consecutive_chunks(client: QdrantClient, points) -> List[Dict]:
 
 
 def extract_key_facts(docs: List[Dict], question: str) -> List[Dict]:
-    """Extract key facts from documents relevant to question."""
+    """Extract sentences from documents that are most relevant to the question.
+
+    Splits each document's content on sentence-ending punctuation (``।``,
+    ``.``, ``!``, ``?``) and scores each sentence by counting occurrences
+    of Tamil keyword tokens (≥ 2 characters) extracted from the question.
+    Each keyword hit contributes 3 relevance points; only sentences scoring
+    at least 5 points are kept. Used as input for
+    :func:`generate_extractive_answer` when the LLM is unavailable.
+
+    Args:
+        docs (List[Dict]): List of merged document dicts, each containing
+            a ``"content"`` key. At most the first 15 documents are examined.
+        question (str): User question string; Tamil tokens extracted from it
+            drive the relevance scoring.
+
+    Returns:
+        List[Dict]: Up to 20 fact dicts sorted by descending relevance score,
+        each containing:
+
+        - ``"sentence"`` (str): The extracted sentence.
+        - ``"score"`` (int): Keyword-hit relevance score.
+        - ``"source_issue"`` (str): ``doc_issue`` of the originating document.
+        - ``"source_volume"`` (str): ``volume`` of the originating document.
+    """
     facts = []
     q_keywords = set(re.findall(r"[\u0B80-\u0BFF]{2,}", question.lower()))
 
@@ -187,17 +246,34 @@ def extract_key_facts(docs: List[Dict], question: str) -> List[Dict]:
 
 
 def _select_relevant_docs(merged_docs: List[Dict]) -> List[Dict]:
-    """Select relevant documents using score-gap filtering.
+    """Select relevant documents from a scored pool using adaptive score-gap filtering.
 
-    Three-layer relevance filtering:
-    1. **Absolute floor**: score >= 35% of the top document's score
-    2. **Gap detection**: stop when a doc scores < 40% of the *previous* doc
-       (indicates a sharp relevance drop-off between consecutive results)
-    3. **Diminishing returns**: after 20 docs, tighten the gap ratio to 50%
-       to prevent long tails of marginally relevant results
+    Applies three progressive filtering layers, processing documents in
+    descending score order:
 
-    Caps at MAX_SOURCES (100), always returns at least MIN_SOURCES (1).
-    De-duplicates by content prefix (using deterministic hash).
+    1. **Absolute floor** — drops any document scoring below
+       ``35 %`` of the top document's score.
+    2. **Gap detection** — stops when a document scores below ``40 %``
+       of the immediately preceding document, catching sharp relevance
+       drop-offs.
+    3. **Diminishing-returns tightening** — after 20 documents are
+       selected, the gap ratio tightens to ``50 %`` to prevent long
+       tails of marginally relevant results.
+
+    Additionally deduplicates documents by an MD5 hash of the first
+    200 characters of their content before appending to the selection.
+    Always returns at least 1 document (``MIN_SOURCES``) and at most
+    100 (``MAX_SOURCES``).
+
+    Args:
+        merged_docs (List[Dict]): Pool of merged document dicts sorted by
+            ``"score"`` descending, as produced by
+            :func:`merge_consecutive_chunks`.
+
+    Returns:
+        List[Dict]: Filtered and deduplicated subset of ``merged_docs``,
+        preserving the original score-descending order.
+        Returns an empty list if ``merged_docs`` is empty.
     """
     MIN_SOURCES = 1
     MAX_SOURCES = 100
@@ -253,11 +329,28 @@ def _select_relevant_docs(merged_docs: List[Dict]) -> List[Dict]:
 
 
 def _extract_relevant_excerpt(content: str, question: str, max_chars: int) -> str:
-    """Extract the most question-relevant portion of a document.
+    """Extract the most question-relevant excerpt from a document.
 
-    Instead of blindly taking the first N characters, this finds the region
-    with the highest density of question keywords and centres the excerpt
-    window there.  Falls back to the beginning if no keywords match.
+    Rather than truncating from the start, slides a window of
+    ``max_chars`` characters over the document and scores each position
+    by the total number of Tamil keyword hits (≥ 3 characters, excluding
+    common stop words) within the window. Returns the window starting at
+    the position with the highest keyword density.
+
+    Falls back to the first ``max_chars`` characters when the document
+    is already short enough, when no Tamil keywords can be extracted
+    from the question, or when no keyword matches are found anywhere
+    in the document.
+
+    Args:
+        content (str): Full document text to extract from.
+        question (str): User question string; Tamil tokens (≥ 3 chars)
+            extracted from it drive the relevance scoring.
+        max_chars (int): Size of the excerpt window in characters.
+
+    Returns:
+        str: The highest-density excerpt of at most ``max_chars``
+        characters, or the full content if it fits within the limit.
     """
     if len(content) <= max_chars:
         return content
@@ -309,16 +402,34 @@ def build_context_from_docs(
     max_context_chars: int = 15000,
     max_context_docs: int = 15,
 ) -> Tuple[str, int]:
-    """Build LLM context using excerpts from the top relevant documents.
+    """Build the LLM context string from the top relevant documents.
 
-    The evidence set (for user display) can contain up to 100 docs,
-    but the LLM context is capped at max_context_docs (default 15)
-    to ensure each document gets enough characters (~1000 each) for
-    meaningful analysis. Documents are already sorted by score, so
-    the top N are the most relevant.
+    Caps the document set at ``max_context_docs`` (default 15) so each
+    document receives a meaningful character budget (at least 500 chars).
+    For each document, extracts the most question-relevant excerpt via
+    :func:`_extract_relevant_excerpt` and formats it with a numbered
+    header (``"ஆவணம் idx/n — title"``). Prepends a Tamil header line
+    instructing the LLM to use all provided documents.
+
+    The per-document character limit is ``max(500, max_context_chars // n)``
+    where ``n`` is the number of context documents, distributing the total
+    budget evenly.
+
+    Args:
+        relevant_docs (List[Dict]): Filtered and scored document dicts,
+            already sorted by relevance. Each must contain ``"content"``
+            and optionally ``"heading"``.
+        question (str): User question used for excerpt extraction.
+            Defaults to ``""`` (no keyword-guided windowing).
+        max_context_chars (int): Total character budget distributed across
+            all context documents. Defaults to ``15000``.
+        max_context_docs (int): Maximum number of documents included in
+            the context. Defaults to ``15``.
 
     Returns:
-        Tuple of (context_string, doc_count).
+        Tuple[str, int]: A two-element tuple of the assembled context string
+        (documents joined by double newlines) and the number of documents
+        included. Returns ``("", 0)`` if ``relevant_docs`` is empty.
     """
     if not relevant_docs:
         return "", 0
@@ -341,13 +452,28 @@ def build_context_from_docs(
 
 
 def format_sources(merged_docs: List[Dict], apply_filter: bool = True) -> List[Dict]:
-    """Format source documents for display.
+    """Format merged document dicts into source display records.
 
-    When apply_filter is True (default), the score-gap filter
-    `_select_relevant_docs` runs first — appropriate when the caller
-    wants the legacy lexical-style top sources. When False, the full
-    merged pool is formatted as-is — used by the cross-encoder
-    reranker so it can see all candidates before its own selection.
+    Optionally applies :func:`_select_relevant_docs` score-gap filtering
+    before formatting. Passing ``apply_filter=False`` formats the full
+    merged pool without filtering — used by the cross-encoder reranker so
+    it can evaluate all candidates before performing its own selection.
+
+    Each accepted document is logged at INFO level with its rank, score,
+    volume, issue, and heading prefix. The returned dicts contain only the
+    fields needed for the evidence panel and downstream reranking.
+
+    Args:
+        merged_docs (List[Dict]): Pool of merged document dicts as produced
+            by :func:`merge_consecutive_chunks`.
+        apply_filter (bool): If ``True``, run :func:`_select_relevant_docs`
+            before formatting. If ``False``, format all documents as-is.
+            Defaults to ``True``.
+
+    Returns:
+        List[Dict]: List of source dicts, each containing: ``"volume"``,
+        ``"heading"``, ``"doc_issue"``, ``"author_name"``, ``"content"``,
+        ``"word_count"``, ``"chunks_merged"``, ``"score"``, and ``"tags"``.
     """
     relevant = _select_relevant_docs(merged_docs) if apply_filter else merged_docs
 
@@ -378,7 +504,27 @@ def format_sources(merged_docs: List[Dict], apply_filter: bool = True) -> List[D
 
 
 def format_answer_output(answer: str, sources: List[Dict]) -> str:
-    """Format complete answer with sources for display."""
+    """Format a complete answer with source evidence as a Tamil display string.
+
+    Assembles a human-readable output intended for console display or
+    plain-text API responses. The answer is prefixed with ``"பதில்:"``
+    (Tamil for "Answer"). When sources are present, appends a
+    ``"ஆதாரங்கள்"`` (Sources) section listing each source with its
+    issue number, volume, heading, word count, relevance score, and
+    full content.
+
+    Args:
+        answer (str): LLM-generated or extractive answer text.
+        sources (List[Dict]): Formatted source dicts as produced by
+            :func:`format_sources`, each expected to contain ``"doc_issue"``,
+            ``"volume"``, ``"heading"``, ``"word_count"``, ``"score"``,
+            and ``"content"`` keys.
+
+    Returns:
+        str: Newline-joined display string containing the answer followed
+        by the numbered source evidence block. Returns only the answer
+        block (with no source section) when ``sources`` is empty.
+    """
     lines = []
 
     lines.append("பதில்:")

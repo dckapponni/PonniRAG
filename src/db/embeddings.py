@@ -1,7 +1,14 @@
 """Embedding, model loading, and hybrid search for Tamil documents.
 
-Provides dense/sparse embeddings, Qdrant client management,
-CSV semantic search, health checks, and hybrid vector search.
+Provides dense (E5) and sparse (BM25) embeddings, thread-safe singleton
+loaders for the embedding model and Qdrant client, CSV semantic search,
+and a hybrid Qdrant search class that fuses both vector types via RRF.
+
+Usage::
+
+    from embeddings import HybridQdrantSearch, get_qdrant_client
+    client = get_qdrant_client()
+    results = HybridQdrantSearch(client).search(query)
 """
 
 import logging
@@ -50,21 +57,18 @@ _embed_lock = threading.Lock()
 logger = logging.getLogger(__name__)
 
 
-# ============================================================================
 # HELPER — flatten author_name for embedding text
-# ============================================================================
-
-
 def _flatten_author(author_val) -> str:
-    """Safely convert author_name to a plain string for embedding.
+    """Convert an author_name value to a plain display string.
 
-    author_name is now stored as a list in Qdrant metadata
-    but the CSV column still holds the raw bracket string.
+    Handles lists (joined with ", "), bracket-wrapped CSV strings, and
+    NA/NaN sentinels. Returns an empty string for empty or sentinel values.
 
-    Handles:
-      list   -> join with ", "
-      str    -> strip brackets and return
-      other  -> str()
+    Args:
+        author_val: Raw author value — list, str, or other.
+
+    Returns:
+        Clean author string suitable for embedding or display.
     """
     if isinstance(author_val, list):
         return ", ".join(str(a) for a in author_val if a and str(a).upper() != "NA")
@@ -77,10 +81,7 @@ def _flatten_author(author_val) -> str:
     return raw
 
 
-# ============================================================================
 # THREAD-SAFE SINGLETON LOADERS
-# ============================================================================
-
 _singletons = {}
 _singleton_locks = {
     "embed_model": threading.Lock(),
@@ -91,12 +92,19 @@ _singleton_locks = {
 
 
 def _clear_singletons():
-    """Clear all cached singletons. For testing only."""
+    """Clear all cached singletons. For use in tests only."""
     _singletons.clear()
 
 
 def get_embed_model():
-    """Load and cache embedding model (thread-safe singleton)."""
+    """Return the multilingual E5 embedding model (thread-safe singleton).
+
+    Loads the model on first call and caches it for all subsequent calls.
+    Model is placed on CUDA if available, otherwise CPU.
+
+    Returns:
+        Loaded SentenceTransformer instance.
+    """
     if "embed_model" not in _singletons:
         with _singleton_locks["embed_model"]:
             if "embed_model" not in _singletons:
@@ -110,7 +118,17 @@ def get_embed_model():
 
 
 def get_qdrant_client() -> QdrantClient:
-    """Qdrant server mode (thread-safe singleton)."""
+    """Return a connected Qdrant client (thread-safe singleton).
+
+    Connects to the server at QDRANT_HOST:QDRANT_PORT on first call
+    and verifies the target collection exists.
+
+    Returns:
+        Connected QdrantClient instance.
+
+    Raises:
+        Exception: If the server is unreachable or the collection is missing.
+    """
     if "qdrant_client" not in _singletons:
         with _singleton_locks["qdrant_client"]:
             if "qdrant_client" not in _singletons:
@@ -123,10 +141,13 @@ def get_qdrant_client() -> QdrantClient:
 
 
 def get_csv_dataframe():
-    """Load CSV once and cache it (thread-safe singleton).
+    """Return the article summary CSV as a DataFrame (thread-safe singleton).
 
-    Uses robust pandas parsing with no row loss.
-    Supports multi-author fields with bracket-wrapped names.
+    Loads and caches the CSV on first call. Supports multi-author bracket
+    fields. Returns an empty DataFrame if the file is missing or unreadable.
+
+    Returns:
+        Loaded DataFrame, or empty DataFrame on failure.
     """
     if "csv_dataframe" not in _singletons:
         with _singleton_locks["csv_dataframe"]:
@@ -154,10 +175,14 @@ def get_csv_dataframe():
 
 
 def get_csv_embeddings():
-    """Precompute embeddings for CSV rows (thread-safe singleton).
+    """Return precomputed embeddings for all CSV rows (thread-safe singleton).
 
-    Uses _flatten_author() to strip brackets and join author names
-    before building embedding text for semantic search.
+    Builds embedding text per row by joining all column values, flattening
+    author fields via _flatten_author. Encodes with the E5 model on first
+    call and caches the result.
+
+    Returns:
+        List of (text, embedding) tuples, or empty list if CSV is missing.
     """
     if "csv_embeddings" not in _singletons:
         with _singleton_locks["csv_embeddings"]:
@@ -199,7 +224,17 @@ def get_csv_embeddings():
 
 
 def dense_embed_query(text: str):
-    """Encode a query string into a dense embedding vector."""
+    """Encode a query string into a normalised dense embedding vector.
+
+    Applies NFC Unicode normalisation and prepends the ``query:`` prefix
+    required by the E5 model.
+
+    Args:
+        text: Query string to encode.
+
+    Returns:
+        Normalised embedding as a Python list of floats.
+    """
     model = get_embed_model()
     text = unicodedata.normalize("NFC", text)
     with _embed_lock:
@@ -210,12 +245,16 @@ def dense_embed_query(text: str):
 
 
 def sparse_embed(text: str):
-    """Generate sparse BM25 embedding for a search query.
+    """Generate a sparse BM25 embedding for a search query.
 
     Delegates to the shared fastembed ``Qdrant/bm25`` encoder so that
-    indexer and runtime tokenize identically. The legacy tf-hash
-    implementation diverged between index and query time, leaving the
-    sparse branch effectively dead and the RRF fusion degenerate.
+    indexer and query-time tokenisation are identical.
+
+    Args:
+        text: Query string to encode.
+
+    Returns:
+        Sparse vector compatible with Qdrant sparse search.
     """
     from sparse import sparse_embed_query
 
@@ -223,7 +262,18 @@ def sparse_embed(text: str):
 
 
 def search_csv_semantic(question: str, top_k: int = 5):
-    """Semantic search over CSV rows."""
+    """Search CSV rows by semantic similarity to a query.
+
+    Encodes the query and computes dot-product similarity against all
+    precomputed CSV row embeddings.
+
+    Args:
+        question: Query string.
+        top_k: Number of top results to return (default 5).
+
+    Returns:
+        List of up to top_k matching row text strings, ranked by score.
+    """
     csv_data = get_csv_embeddings()
     model = get_embed_model()
 
@@ -245,13 +295,14 @@ def search_csv_semantic(question: str, top_k: int = 5):
     return [text for text, _ in scored[:top_k]]
 
 
-# ============================================================================
 # QDRANT HEALTH & HYBRID SEARCH
-# ============================================================================
-
-
 def check_qdrant_health() -> Dict:
-    """Check Qdrant database health and connectivity."""
+    """Check Qdrant server connectivity and collection status.
+
+    Returns:
+        Dict with ``healthy`` (bool), ``points_count`` on success, or
+        ``error`` and ``action`` keys on failure.
+    """
     try:
         client = get_qdrant_client()
         try:
@@ -281,10 +332,19 @@ def check_qdrant_health() -> Dict:
 
 
 class HybridQdrantSearch:
-    """Hybrid search combining dense and sparse vectors for optimal results."""
+    """Hybrid vector search over the Qdrant collection.
+
+    Fuses dense (E5) and sparse (BM25) retrieval using Reciprocal Rank
+    Fusion (RRF). Optionally filters results by taxonomy tag IDs.
+    Debug mode (RAG_DEBUG=1) logs per-branch hits to diagnose fusion quality.
+    """
 
     def __init__(self, client: QdrantClient):
-        """Initialize with a Qdrant client instance."""
+        """Initialise with a connected Qdrant client.
+
+        Args:
+            client: Active QdrantClient instance.
+        """
         self.client = client
 
     def search(
@@ -294,7 +354,21 @@ class HybridQdrantSearch:
         score_threshold: float = SCORE_THRESHOLD,
         tags: List[str] = None,
     ):
-        """Perform hybrid search using dense and sparse vectors."""
+        """Run a hybrid dense + sparse search and return fused result points.
+
+        Prefetches dense candidates (with score threshold) and sparse candidates
+        separately, then fuses them with RRF. Optionally restricts results to
+        articles bearing any of the supplied taxonomy tag IDs.
+
+        Args:
+            query: Search query string.
+            limit: Maximum number of results to return (default 30).
+            score_threshold: Minimum dense similarity score (default SCORE_THRESHOLD).
+            tags: Optional list of taxonomy tag IDs to filter by.
+
+        Returns:
+            List of Qdrant ScoredPoint objects with payloads attached.
+        """
         filter_conditions = [
             models.FieldCondition(key="type", match=models.MatchValue(value="article"))
         ]
@@ -344,8 +418,16 @@ class HybridQdrantSearch:
     ):
         """Log dense-only and sparse-only top hits to diagnose RRF fusion.
 
-        Enabled via RAG_DEBUG=1. Issues two extra queries per call —
-        do not enable in production.
+        Issues two extra Qdrant queries per call. Only enabled when
+        RAG_DEBUG=1 — never use in production.
+
+        Args:
+            query: Original query string (logged for context).
+            dense_vec: Dense embedding vector.
+            sparse_vec: Sparse BM25 vector.
+            search_filter: Qdrant filter applied to both branches.
+            score_threshold: Dense score threshold.
+            limit: Result limit passed to the main search.
         """
         try:
             dense_resp = with_qdrant_retry(

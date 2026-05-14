@@ -1,4 +1,27 @@
-"""Document utility functions for Tamil document processing."""
+"""Document utility functions for Tamil document processing.
+
+Provides stateless helpers shared across the extraction pipeline for
+inspecting and validating document structure:
+
+- **Document metadata extraction** — :func:`extract_doc_info` locates
+  மலர் and இதழ் markers in the header and footer regions of a
+  document.
+- **TOC boundary detection** — :func:`find_toc_boundaries` identifies
+  the பொருளடக்கம் start and ஆகியோரின் end markers, with fallbacks
+  for documents missing the end marker.
+- **TOC author extraction** — :func:`extract_authors_from_toc` and
+  :func:`parse_toc_line_robust` parse structured TOC lines to recover
+  title–author pairs, handling initials, ellipsis placeholders,
+  section types, and variable whitespace separators.
+- **Author name validation** — :func:`is_valid_author_name`,
+  :func:`is_section_type`, and :func:`is_section_header` gate author
+  candidates against known noise patterns.
+- **Fallback author extraction** — :func:`extract_authors_alternative`
+  detects names via blank-line and position heuristics when TOC
+  parsing fails.
+- **Shared author lookup** — :func:`get_shared_authors` retrieves
+  pre-built author lists keyed by ``(doc_id, doc_issue)``.
+"""
 
 import logging
 import re

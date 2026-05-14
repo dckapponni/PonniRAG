@@ -32,7 +32,24 @@ _gemini_client = None
 
 
 def load_remaining_context_s3(doc_id: str, max_chars: int = 3000) -> str:
-    """Load the remaining context for a given document ID from S3, concatenating article contents."""
+    """Load supplementary article content for a given document ID from S3.
+
+    Fetches the JSON file at ``{S3_PREFIX}remaining_vol{doc_id}.json`` from
+    the configured S3 bucket, iterates over every article in every issue, and
+    concatenates up to 400 characters of each article's content into a single
+    string capped at ``max_chars``.
+
+    Args:
+        doc_id (str): Volume/document identifier used to construct the S3 key
+            (e.g. ``"3"`` → ``remaining_vol3.json``).
+        max_chars (int): Maximum number of characters to return from the
+            concatenated content. Defaults to ``3000``.
+
+    Returns:
+        str: Concatenated article content up to ``max_chars`` characters, with
+        articles separated by double newlines. Returns an empty string if the
+        S3 fetch fails or no qualifying article content is found.
+    """
     try:
         key = f"{S3_PREFIX}remaining_vol{doc_id}.json"
 
@@ -300,12 +317,30 @@ General rules:
 
 
 def _detect_garbage_tail(text: str) -> int:
-    """Detect where a good answer degrades into raw document garbage.
+    """Detect the character index where an LLM answer degrades into raw document garbage.
 
-    Returns the character index where garbage starts, or -1 if no
-    garbage detected.  Looks for sudden shifts from natural prose to
-    raw document dumps: tabular numbers (0 4 0), long runs without
-    sentence-ending punctuation, repeated metadata patterns, etc.
+    Splits the text into lines and scans forward for lines that match any of
+    four garbage-signal patterns:
+
+    - Tabular data rows (e.g. ``"சொல் 0 4 0"``).
+    - Raw metadata dashes (``"key — value"`` patterns without prose context).
+    - Long runs of text exceeding 300 characters with no sentence-ending
+      punctuation (``.``, ``?``, ``!``, ``।``).
+    - Repeated short CSV-like entries (two or more consecutive
+      ``"word word digit digit digit"`` groups).
+
+    When a garbage line is found after the first 30 % of the text, the
+    character offset of the last known-good line is returned so the caller
+    can truncate there. Early garbage detections (within the first 30 %) are
+    treated as false positives and skipped.
+
+    Args:
+        text (str): Raw LLM-generated answer text.
+
+    Returns:
+        int: Character index of the start of the first garbage line,
+        or ``-1`` if no garbage is detected or the text is shorter than
+        200 characters.
     """
     if not text or len(text) < 200:
         return -1
@@ -353,7 +388,22 @@ def _detect_garbage_tail(text: str) -> int:
 
 
 def _truncate_at_sentence_boundary(text: str) -> str:
-    """Truncate text at the last complete sentence if it ends mid-sentence."""
+    """Truncate text at the last complete sentence if it ends mid-sentence.
+
+    If the stripped text already ends with a recognized sentence-final
+    punctuation mark (``.``, ``?``, ``!``, ``।``), it is returned as-is.
+    Otherwise, the text is cut at the rightmost occurrence of any of those
+    markers, provided the cut point falls after the first 30 % of the string
+    (to avoid over-truncation on very short texts).
+
+    Args:
+        text (str): Text that may end abruptly mid-sentence.
+
+    Returns:
+        str: Text ending at a sentence boundary, or the original stripped
+        text if no suitable boundary is found in the latter 70 % of the
+        string.
+    """
     if not text:
         return text
     stripped = text.rstrip()
@@ -374,7 +424,18 @@ def _truncate_at_sentence_boundary(text: str) -> str:
 
 
 def _get_gemini_client():
-    """Get or create the Gemini API client (singleton)."""
+    """Return the Gemini API client, creating it on the first call (singleton).
+
+    Initializes a ``genai.Client`` with ``GEMINI_API_KEY`` and caches it in
+    the module-level ``_gemini_client`` variable. Subsequent calls return the
+    cached instance without re-initializing.
+
+    Returns:
+        genai.Client: Authenticated Gemini API client.
+
+    Raises:
+        ValueError: If ``GEMINI_API_KEY`` is not set in the environment.
+    """
     global _gemini_client
     if _gemini_client is None:
         if not GEMINI_API_KEY:
@@ -389,10 +450,28 @@ _GEMINI_HEALTH_TTL = 60  # seconds — recheck every 60s
 
 
 def check_gemini_health(ttl: int = _GEMINI_HEALTH_TTL) -> Dict:
-    """Check Gemini API health with TTL caching.
+    """Check Gemini API availability with TTL-based result caching.
 
-    Returns dict with keys: healthy (bool), message (str), error (str|None),
-    model (str), latency_ms (float|None).
+    Sends a minimal ``"ping"`` prompt (``max_output_tokens=5``) to the
+    configured model and measures round-trip latency. Results are cached in
+    ``_gemini_health_cache`` for ``ttl`` seconds so that high-frequency
+    callers do not hammer the API; a cached result is returned immediately
+    within the TTL window.
+
+    Args:
+        ttl (int): Cache lifetime in seconds. Defaults to
+            ``_GEMINI_HEALTH_TTL`` (60 s).
+
+    Returns:
+        Dict: A dictionary with the following keys:
+
+        - ``"healthy"`` (bool): ``True`` if the API responded successfully.
+        - ``"message"`` (str): Human-readable status description.
+        - ``"error"`` (str | None): Error code string, or ``None`` on success.
+          Possible values: ``"api_key_missing"``, ``"api_call_failed"``.
+        - ``"model"`` (str): The model name used for the ping.
+        - ``"latency_ms"`` (float | None): Round-trip time in milliseconds,
+          or ``None`` if the key was missing.
     """
     now = time.time()
     with _gemini_health_lock:
@@ -445,12 +524,24 @@ def check_gemini_health(ttl: int = _GEMINI_HEALTH_TTL) -> Dict:
 
 
 def _mark_gemini_unhealthy(error_msg: str):
-    """Mark Gemini unhealthy in the health cache after a transient LLM failure.
+    """Poison the Gemini health cache after a retryable LLM failure.
 
-    Called when generate_llm_answer exhausts all retries on a retryable error
-    (429, 5xx, timeout). This prevents subsequent requests from wasting time
-    retrying during the same outage window — they'll see unhealthy status and
-    skip straight to fallback. The TTL (60s) ensures recovery is automatic.
+    Writes a synthetic unhealthy result into ``_gemini_health_cache`` so that
+    subsequent requests within the TTL window (60 s) detect the outage and
+    skip directly to the fallback path instead of wasting time retrying an
+    already-failing API.  Recovery is automatic once the TTL expires and the
+    next health check succeeds.
+
+    Called by :func:`generate_llm_answer` and
+    :func:`generate_llm_answer_async` when all retries on a retryable error
+    (HTTP 429, 5xx, timeout) are exhausted.
+
+    Args:
+        error_msg (str): Error message string from the caught exception,
+            stored in the cache entry for diagnostics.
+
+    Returns:
+        None
     """
     with _gemini_health_lock:
         _gemini_health_cache["result"] = {
@@ -469,11 +560,25 @@ def _gemini_generation_config(
     disable_thinking: bool = False,
     max_output_tokens: int = 4096,
 ):
-    """Return Gemini generation config with the given system instruction.
+    """Build a Gemini ``GenerateContentConfig`` with security preamble prepended.
 
-    Security preamble is prepended so the response-style rules (which come
-    last in TAMIL_ANSWER_SYSTEM_PROMPT / _CSV_SYSTEM_PROMPT) stay closest
-    to the model's attention window, preserving natural Tamil prose style.
+    Prepends ``ANTI_INJECTION_PREAMBLE`` before the system instruction so
+    that injection-defense rules are seen first, while the response-style
+    rules (at the end of ``TAMIL_ANSWER_SYSTEM_PROMPT``) remain closest to
+    the model's active attention window, preserving natural Tamil prose style.
+
+    Args:
+        system_instruction (str | None): Custom system prompt. Falls back to
+            ``TAMIL_ANSWER_SYSTEM_PROMPT`` when ``None``.
+        disable_thinking (bool): If ``True``, sets ``thinking_budget=0`` on
+            the ``ThinkingConfig`` to suppress chain-of-thought reasoning and
+            reduce latency. Defaults to ``False``.
+        max_output_tokens (int): Maximum number of tokens in the generated
+            response. Defaults to ``4096``.
+
+    Returns:
+        genai_types.GenerateContentConfig: Fully populated generation config
+        ready to pass to ``client.models.generate_content``.
     """
     prompt = system_instruction or TAMIL_ANSWER_SYSTEM_PROMPT
     full_instruction = ANTI_INJECTION_PREAMBLE + "\n\n" + prompt
@@ -513,7 +618,20 @@ _WH_PATTERNS = [
 
 
 def _is_wh_question(question: str) -> bool:
-    """Return True if the question is a wh/how type needing a direct answer."""
+    """Return True if the question is a wh- or how-type question.
+
+    Checks the lowercased question against ``_WH_PATTERNS``, a list of Tamil
+    and English question words (``யார்``, ``என்ன``, ``who``, ``what``,
+    ``when``, etc.). A match indicates the question expects a direct,
+    fact-stating answer rather than a descriptive passage.
+
+    Args:
+        question (str): User question string.
+
+    Returns:
+        bool: ``True`` if any wh-pattern is found in the lowercased question;
+        ``False`` otherwise.
+    """
     q = question.lower()
     return any(p in q for p in _WH_PATTERNS)
 
@@ -545,20 +663,52 @@ _CONTENT_DISPLAY_PATTERNS = [
 
 
 def is_content_display_query(question: str) -> bool:
-    """Return True if the question asks to display/read actual content."""
+    """Return True if the question requests display of raw article content.
+
+    Checks the lowercased question against ``_CONTENT_DISPLAY_PATTERNS``,
+    which covers Tamil phrases (``முழு கட்டுரை``, ``காட்டு``) and English
+    phrases (``full text``, ``show the article``, ``read the``). A match
+    signals that the user wants the original text reproduced rather than a
+    summary, which triggers an expanded context window in the orchestrator.
+
+    Args:
+        question (str): User question string.
+
+    Returns:
+        bool: ``True`` if any content-display pattern is found; ``False``
+        otherwise.
+    """
     q = question.lower()
     return any(p in q for p in _CONTENT_DISPLAY_PATTERNS)
 
 
 def _get_system_prompt(language: str = "ta") -> str:
-    """Return the appropriate system prompt for the given language."""
+    """Return the appropriate answer system prompt for the given language.
+
+    Args:
+        language (str): BCP-47 language code. Pass ``"en"`` to receive
+            ``ENGLISH_ANSWER_SYSTEM_PROMPT``; any other value returns
+            ``TAMIL_ANSWER_SYSTEM_PROMPT``. Defaults to ``"ta"``.
+
+    Returns:
+        str: The system prompt string for the requested language.
+    """
     if language == "en":
         return ENGLISH_ANSWER_SYSTEM_PROMPT
     return TAMIL_ANSWER_SYSTEM_PROMPT
 
 
 def _get_csv_system_prompt(language: str = "ta") -> str:
-    """Return the appropriate CSV system prompt for the given language."""
+    """Return the appropriate CSV query system prompt for the given language.
+
+    Args:
+        language (str): BCP-47 language code. Pass ``"en"`` to receive
+            ``_CSV_SYSTEM_PROMPT_EN``; any other value returns
+            ``_CSV_SYSTEM_PROMPT``. Defaults to ``"ta"``.
+
+    Returns:
+        str: The CSV-focused system prompt string for the requested language.
+    """
     if language == "en":
         return _CSV_SYSTEM_PROMPT_EN
     return _CSV_SYSTEM_PROMPT
@@ -571,11 +721,38 @@ def _build_user_content(
     context_doc_count: int = 0,
     language: str = "ta",
 ) -> str:
-    """Build the user prompt for vector-search queries. Omits empty sections.
+    """Build the user-turn prompt for vector-search-backed queries.
 
-    Repeats the question after the context block so the model attends to the
-    question from both sides of the context (improves answer relevance,
-    inspired by arxiv 2512.14982).
+    Assembles a structured prompt from the question, optional CSV metadata,
+    document context, and optional S3 supplementary content. Non-empty
+    sections are wrapped in ``========================`` delimiters with
+    descriptive labels. The question is repeated after the context block so
+    the model attends to it from both sides of the context window (improves
+    answer relevance).
+
+    A closing instruction is appended based on the question type:
+
+    - **Content display queries** (detected via :func:`is_content_display_query`):
+      instructs the model to reproduce the original text as-is.
+    - **Wh-questions** (detected via :func:`_is_wh_question`): instructs the
+      model to state the direct answer in the first sentence.
+    - **All other queries**: requests a 200–500 word descriptive answer.
+
+    When ``context_doc_count > 1``, a multi-document integration reminder is
+    prepended to the closing instruction.
+
+    Args:
+        question (str): User question in Tamil or English.
+        context (str): Concatenated document text from vector search results.
+        csv_context (str): Formatted CSV metadata rows from semantic search.
+        context_doc_count (int): Number of distinct documents included in
+            ``context``; used to add a multi-document integration reminder.
+            Defaults to ``0``.
+        language (str): BCP-47 language code controlling all label strings
+            and closing instructions. Defaults to ``"ta"``.
+
+    Returns:
+        str: Fully assembled user-turn prompt string joined by newlines.
     """
     en = language == "en"
     q_label = "Question" if en else "கேள்வி"
@@ -695,16 +872,49 @@ _YES_NO_PATTERNS = [
 
 
 def _is_yes_no_question(question: str) -> bool:
-    """Return True if the question expects a yes/no answer."""
+    """Return True if the question expects a yes/no answer.
+
+    Checks the lowercased question against ``_YES_NO_PATTERNS``, a list of
+    Tamil verb suffixes and question particles that indicate a binary
+    yes/no expectation (e.g. ``எழுதியுள்ளாரா``, ``உள்ளதா``, ``இருக்கிறாரா``).
+
+    Args:
+        question (str): User question string.
+
+    Returns:
+        bool: ``True`` if any yes/no pattern is found in the lowercased
+        question; ``False`` otherwise.
+    """
     q = question.lower()
     return any(p in q for p in _YES_NO_PATTERNS)
 
 
 def _build_csv_user_content(question: str, csv_data: str, language: str = "ta") -> str:
-    """Build a focused user prompt for CSV-only queries.
+    """Build a focused user-turn prompt for CSV-only (author/metadata) queries.
 
-    Repeats the question after the data block and adds a question-type
-    aware closing instruction.
+    Wraps the raw CSV data in a labeled delimiter block and appends a
+    question-type-aware closing instruction. The question is repeated
+    before the closing instruction so the model attends to it after
+    processing the data.
+
+    Closing instruction selection:
+
+    - **Yes/no questions** (via :func:`_is_yes_no_question`): instructs the
+      model to start with ``"ஆம்"`` / ``"இல்லை"`` (or ``"Yes"`` / ``"No"``).
+    - **Wh-questions** (via :func:`_is_wh_question`): instructs the model to
+      state the direct answer in the first sentence.
+    - **All other questions**: instructs the model to summarize the data in
+      50–150 words without repeating the raw rows.
+
+    Args:
+        question (str): User question in Tamil or English.
+        csv_data (str): Pre-formatted CSV query result string from
+            :func:`handle_author_query`.
+        language (str): BCP-47 language code controlling all label strings
+            and closing instructions. Defaults to ``"ta"``.
+
+    Returns:
+        str: Fully assembled user-turn prompt string.
     """
     en = language == "en"
     q_label = "Question" if en else "கேள்வி"
@@ -759,11 +969,24 @@ def _build_csv_user_content(question: str, csv_data: str, language: str = "ta") 
 
 
 def _build_multi_turn_contents(history: list, current_user_content: str) -> list:
-    """Build Gemini multi-turn contents list from conversation history.
+    """Build a Gemini-format multi-turn contents list from conversation history.
 
-    Each history entry is {"role": "user"|"assistant", "content": str}.
-    Maps to Gemini format: role="user" or role="model".
-    The current question (with document context) goes last.
+    Converts each turn in ``history`` from the internal
+    ``{"role": "user"|"assistant", "content": str}`` format to the Gemini
+    ``{"role": "user"|"model", "parts": [{"text": str}]}`` format, then
+    appends the current user turn (which already includes document context)
+    as the final entry.
+
+    Args:
+        history (list): Validated conversation history as a list of
+            ``{"role": str, "content": str}`` dicts, ordered oldest-first.
+        current_user_content (str): The fully assembled user-turn prompt for
+            the current question, produced by :func:`_build_user_content` or
+            :func:`_build_csv_user_content`.
+
+    Returns:
+        list: A list of Gemini content dicts ready to pass as the
+        ``contents`` argument to ``client.models.generate_content``.
     """
     contents = []
     for turn in history:
@@ -786,10 +1009,44 @@ def generate_llm_answer(
     language: str = "ta",
     max_output_tokens: int = 4096,
 ) -> str:
-    """Generate LLM answer using Gemini API (synchronous).
+    """Generate a complete LLM answer using the Gemini API (synchronous).
 
-    Pass user_content/system_prompt to override defaults
-    (e.g. for CSV queries).
+    Builds the generation config and user content (unless overrides are
+    provided), constructs either a single-turn or multi-turn contents list,
+    and calls the Gemini API via the retry wrapper. Post-processes the
+    response by collapsing excess whitespace, truncating at sentence
+    boundaries on ``MAX_TOKENS`` finish reason, stripping raw document
+    garbage tails, and running output sanitization.
+
+    Args:
+        question (str): User question in Tamil or English.
+        context (str): Concatenated document text from vector search results.
+        csv_context (str): Formatted CSV metadata rows from semantic search.
+        max_words (int): Target maximum word count hint (informational;
+            the hard cap is ``max_output_tokens``). Defaults to ``500``.
+        user_content (str | None): Pre-built user prompt. When provided,
+            ``context``, ``csv_context``, and ``context_doc_count`` are
+            ignored. Defaults to ``None``.
+        system_prompt (str | None): Custom system instruction. Falls back to
+            the language-appropriate default when ``None``. Defaults to
+            ``None``.
+        disable_thinking (bool): If ``True``, suppresses chain-of-thought
+            reasoning (``thinking_budget=0``) to reduce latency. Defaults to
+            ``False``.
+        context_doc_count (int): Number of distinct documents in ``context``,
+            used to add a multi-document integration reminder. Defaults to
+            ``0``.
+        history (list | None): Validated conversation history for multi-turn
+            mode, or ``None`` for single-turn. Defaults to ``None``.
+        language (str): BCP-47 language code for prompt and message
+            selection. Defaults to ``"ta"``.
+        max_output_tokens (int): Hard token cap on the generated response.
+            Defaults to ``4096``.
+
+    Returns:
+        str: Cleaned, sanitized answer string. Returns an empty string if
+        the API call fails or raises an exception; marks Gemini unhealthy
+        in the health cache when the error is retryable.
     """
     try:
         client = _get_gemini_client()
@@ -867,10 +1124,39 @@ async def generate_llm_answer_async(
     language: str = "ta",
     max_output_tokens: int = 4096,
 ) -> str:
-    """Generate LLM answer using Gemini API (async).
+    """Generate a complete LLM answer using the Gemini API (asynchronous).
 
-    Pass user_content/system_prompt to override defaults
-    (e.g. for CSV queries).
+    Async counterpart of :func:`generate_llm_answer`. Calls
+    ``client.aio.models.generate_content`` via the async retry wrapper so
+    the event loop is not blocked during the Gemini round-trip. All
+    post-processing steps (whitespace normalization, sentence-boundary
+    truncation, garbage-tail detection, output sanitization) are identical
+    to the synchronous version.
+
+    Args:
+        question (str): User question in Tamil or English.
+        context (str): Concatenated document text from vector search results.
+        csv_context (str): Formatted CSV metadata rows from semantic search.
+        max_words (int): Target maximum word count hint (informational).
+            Defaults to ``500``.
+        user_content (str | None): Pre-built user prompt override. Defaults
+            to ``None``.
+        system_prompt (str | None): Custom system instruction override.
+            Defaults to ``None``.
+        disable_thinking (bool): If ``True``, suppresses chain-of-thought
+            reasoning. Defaults to ``False``.
+        context_doc_count (int): Number of distinct documents in ``context``.
+            Defaults to ``0``.
+        history (list | None): Validated conversation history for multi-turn
+            mode, or ``None`` for single-turn. Defaults to ``None``.
+        language (str): BCP-47 language code. Defaults to ``"ta"``.
+        max_output_tokens (int): Hard token cap on the generated response.
+            Defaults to ``4096``.
+
+    Returns:
+        str: Cleaned, sanitized answer string. Returns an empty string on
+        failure; marks Gemini unhealthy in the health cache for retryable
+        errors.
     """
     try:
         client = _get_gemini_client()
@@ -948,11 +1234,38 @@ def generate_llm_answer_stream(
     language: str = "ta",
     max_output_tokens: int = 4096,
 ):
-    """Generate LLM answer using Gemini API with streaming.
+    """Generate an LLM answer using the Gemini API with token streaming.
 
-    Yields individual token strings as they arrive.
-    Pass user_content/system_prompt to override defaults
-    (e.g. for CSV queries).
+    Calls ``client.models.generate_content_stream`` via the retry wrapper
+    and yields each non-empty ``chunk.text`` string as it arrives from the
+    API. The caller is responsible for accumulating tokens, post-processing,
+    and caching; this generator yields raw token strings with no additional
+    transformation.
+
+    On exception, logs the error, marks Gemini unhealthy if the error is
+    retryable, and returns without yielding further tokens (the caller
+    detects the short token count and triggers the fallback path).
+
+    Args:
+        question (str): User question in Tamil or English.
+        context (str): Concatenated document text from vector search results.
+        csv_context (str): Formatted CSV metadata rows from semantic search.
+        user_content (str | None): Pre-built user prompt override. Defaults
+            to ``None``.
+        system_prompt (str | None): Custom system instruction override.
+            Defaults to ``None``.
+        disable_thinking (bool): If ``True``, suppresses chain-of-thought
+            reasoning. Defaults to ``False``.
+        context_doc_count (int): Number of distinct documents in ``context``.
+            Defaults to ``0``.
+        history (list | None): Validated conversation history for multi-turn
+            mode, or ``None`` for single-turn. Defaults to ``None``.
+        language (str): BCP-47 language code. Defaults to ``"ta"``.
+        max_output_tokens (int): Hard token cap on the generated response.
+            Defaults to ``4096``.
+
+    Yields:
+        str: Individual token strings from the Gemini streaming response.
     """
     try:
         client = _get_gemini_client()
@@ -996,7 +1309,24 @@ def generate_llm_answer_stream(
 
 
 def generate_extractive_answer(facts: List[Dict], question: str) -> str:
-    """Generate fallback extractive answer if LLM fails."""
+    """Generate a keyword-extractive fallback answer from pre-selected fact sentences.
+
+    Concatenates up to five fact sentences (each longer than 30 characters)
+    after stripping internal markup tokens (``__…__``, ``பொன்னி களஞ்சியம்``)
+    and collapsing whitespace. Used when the LLM is unavailable or returns an
+    insufficient response.
+
+    Args:
+        facts (List[Dict]): List of fact dicts produced by
+            :func:`extract_key_facts`, each containing at minimum a
+            ``"sentence"`` key.
+        question (str): User question (currently unused; reserved for
+            future relevance scoring).
+
+    Returns:
+        str: A single string of joined sentences ending with a period, or an
+        empty string if no qualifying sentences are found in ``facts``.
+    """
     if not facts:
         return ""
 
@@ -1019,10 +1349,16 @@ def generate_extractive_answer(facts: List[Dict], question: str) -> str:
 
 
 def validate_gemini_api():
-    """Validate that the Gemini API key is configured and working.
+    """Validate that the Gemini API key is configured and reachable at startup.
 
-    Called at startup to fail fast if misconfigured.
-    Uses check_gemini_health() to avoid duplicating ping logic.
+    Provides a fast-fail check on application startup. Delegates to
+    :func:`check_gemini_health` to avoid duplicating the ping logic. Logs
+    a warning (non-fatal) if the API key is absent or the health check fails,
+    allowing the service to start in a degraded state with extractive
+    fallback active.
+
+    Returns:
+        None
     """
     if not GEMINI_API_KEY:
         logger.warning("GEMINI_API_KEY not set — LLM generation will be unavailable")

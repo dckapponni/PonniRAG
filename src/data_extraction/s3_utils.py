@@ -1,4 +1,25 @@
-"""S3 utility functions for reading and writing files."""
+"""S3 utility functions for reading and writing files.
+
+Thin wrappers around the boto3 S3 client that provide consistent
+logging, error classification, and encoding conventions for all S3
+I/O in the Tamil document processing pipeline:
+
+- **Listing** — :func:`list_files` paginates object listings with
+  optional suffix filtering.
+- **Binary read** — :func:`read_bytes` returns a ``BytesIO`` stream
+  suitable for DOCX and PDF processing libraries.
+- **Text I/O** — :func:`read_text_from_s3` and :func:`upload_text`
+  enforce UTF-8 encoding for all plain-text files.
+- **JSON I/O** — :func:`read_json_from_s3` and :func:`upload_json`
+  serialize with ``ensure_ascii=False`` so Tamil Unicode is preserved
+  without escaping.
+- **Existence check** — :func:`file_exists` uses ``head_object`` to
+  test for a key without downloading the object body.
+
+All functions raise ``botocore.exceptions.ClientError`` on S3 errors
+and log a human-readable diagnosis (bucket not found, access denied,
+key not found) before re-raising.
+"""
 
 import json
 import logging

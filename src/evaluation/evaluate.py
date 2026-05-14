@@ -1,38 +1,51 @@
 r"""Main evaluation pipeline for PonniRAG.
 
-Two modes
----------
-1. Offline mode  — the dataset JSON already contains `llm_answer` fields.
-   Metrics are computed directly without calling the RAG system.
+This module orchestrates end-to-end evaluation of a RAG (Retrieval-Augmented
+Generation) system by comparing LLM-generated answers against human reference
+answers using a suite of NLP metrics (semantic similarity, BERTScore, BLEU,
+ROUGE-L).
 
-2. Live mode     — the dataset JSON has questions and human_answers only.
-   `ask_question()` is called for each question, the answer is stored back
-   into the sample, then metrics are computed.
+Evaluation Modes:
+    **Offline mode** — the dataset already contains pre-filled ``llm_answer``
+    fields. Metrics are computed directly without calling the RAG system.
 
-CLI usage
----------
-From the project root:
+    **Live mode** — the dataset contains questions and ``human_answer`` fields
+    only. :func:`ask_question` is called for each question, the response is
+    stored back into the sample, and then metrics are computed.
 
-    cd src
-    python -m evaluation.evaluate --dataset evaluation/sample_dataset.json
+CLI Usage:
+    Run from the project root::
 
-    # Force live evaluation (ignore pre-stored llm_answers):
-    python -m evaluation.evaluate --dataset evaluation/sample_dataset.json --live
+        cd src
+        python -m evaluation.evaluate --dataset evaluation/sample_dataset.json
 
-    # Skip BERTScore (faster, fewer dependencies):
-    python -m evaluation.evaluate \\
-      --dataset evaluation/sample_dataset.json --no-bertscore
+        # Force live evaluation (ignore pre-stored llm_answers):
+        python -m evaluation.evaluate --dataset evaluation/sample_dataset.json --live
 
-    # Save enriched dataset (with llm_answers filled in):
-    python -m evaluation.evaluate \\
-        --dataset evaluation/sample_dataset.json \\
-        --live \\
-        --save-answers evaluation/results_with_answers.json
+        # Skip BERTScore (faster, fewer dependencies):
+        python -m evaluation.evaluate \\
+          --dataset evaluation/sample_dataset.json --no-bertscore
 
-    # Output results to a JSON file as well:
-    python -m evaluation.evaluate \\
-        --dataset evaluation/sample_dataset.json \\
-        --output evaluation/report.json
+        # Save enriched dataset (with llm_answers filled in):
+        python -m evaluation.evaluate \\
+            --dataset evaluation/sample_dataset.json \\
+            --live \\
+            --save-answers evaluation/results_with_answers.json
+
+        # Output results to a JSON file as well:
+        python -m evaluation.evaluate \\
+            --dataset evaluation/sample_dataset.json \\
+            --output evaluation/report.json
+
+Dependencies:
+    - ``evaluation.dataset``: :class:`~evaluation.dataset.EvalSample`,
+      :func:`~evaluation.dataset.load_dataset`,
+      :func:`~evaluation.dataset.save_dataset`
+    - ``evaluation.metrics``: :class:`~evaluation.metrics.MetricResult`,
+      :class:`~evaluation.metrics.MetricsCalculator`
+    - ``hybrid_search``: ``ask_question`` (imported lazily; required only
+      in live mode)
+    - ``pandas``: Used for Excel report generation.
 """
 
 from __future__ import annotations
@@ -73,7 +86,46 @@ logging.basicConfig(
 
 @dataclass
 class EvaluationReport:
-    """Aggregated evaluation results."""
+    """Aggregated evaluation results for a complete dataset run.
+
+    Stores both macro-averaged metric scores across all evaluated samples
+    and a per-sample breakdown list. Produced by :func:`run_evaluation` and
+    consumed by :func:`_print_report` and :func:`_save_report_csv`.
+
+    Attributes:
+        dataset_path (str): Filesystem path to the source dataset file,
+            stored as a string for serialisation compatibility.
+        total_samples (int): Total number of samples in the dataset,
+            including those skipped due to missing answers.
+        evaluated_samples (int): Number of samples that had both
+            ``human_answer`` and ``llm_answer`` populated and were
+            therefore included in metric computation.
+        skipped_samples (int): Number of samples excluded from scoring
+            because ``llm_answer`` was absent after the evaluation step.
+        avg_semantic_similarity (float): Macro-average semantic similarity
+            score across all evaluated samples. Defaults to ``0.0``.
+        avg_bleu_1 (float): Macro-average character-level BLEU-1 score.
+            Defaults to ``0.0``.
+        avg_bleu_2 (float): Macro-average character-level BLEU-2 score.
+            Defaults to ``0.0``.
+        avg_rouge_l (float): Macro-average character-level ROUGE-L score.
+            Defaults to ``0.0``.
+        avg_composite_score (float): Macro-average of the weighted composite
+            score (semantic=0.50, BERTScore-F1=0.25, ROUGE-L=0.15,
+            BLEU-1=0.10). Defaults to ``0.0``.
+        per_sample (List[Dict]): Ordered list of per-sample result
+            dictionaries. Each entry is produced by
+            :meth:`~evaluation.metrics.MetricResult.to_dict` and augmented
+            with ``"question"`` and ``"category"`` fields from the
+            corresponding :class:`~evaluation.dataset.EvalSample`.
+            Defaults to an empty list.
+
+    Example::
+
+        report = run_evaluation("data/eval.json")
+        print(report.avg_composite_score)
+        print(report.to_dict()["averages"])
+    """
 
     dataset_path: str
     total_samples: int
@@ -91,7 +143,30 @@ class EvaluationReport:
     per_sample: List[Dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        """Convert the report to a plain dictionary."""
+        """Serialise the report to a plain dictionary.
+
+        Converts all fields into a JSON-serialisable ``dict``. Floating-point
+        averages are rounded to four decimal places. The ``per_sample`` list
+        is included as-is (each element is already a ``dict``).
+
+        Returns:
+            dict: A dictionary with the following top-level keys:
+
+            - ``"dataset_path"`` *(str)*: Source dataset file path.
+            - ``"total_samples"`` *(int)*: Total sample count.
+            - ``"evaluated_samples"`` *(int)*: Samples included in scoring.
+            - ``"skipped_samples"`` *(int)*: Samples excluded from scoring.
+            - ``"averages"`` *(dict)*: Macro-averaged scores with keys
+              ``"semantic_similarity"``, ``"bleu_1"``, ``"bleu_2"``,
+              ``"rouge_l"``, ``"composite_score"`` — all rounded to 4 d.p.
+            - ``"per_sample"`` *(list)*: Per-sample result entries.
+
+        Example::
+
+            report = run_evaluation("data/eval.json")
+            import json
+            print(json.dumps(report.to_dict(), indent=2))
+        """
         return {
             "dataset_path": self.dataset_path,
             "total_samples": self.total_samples,
@@ -120,22 +195,58 @@ def run_evaluation(
     save_answers_path: Optional[str | Path] = None,
     output_path: Optional[str | Path] = None,
 ) -> EvaluationReport:
-    """
-    Run the full evaluation pipeline.
+    """Run the full PonniRAG evaluation pipeline.
+
+    Orchestrates six sequential steps:
+
+    1. **Load** — parse the dataset from disk via
+       :func:`~evaluation.dataset.load_dataset`.
+    2. **Fill** — populate missing ``llm_answer`` fields by querying the
+       RAG system when ``live=True`` or when answers are absent.
+    3. **Filter** — separate ready samples (both answers present) from
+       skipped ones.
+    4. **Persist** — optionally save the enriched dataset to
+       *save_answers_path*.
+    5. **Score** — compute metrics for all ready samples via
+       :class:`~evaluation.metrics.MetricsCalculator`.
+    6. **Report** — aggregate scores, print a formatted table to stdout,
+       and optionally write an Excel report to *output_path*.
 
     Args:
-        dataset_path: Path to the evaluation dataset (.json or .csv).
-        live: If True, call ask_question() for every sample regardless of
-              whether llm_answer is already present.
-        use_bertscore: If False, skip BERTScore computation (faster, fewer
-                       dependencies — useful for CI or quick sanity checks).
-        save_answers_path: If provided, save the dataset enriched with LLM
-                           answers to this JSON path.
-        output_path: If provided, write the full EvaluationReport as JSON to
-                     this path.
+        dataset_path (str | Path): Path to the evaluation dataset file.
+            Supported formats: ``.json``, ``.csv``. See
+            :func:`~evaluation.dataset.load_dataset` for format details.
+        live (bool): When ``True``, call ``ask_question()`` for **every**
+            sample, overwriting any pre-stored ``llm_answer`` values. When
+            ``False`` (default), only samples without an ``llm_answer`` are
+            queried. Requires a running Qdrant + Ollama stack.
+        use_bertscore (bool): When ``True``, include BERTScore-F1 in the
+            metric computation. When ``False`` (default), BERTScore is
+            skipped, making the run faster and removing the ``bert-score``
+            package dependency.
+        save_answers_path (Optional[str | Path]): If provided, all samples
+            (including skipped ones) are serialised with their current
+            ``llm_answer`` values to this JSON path after live evaluation.
+            Useful for caching answers and avoiding repeated RAG queries.
+        output_path (Optional[str | Path]): If provided, the evaluation
+            report is saved as an Excel (``.xlsx``) file at this path.
+            The ``.xlsx`` extension is appended automatically if absent.
 
     Returns:
-        EvaluationReport with per-sample scores and macro-averages.
+        EvaluationReport: Dataclass containing macro-averaged metric scores
+        and per-sample breakdowns. Returns an empty report (all counts zero)
+        if no valid samples are found in the dataset.
+
+    Example::
+
+        report = run_evaluation(
+            dataset_path="data/eval.json",
+            live=True,
+            use_bertscore=True,
+            save_answers_path="results/eval_answered.json",
+            output_path="results/report",
+        )
+        print(f"Composite score: {report.avg_composite_score:.4f}")
     """
     dataset_path = Path(dataset_path)
     logger.info("Loading dataset from %s", dataset_path)
@@ -217,14 +328,32 @@ def run_evaluation(
 
 
 def _fill_llm_answers(samples: List[EvalSample], live: bool) -> List[EvalSample]:
-    """
-    Populate llm_answer on samples that lack one.
+    """Populate ``llm_answer`` fields by querying the RAG system.
 
-    If live=True, ALL samples are re-evaluated.
-    If live=False, only samples with missing llm_answer are evaluated.
+    Determines which samples need answers based on the *live* flag, then
+    lazily imports ``ask_question`` from ``hybrid_search`` and queries it
+    for each qualifying sample. Failed queries (import errors, runtime
+    exceptions, or empty responses) leave ``llm_answer`` as ``None`` so the
+    sample is gracefully skipped during scoring rather than causing a crash.
 
-    Falls back gracefully if the RAG system is unavailable (e.g., Qdrant is
-    not running), leaving llm_answer as None so the sample gets skipped.
+    Args:
+        samples (List[EvalSample]): All samples loaded from the dataset.
+            Modified in-place: the ``llm_answer`` attribute of qualifying
+            samples is updated with the RAG system's response.
+        live (bool): When ``True``, **all** samples are re-evaluated,
+            overwriting any existing ``llm_answer`` values. When ``False``,
+            only samples where ``llm_answer`` is ``None`` or empty are
+            queried.
+
+    Returns:
+        List[EvalSample]: The same list passed in, with ``llm_answer``
+        fields updated where queries succeeded. Samples whose queries failed
+        retain ``llm_answer=None``.
+
+    Note:
+        This function is intended for internal use by :func:`run_evaluation`.
+        It performs a lazy import of ``ask_question`` to avoid a hard
+        dependency on the RAG stack when operating in offline mode.
     """
     needs_answer = [s for s in samples if live or not s.llm_answer]
 
@@ -284,7 +413,33 @@ def _build_report(
     metric_results: List[MetricResult],
     skipped: int,
 ) -> EvaluationReport:
-    """Compute macro-averages and build the EvaluationReport."""
+    """Compute macro-averages and assemble an :class:`EvaluationReport`.
+
+    Calculates the arithmetic mean of each metric across all
+    :class:`~evaluation.metrics.MetricResult` objects, then merges per-sample
+    metric dictionaries with their corresponding question text and category
+    from the source :class:`~evaluation.dataset.EvalSample`.
+
+    Args:
+        dataset_path (str): Stringified path to the source dataset, forwarded
+            directly to :class:`EvaluationReport`.
+        samples (List[EvalSample]): The ready (fully populated) samples that
+            were passed to the metrics calculator.
+        metric_results (List[MetricResult]): One result object per evaluated
+            sample, in the same order as *samples*. May be empty if no
+            samples qualified for scoring.
+        skipped (int): Count of samples that were excluded from scoring due
+            to a missing ``llm_answer``. Added to ``len(samples)`` to derive
+            ``total_samples``.
+
+    Returns:
+        EvaluationReport: A fully populated report. If *metric_results* is
+        empty, all average scores default to ``0.0`` and ``per_sample`` is
+        an empty list.
+
+    Note:
+        This function is intended for internal use by :func:`run_evaluation`.
+    """
     if not metric_results:
         return EvaluationReport(
             dataset_path=dataset_path,
@@ -337,7 +492,32 @@ _COL_WIDTHS = {
 
 
 def _print_report(report: EvaluationReport, samples: List[EvalSample]) -> None:
-    """Print a human-readable table to stdout."""
+    """Print a human-readable evaluation summary table to stdout.
+
+    Renders a fixed-width console report with two sections:
+
+    1. **Header block** — dataset path, sample counts, and macro-averaged
+       scores for all five metrics.
+    2. **Per-sample table** — one row per evaluated sample showing its ID,
+       semantic similarity, BLEU-1, ROUGE-L, composite score, and category.
+
+    A score interpretation guide is appended below the table.
+
+    Args:
+        report (EvaluationReport): The aggregated report produced by
+            :func:`_build_report`.
+        samples (List[EvalSample]): The ready samples corresponding to
+            entries in ``report.per_sample``. Not used directly for display
+            (data comes from ``report.per_sample``), but kept as a parameter
+            for potential future enrichment.
+
+    Returns:
+        None
+
+    Note:
+        This function is intended for internal use by :func:`run_evaluation`.
+        Output goes to ``sys.stdout`` via :func:`print`.
+    """
     sep = "-" * 80
     print()
     print("=" * 80)
@@ -405,7 +585,37 @@ def _print_report(report: EvaluationReport, samples: List[EvalSample]) -> None:
 def _save_report_csv(
     report: EvaluationReport, samples: List[EvalSample], output_path: str | Path
 ) -> None:
-    """Save evaluation results to Excel."""
+    """Save the evaluation report as an Excel (``.xlsx``) workbook.
+
+    Builds a :class:`pandas.DataFrame` with one row per evaluated sample,
+    combining question/answer text from *samples* with all numeric metric
+    scores from ``report.per_sample``. The resulting workbook is written
+    to *output_path* (the extension is forced to ``.xlsx`` regardless of
+    what was provided). Missing parent directories are created automatically.
+
+    The output sheet contains the following columns (in order):
+
+    ``S.no``, ``Question``, ``Human answer``, ``LLM answer``,
+    ``Semantic similarity``, ``BERTScore F1``, ``BLEU-1``, ``BLEU-2``,
+    ``ROUGE-L``, ``Composite score``.
+
+    Args:
+        report (EvaluationReport): The aggregated report whose
+            ``per_sample`` list provides metric values and sample IDs.
+        samples (List[EvalSample]): Ready samples used to look up question
+            and answer text by ID. Samples whose ID does not appear in
+            ``report.per_sample`` are not included in the output.
+        output_path (str | Path): Destination path for the Excel file.
+            The suffix is replaced with ``.xlsx`` automatically. Parent
+            directories are created if they do not exist.
+
+    Returns:
+        None
+
+    Note:
+        This function is intended for internal use by :func:`run_evaluation`.
+        Requires ``pandas`` and a compatible Excel writer (e.g. ``openpyxl``).
+    """
     output_path = Path(output_path).with_suffix(".xlsx")
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -439,7 +649,36 @@ def _save_report_csv(
 
 
 def _build_argparser() -> argparse.ArgumentParser:
-    """Create the CLI argument parser for the evaluation script."""
+    """Create and configure the CLI argument parser for the evaluation script.
+
+    Defines all command-line arguments accepted by :func:`main`, including
+    path arguments for the dataset and output files, boolean flags for live
+    evaluation and BERTScore, and a descriptive epilog with usage examples.
+
+    Returns:
+        argparse.ArgumentParser: A fully configured parser ready to call
+        ``.parse_args()`` on. The parser uses
+        :class:`argparse.RawDescriptionHelpFormatter` so that the multi-line
+        epilog examples are preserved as written.
+
+    Defined Arguments:
+        ``--dataset PATH`` *(required)*: Path to the evaluation dataset
+        (``.json`` or ``.csv``).
+
+        ``--live``: Re-query the RAG system for every sample, ignoring
+        pre-stored ``llm_answer`` values.
+
+        ``--no-bertscore``: Disable BERTScore computation for a faster run.
+
+        ``--save-answers PATH``: Write the enriched dataset (with
+        ``llm_answer`` fields) to this JSON file.
+
+        ``--output PATH``: Write the full evaluation report as an Excel
+        file to this path.
+
+    Note:
+        This function is intended for internal use by :func:`main`.
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Evaluate PonniRAG LLM response quality against human reference answers."
@@ -502,7 +741,25 @@ Examples:
 
 
 def main() -> None:
-    """Parse CLI arguments and run the evaluation pipeline."""
+    """Parse CLI arguments and launch the evaluation pipeline.
+
+    Entry point for command-line invocation. Delegates argument parsing to
+    :func:`_build_argparser` and forwards all parsed values to
+    :func:`run_evaluation`. The resulting :class:`EvaluationReport` is not
+    returned (it is printed to stdout and optionally saved to disk by
+    :func:`run_evaluation` itself).
+
+    Returns:
+        None
+
+    Example::
+
+        # Equivalent to running:
+        # python -m evaluation.evaluate --dataset data/eval.json --live
+        import sys
+        sys.argv = ["evaluate", "--dataset", "data/eval.json", "--live"]
+        main()
+    """
     parser = _build_argparser()
     args = parser.parse_args()
 

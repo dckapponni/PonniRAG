@@ -1,7 +1,15 @@
-"""CSV query pipeline for author/topic queries in Tamil document processing.
+"""CSV query pipeline for author and topic lookups in the Ponni magazine archive.
 
-Handles author name matching, query type detection, entity extraction,
-and CSV data formatting for the Ponni magazine archive.
+Handles author name matching, query-type detection, entity extraction,
+and result formatting. Uses a two-stage lookup: exact/fuzzy CSV matching
+first, multi-stage spelling correction second. Falls back to vector
+search when CSV queries fail or are out of scope.
+
+Usage::
+
+    handled, response = handle_author_query(question, csv_path)
+    if not handled:
+        # fall through to vector search
 """
 
 import logging
@@ -29,9 +37,7 @@ _author_system_cache = {}
 _author_system_lock = threading.Lock()
 
 
-# ============================================================================
 # CSV LOADER HELPER
-# ============================================================================
 
 
 def load_csv(csv_path) -> pd.DataFrame:
@@ -40,15 +46,17 @@ def load_csv(csv_path) -> pd.DataFrame:
 
 
 def _load_csv_safe(csv_path) -> pd.DataFrame:
-    """
-    Load CSV using load_csv (primary) then pd.read_csv fallbacks.
+    """Load a CSV file, handling multi-author bracket fields correctly.
 
-    load_csv from csv_fuzzy_matcher auto-wraps multi-author bracket fields
-    like [பாண்டியன், நா. வேத்தரசன், வணங்காமுடி] in double quotes before
-    pandas reads them — preventing silent row drops from on_bad_lines="skip".
+    Tries csv_fuzzy_matcher.load_csv first (wraps bracket fields like
+    [A, B, C] in quotes before pandas reads them, preventing silent row
+    drops). Falls back through four pd.read_csv strategies on failure.
 
-    Used by _load_csv(), get_issue_count(), and get_start_year() so that
-    ALL CSV reads in this module correctly include multi-author rows.
+    Args:
+        csv_path: Path to the CSV file.
+
+    Returns:
+        Loaded DataFrame, or an empty DataFrame if all strategies fail.
     """
     csv_path = Path(csv_path)
     if not csv_path.exists():
@@ -84,26 +92,31 @@ def _load_csv_safe(csv_path) -> pd.DataFrame:
     return pd.DataFrame()
 
 
-# ============================================================================
 # AUTHOR FIELD PARSING
-# ============================================================================
-
-
 def _format_author_display(csv_name: str) -> str:
-    """Format a CSV author cell for display: comma-separated, no brackets, 'NA' if empty."""
+    """Format a raw CSV author cell as a comma-separated display string.
+
+    Args:
+        csv_name: Raw author cell value (may contain brackets or be empty).
+
+    Returns:
+        Comma-separated author names, or ``"NA"`` if the cell is empty.
+    """
     authors = _parse_csv_authors(csv_name)
     return ", ".join(authors) if authors else "NA"
 
 
 def _parse_csv_authors(csv_name: str) -> List[str]:
-    """
-    Parse a CSV author cell that may contain bracket-wrapped names.
+    """Parse a CSV author cell into a list of individual author names.
 
-    Handles:
-      NA / "" / "[]"                           → []
-      "[நக்கீரன்]"                              → ['நக்கீரன்']
-      "[பாண்டியன், நா. வேத்தரசன், வணங்காமுடி]" → ['பாண்டியன்', 'நா. வேத்தரசன்', 'வணங்காமுடி']
-      "நக்கீரன்"  (no brackets, legacy)          → ['நக்கீரன்']
+    Handles bracket-wrapped multi-author fields (e.g. ``[A, B, C]``),
+    single names, and empty/sentinel values (NA, nan, None, []).
+
+    Args:
+        csv_name: Raw author cell string.
+
+    Returns:
+        List of stripped author name strings, or ``[]`` if empty.
     """
     if not csv_name:
         return []
@@ -124,11 +137,20 @@ def _parse_csv_authors(csv_name: str) -> List[str]:
     return authors
 
 
-# ============================================================================
 # AUTHOR NAME NORMALISATION & MATCHING
-# ============================================================================
 def normalize_author_name(name: str) -> str:
-    """Normalize an author name (handles Tamil variations + prefixes)."""
+    """Normalise a Tamil author name for fuzzy comparison.
+
+    Strips common honorific prefixes (டாக்டர், திரு, Dr., etc.),
+    removes spaces and dots, and normalises Tamil long-vowel variants
+    (ஆ→அ, ஈ→இ, etc.) so minor spelling differences do not prevent matching.
+
+    Args:
+        name: Raw author name string.
+
+    Returns:
+        Normalised string suitable for comparison (not for display).
+    """
     if not name:
         return ""
 
@@ -177,10 +199,18 @@ def normalize_author_name(name: str) -> str:
 
 
 def flexible_author_match(search_name: str, csv_name: str) -> bool:
-    """Flexibly match a search query against a CSV author field.
+    """Match a search name against a (possibly multi-author) CSV cell.
 
-    Supports multi-author fields like "[A, B, C]".
-    Checks each individual parsed author name against the search query.
+    Tries five strategies in order: exact, substring, special-case aliases
+    (கலைஞர்/கருணாநிதி etc.), token-level exact, and fuzzy (≥ FUZZY_THRESHOLD)
+    / edit-distance-one. Returns True on the first strategy that succeeds.
+
+    Args:
+        search_name: Author name from the user query.
+        csv_name: Raw author cell value from the CSV.
+
+    Returns:
+        True if any matching strategy succeeds, False otherwise.
     """
     search_normalized = normalize_author_name(search_name).lower().strip()
     if not search_normalized:
@@ -273,7 +303,19 @@ def flexible_author_match(search_name: str, csv_name: str) -> bool:
 
 
 def _find_closest_author(df: pd.DataFrame, search_name: str) -> tuple:
-    """Return (best_author_name, best_score) scanning individual parsed names."""
+    """Return the closest author name and fuzzy score for a search query.
+
+    Scans every individual parsed author name in the DataFrame and returns
+    the best fuzzy match. Used to generate spelling suggestions on miss.
+
+    Args:
+        df: DataFrame containing the ``ஆசிரியர்`` column.
+        search_name: Author name to match against.
+
+    Returns:
+        Tuple of (best_author_name, best_score). Empty string and 0.0 if
+        the DataFrame has no author entries.
+    """
     best_name, best_score = "", 0.0
     search_norm = normalize_author_name(search_name).lower()
 
@@ -291,6 +333,15 @@ def _find_closest_author(df: pd.DataFrame, search_name: str) -> tuple:
 
 
 def _find_closest_title(df: pd.DataFrame, topic: str) -> tuple:
+    """Return the closest article title and fuzzy score for a topic query.
+
+    Args:
+        df: DataFrame containing the ``தலைப்பு`` column.
+        topic: Topic string to match against.
+
+    Returns:
+        Tuple of (best_title, best_score). Empty string and 0.0 on no match.
+    """
     best_title, best_score = "", 0.0
     topic_lower = topic.lower()
     for title in df["தலைப்பு"].dropna().unique():
@@ -301,13 +352,15 @@ def _find_closest_title(df: pd.DataFrame, topic: str) -> tuple:
     return best_title, best_score
 
 
-# ============================================================================
 # MAIN QUERY SYSTEM
-# ============================================================================
-
-
 class EnhancedAuthorQuerySystem:
-    """Robust author query system with improved CSV parsing and query detection."""
+    """CSV-backed query system for author and topic lookups.
+
+    Loads the Ponni article summary CSV at construction time and exposes
+    methods for listing authors, retrieving articles by author, and finding
+    authors by article title. Query routing and entity extraction are also
+    handled here.
+    """
 
     def __init__(self, csv_path: str):
         """Initialize with path to the summary CSV file."""
@@ -316,13 +369,11 @@ class EnhancedAuthorQuerySystem:
         self._load_csv()
 
     def _load_csv(self):
-        """
-        Load CSV using _load_csv_safe (load_csv primary, pd.read_csv fallbacks).
+        """Load and validate the CSV, populating ``self.df``.
 
-        FIXED: previously used pd.read_csv directly with on_bad_lines="skip",
-        which silently dropped multi-author rows like
-        [பாண்டியன், நா. வேத்தரசன், வணங்காமுடி] because commas inside
-        brackets were treated as column separators.
+        Uses _load_csv_safe so multi-author bracket rows are not dropped.
+        Filters out rows with empty author fields and normalises column names.
+        Sets self.df to an empty DataFrame on any failure.
         """
         try:
             if not self.csv_path.exists():
@@ -371,6 +422,7 @@ class EnhancedAuthorQuerySystem:
             self.df = pd.DataFrame()
 
     def _fix_column_names(self):
+        """Rename English column aliases to their Tamil canonical names."""
         mappings = {
             "author": "ஆசிரியர்",
             "Author": "ஆசிரியர்",
@@ -416,11 +468,17 @@ class EnhancedAuthorQuerySystem:
     ]
 
     def detect_query_type(self, question: str) -> str:
-        """Classify a question into a CSV query type or 'none'.
+        """Classify a question as a CSV query type or 'none'.
 
-        Content-seeking queries are detected FIRST and always routed to
-        vector search. CSV only handles queries that explicitly ask for
-        article listings, counts, or author lookups.
+        Checks content-seeking intent first (routes to vector search), then
+        tests for list-authors, topic-author, and author-topics patterns.
+
+        Args:
+            question: Raw user question string.
+
+        Returns:
+            One of ``"list_all_authors"``, ``"author_topics"``,
+            ``"topic_author"``, or ``"none"``.
         """
         q = question.lower().strip()
         YEAR_PATTERNS = ["எந்த ஆண்டு", "ஆண்டு", "வெளியான ஆண்டு"]
@@ -487,7 +545,20 @@ class EnhancedAuthorQuerySystem:
         return "none"
 
     def extract_entity(self, question: str, query_type: str) -> str:
-        """Extract the key entity (author name or topic) from a question."""
+        """Extract the key entity (author name or topic) from a question.
+
+        For ``author_topics``: applies canonical author mappings, strips
+        possessive suffixes, and falls back to token extraction.
+        For ``topic_author``: strips noise phrases and title suffixes to
+        isolate the article title fragment.
+
+        Args:
+            question: Raw user question string.
+            query_type: One of ``"author_topics"`` or ``"topic_author"``.
+
+        Returns:
+            Extracted entity string, or empty string if extraction fails.
+        """
         q = question.strip()
 
         for variation in _PatternBank.PONNI:
@@ -586,9 +657,13 @@ class EnhancedAuthorQuerySystem:
         return ""
 
     def list_all_authors(self) -> Dict:
-        """List all unique authors with article counts.
+        """Return all unique authors with their article counts.
 
-        Each individual name in a multi-author row is counted separately.
+        Each name in a multi-author row is counted individually.
+
+        Returns:
+            Dict with keys: success, type, total_authors, total_articles,
+            authors (list of {name, count} dicts sorted by count descending).
         """
         all_authors = []
         for val in self.df["ஆசிரியர்"]:
@@ -608,7 +683,19 @@ class EnhancedAuthorQuerySystem:
         }
 
     def get_topics_by_author(self, author_name: str) -> Dict:
-        """Return article titles written by the given author."""
+        """Return all articles written by the given author.
+
+        Uses flexible_author_match for lookup. On miss, returns a fuzzy
+        suggestion if a close name (≥ 70 %) exists in the CSV.
+
+        Args:
+            author_name: Author name from the user query.
+
+        Returns:
+            Dict with keys: success, type, author, matched_author, count,
+            articles. On failure, includes a ``suggestion`` key when a
+            close match is found.
+        """
         if self.df is None or self.df.empty:
             return {
                 "type": "author_topics",
@@ -665,7 +752,24 @@ class EnhancedAuthorQuerySystem:
         }
 
     def get_author_by_topic(self, topic: str) -> Dict:
-        """Return authors who wrote about the given topic."""
+        """Return articles whose titles match the given topic string.
+
+        Applies six progressive match stages in order:
+        1. Exact substring match.
+        2. All query words present in title.
+        3. Majority-word match (≥ 60 % of words, result ≤ 8 rows).
+        4. Longest Tamil word match (≥ 6 chars, result ≤ 10 rows).
+        5. Single-character deletion variants of the longest word.
+        6. Whole-title fuzzy (≥ 0.72) or token-level fuzzy (≥ 0.79).
+
+        Args:
+            topic: Topic or title fragment from the user query.
+
+        Returns:
+            Dict with keys: success, type, topic, cleaned_topic, count,
+            articles. On failure, includes a ``suggestion`` key when a
+            close title (≥ 70 %) is found.
+        """
         if self.df is None or self.df.empty:
             return {
                 "type": "topic_author",
@@ -895,13 +999,16 @@ class EnhancedAuthorQuerySystem:
         }
 
 
-# ============================================================================
 # FORMATTERS
-# ============================================================================
-
-
 def format_author_list(result: Dict) -> str:
-    """Format a list_all_authors result dict as a Tamil display string."""
+    """Format a list_all_authors result as a Tamil display string.
+
+    Args:
+        result: Dict returned by list_all_authors.
+
+    Returns:
+        Human-readable Tamil string with ranked author list.
+    """
     if not result["success"]:
         return f"Error: {result['message']}"
     lines = [
@@ -917,7 +1024,14 @@ def format_author_list(result: Dict) -> str:
 
 
 def format_author_topics(result: Dict) -> str:
-    """Format a get_topics_by_author result dict as a Tamil display string."""
+    """Format a get_topics_by_author result as a Tamil display string.
+
+    Args:
+        result: Dict returned by get_topics_by_author.
+
+    Returns:
+        Human-readable Tamil string with articles sorted by year and issue.
+    """
     if not result["success"]:
         return f"Error: {result['message']}"
     lines = [
@@ -945,7 +1059,14 @@ def format_author_topics(result: Dict) -> str:
 
 
 def format_topic_authors(result: Dict) -> str:
-    """Format a get_author_by_topic result dict as a Tamil display string."""
+    """Format a get_author_by_topic result as a Tamil display string.
+
+    Args:
+        result: Dict returned by get_author_by_topic.
+
+    Returns:
+        Human-readable Tamil string, including suggestion text on failure.
+    """
     if not result["success"]:
         msg = f"Error: {result['message']}"
         if "suggestion" in result:
@@ -968,13 +1089,13 @@ def format_topic_authors(result: Dict) -> str:
     return "\n".join(lines)
 
 
-# ============================================================================
 # ISSUE COUNT & START YEAR
-# ============================================================================
-
-
 def detect_issue_count_query(question: str) -> bool:
-    """Return True if the question is asking for an issue/article count."""
+    """Return True if the question asks for a total issue or article count.
+
+    Args:
+        question: Raw user question string.
+    """
     q = question.lower()
     patterns = [
         "இதழ் எண்ணிக்கை",
@@ -993,11 +1114,14 @@ def detect_issue_count_query(question: str) -> bool:
 
 
 def get_issue_count(csv_path: str) -> Dict:
-    """
-    Get unique issue count from CSV with article statistics.
+    """Return per-issue article counts and totals from the CSV.
 
-    FIXED: uses _load_csv_safe (load_csv primary) so that multi-author rows
-    are not dropped — the article count per issue will now be correct.
+    Args:
+        csv_path: Path to the article summary CSV.
+
+    Returns:
+        Dict with keys: success, count, total_articles, issues
+        (list of {issue_number, article_count} dicts in sorted order).
     """
     try:
         df = _load_csv_safe(csv_path)
@@ -1054,7 +1178,17 @@ def get_issue_count(csv_path: str) -> Dict:
 
 
 def format_issue_count(result: Dict) -> str:
-    """Format an issue-count result dict as a Tamil display string."""
+    """Format a get_issue_count result as a Tamil display string.
+
+    Shows all issues when ≤ 20; otherwise shows first 10 and last 10
+    with summary statistics (mean, min, max articles per issue).
+
+    Args:
+        result: Dict returned by get_issue_count.
+
+    Returns:
+        Human-readable Tamil string.
+    """
     if not result["success"]:
         return f"Error: {result['message']}"
     lines = [
@@ -1095,7 +1229,11 @@ def format_issue_count(result: Dict) -> str:
 
 
 def detect_start_year_query(question: str) -> bool:
-    """Return True if the question is asking when the magazine started."""
+    """Return True if the question asks when the magazine started.
+
+    Args:
+        question: Raw user question string.
+    """
     q = question.lower()
     return any(
         p in q
@@ -1113,8 +1251,11 @@ def detect_start_year_query(question: str) -> bool:
 def get_start_year(csv_path: str) -> str:
     """Return the earliest publication year found in the CSV.
 
-    Uses _load_csv_safe so multi-author rows are not dropped.
-    Min year result is the same either way, but keeps loading consistent.
+    Args:
+        csv_path: Path to the article summary CSV.
+
+    Returns:
+        Tamil sentence stating the start year, or an error message.
     """
     df = _load_csv_safe(csv_path)
     if df.empty or "ஆண்டு" not in df.columns:
@@ -1127,16 +1268,23 @@ def get_start_year(csv_path: str) -> str:
         return "ஆண்டு தகவலை கணக்கிட முடியவில்லை."
 
 
-# ============================================================================
 # MAIN ENTRY POINT
-# ============================================================================
-
-
 def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
-    """Route a question to the appropriate CSV query handler.
+    """Route a question to the appropriate CSV handler.
 
-    Returns (is_handled, response_text). is_handled is False when the
-    question is not a CSV query (caller should proceed to vector search).
+    Tries start-year, issue-count, and author/topic query handlers in
+    order. Returns immediately on the first match. Falls back to vector
+    search (returns False) when no handler claims the question or when
+    a CSV lookup fails.
+
+    Args:
+        question: Raw user question string.
+        csv_path: Path to the article summary CSV.
+
+    Returns:
+        Tuple of (is_handled, response_text). When is_handled is False,
+        response_text is an empty string and the caller should proceed
+        to vector search.
     """
     if detect_start_year_query(question):
         logger.info("Detected start year query")
@@ -1215,10 +1363,7 @@ def _combine_csv_answer(llm_summary: str, csv_data: str) -> str:
     return "கட்டுரை தரவுத்தளத்திலிருந்து பெறப்பட்ட தகவல்கள்:" + suffix
 
 
-# ============================================================================
 # QUERY SPELLING CORRECTION FOR VECTOR SEARCH
-# ============================================================================
-
 # Known question/action words — used both for skipping (exact match)
 # and for correcting misspelled question words (fuzzy match).
 _KNOWN_QUERY_WORDS = {
@@ -1292,13 +1437,16 @@ _SPELLING_MAX_LEN_DIFF = 2  # reject candidates whose length differs by more
 
 
 def _safe_to_correct(original: str, candidate: str) -> bool:
-    """Structural guard: only accept a correction if shapes are close.
+    """Return True if a spelling correction candidate is structurally plausible.
 
-    A real misspelling differs from the intended word by a small edit
-    near the middle/end of the token, so the leading letters and total
-    length should be close. Without this guard, a high fuzzy score from
-    shared Tamil suffixes (e.g. ``-த்தை``) is enough to swap an
-    unrelated content word — silently destroying recall.
+    Requires the original and candidate to share at least
+    _SPELLING_MIN_PREFIX_MATCH leading characters and differ in length
+    by no more than _SPELLING_MAX_LEN_DIFF. Guards against high fuzzy
+    scores caused by shared Tamil suffixes between unrelated words.
+
+    Args:
+        original: Source token from the user query.
+        candidate: Proposed corrected form.
     """
     if not original or not candidate:
         return False
@@ -1314,7 +1462,11 @@ def _safe_to_correct(original: str, candidate: str) -> bool:
 
 
 def _get_title_vocab(df: pd.DataFrame) -> list:
-    """Extract unique Tamil words (>= 4 chars) from all CSV titles."""
+    """Return unique Tamil words (≥ 4 chars) extracted from all CSV titles.
+
+    Args:
+        df: DataFrame containing the ``தலைப்பு`` column.
+    """
     vocab = set()
     for title in df["தலைப்பு"].dropna().unique():
         for word in re.findall(r"[\u0B80-\u0BFF]+", str(title)):
@@ -1324,7 +1476,11 @@ def _get_title_vocab(df: pd.DataFrame) -> list:
 
 
 def _get_author_vocab(df: pd.DataFrame) -> list:
-    """Extract unique author names from the CSV."""
+    """Return unique author name strings (≥ 4 chars) from the CSV.
+
+    Args:
+        df: DataFrame containing the ``ஆசிரியர்`` column.
+    """
     authors = set()
     for val in df["ஆசிரியர்"].dropna():
         for name in _parse_csv_authors(str(val)):
@@ -1335,10 +1491,16 @@ def _get_author_vocab(df: pd.DataFrame) -> list:
 
 
 def _correct_query_words(question: str) -> str:
-    """Correct misspelled question/action words against known vocabulary.
+    """Correct misspelled question/action words against _KNOWN_QUERY_WORDS.
 
-    Handles cases like "எழூதிய" → "எழுதிய", "சுறுக்கம்" → "சுருக்கம்".
-    Only corrects words that are NOT already an exact match.
+    Only corrects tokens that are not already an exact match. Uses a
+    threshold of 0.88 plus _safe_to_correct to avoid false corrections.
+
+    Args:
+        question: Raw user question string.
+
+    Returns:
+        Question with misspelled action words replaced.
     """
     query_words = re.findall(r"[\u0B80-\u0BFF]+", question)
     corrected = question
@@ -1377,15 +1539,23 @@ def _correct_query_words(question: str) -> str:
 def correct_query_spelling(
     question: str, csv_path: str, content_vocab: List[str] = None
 ) -> str:
-    """Correct misspelled Tamil words in the query.
+    """Correct misspelled Tamil words in a query using three vocabulary passes.
 
-    Three-pass correction:
-    1. Fix misspelled question/action words (எழூதிய → எழுதிய)
-    2. Fix misspelled title/author words against CSV vocabulary
-    3. Fix remaining words against content vocabulary from indexed
-       documents (headings, topics — passed in by the caller)
+    Pass 1 — question/action words (எழூதிய → எழுதிய).
+    Pass 2 — title and author words from the CSV.
+    Pass 3 — content vocabulary from indexed documents (caller-supplied).
 
-    Returns the corrected query, or the original if no corrections needed.
+    Words already present as substrings in any reference text are skipped.
+    Each correction requires fuzzy score ≥ _SPELLING_TOKEN_THRESHOLD and
+    passes _safe_to_correct.
+
+    Args:
+        question: Raw user question string.
+        csv_path: Path to the article summary CSV (used to load vocabulary).
+        content_vocab: Optional list of words from Qdrant indexed headings.
+
+    Returns:
+        Corrected question string, or the original if no changes were made.
     """
     # Pass 1: correct question/action words
     corrected = _correct_query_words(question)

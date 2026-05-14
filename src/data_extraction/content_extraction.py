@@ -1,4 +1,22 @@
-"""Content extraction utilities for Tamil document processing."""
+"""Content extraction utilities for Tamil document processing.
+
+Provides low-level helpers for collecting article body text from
+raw document line lists after article boundaries have been located
+by the pattern extractors or the CSV fuzzy matcher:
+
+- **Blank-line counting** — :func:`count_consecutive_blanks` measures
+  separator runs used as section boundaries by all extractors.
+- **Keyword lookahead** — :func:`check_keyword_ahead` detects
+  upcoming intro section markers so content collection stops before
+  the next editorial section begins.
+- **Intro section extraction** — :func:`extract_intro_content_phase1`
+  collects body text for named editorial sections (தலையங்கம்,
+  காலமும் கருத்தும், etc.), handling embedded author attribution
+  within the keyword line itself.
+- **Remaining content extraction** — :func:`extract_remaining_content`
+  provides a final safety-net pass that groups any unprocessed lines
+  by blank-line separators and emits sections with valid headings.
+"""
 
 import logging
 

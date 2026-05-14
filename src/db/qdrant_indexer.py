@@ -68,23 +68,58 @@ dense_model = SentenceTransformer(EMBEDDING_MODEL, device=DEVICE)
 
 
 def dense_embed_doc(text: str) -> List[float]:
-    """Generate dense embedding for documents during indexing."""
+    """Generate a dense embedding vector for a document passage at index time.
+
+    Applies Unicode NFC normalization, prepends the ``"passage: "`` prefix
+    required by the E5 multilingual model, and encodes the text using the
+    module-level ``dense_model`` with L2 normalization.
+
+    Args:
+        text (str): Raw document passage text to embed.
+
+    Returns:
+        List[float]: Normalized dense embedding vector of length
+        ``EMBEDDING_DIM``.
+    """
     text = unicodedata.normalize("NFC", text)
     return dense_model.encode(f"passage: {text}", normalize_embeddings=True).tolist()
 
 
 def dense_embed_query(text: str) -> List[float]:
-    """Generate dense embedding for search queries."""
+    """Generate a dense embedding vector for a search query at retrieval time.
+
+    Applies Unicode NFC normalization, prepends the ``"query: "`` prefix
+    required by the E5 multilingual model, and encodes the text using the
+    module-level ``dense_model`` with L2 normalization. The asymmetric
+    ``query:`` / ``passage:`` prefix pairing ensures cosine similarity scores
+    are comparable across the index.
+
+    Args:
+        text (str): Raw user query string to embed.
+
+    Returns:
+        List[float]: Normalized dense embedding vector of length
+        ``EMBEDDING_DIM``.
+    """
     text = unicodedata.normalize("NFC", text)
     return dense_model.encode(f"query: {text}", normalize_embeddings=True).tolist()
 
 
 def sparse_embed(text: str) -> models.SparseVector:
-    """Generate BM25 sparse embedding for indexing via fastembed.
+    """Generate a BM25 sparse embedding for a text string via fastembed.
 
-    Replaces the previous tf-hash scheme. The runtime query encoder
-    in ``sparse.sparse_embed_query`` uses the same ``Qdrant/bm25`` model
-    so index-time and query-time tokens line up exactly.
+    Delegates to :func:`src.db.sparse.sparse_embed_doc`, which uses the
+    ``Qdrant/bm25`` fastembed model. Using the same model at both index time
+    (this function) and query time (``sparse.sparse_embed_query``) ensures
+    that token vocabularies are identical, so BM25 term-match scores are
+    meaningful.
+
+    Args:
+        text (str): Text to encode into a sparse BM25 vector.
+
+    Returns:
+        models.SparseVector: Qdrant sparse vector containing non-zero term
+        indices and their corresponding BM25 weights.
     """
     from src.db.sparse import sparse_embed_doc
 
@@ -92,7 +127,20 @@ def sparse_embed(text: str) -> models.SparseVector:
 
 
 def split_into_sentences(text: str) -> List[str]:
-    """Split text into sentences respecting Tamil and English punctuation."""
+    """Split text into sentences while preserving Tamil and English punctuation.
+
+    Splits on Tamil ``।`` and standard English punctuation (``.``, ``!``,
+    ``?``), then re-attaches the punctuation mark to the preceding sentence
+    fragment so that sentence boundaries are preserved. Sentence fragments
+    shorter than or equal to 10 characters are discarded.
+
+    Args:
+        text (str): Raw article or passage text in Tamil and/or English.
+
+    Returns:
+        List[str]: List of sentence strings, each ending with its original
+        punctuation mark and containing more than 10 characters.
+    """
     sentences = re.split(r"([।.!?]+)", text)
 
     result = []
@@ -117,7 +165,24 @@ def split_into_sentences(text: str) -> List[str]:
 
 
 def chunk_text(text: str, size: int) -> List[str]:
-    """Chunk text by sentences to ensure complete sentences in each chunk."""
+    """Split text into sentence-aligned chunks of approximately ``size`` characters.
+
+    Converts ``size`` (a character budget) to a target word count
+    (``size // 6``) and a hard ceiling (``target_words * 1.5``). Sentences
+    are accumulated greedily until the target word count is reached, at which
+    point the current chunk is flushed. Individual sentences that exceed the
+    ceiling are emitted as standalone chunks. The final partial chunk is kept
+    only if it contains at least 10 words.
+
+    Args:
+        text (str): Raw article or passage text to chunk.
+        size (int): Approximate character budget per chunk. Controls the
+            target and maximum word counts via the ``size // 6`` heuristic.
+
+    Returns:
+        List[str]: List of text chunk strings, each respecting sentence
+        boundaries. Returns an empty list if ``text`` is empty or whitespace.
+    """
     if not text or not text.strip():
         return []
 
@@ -167,7 +232,26 @@ def chunk_text(text: str, size: int) -> List[str]:
 
 
 def validate_chunk(chunk: str) -> bool:
-    """Validate chunk quality before indexing."""
+    r"""
+
+    Validate a text chunk for minimum quality before indexing.
+
+    Applies three progressive quality gates:
+
+    1. **Length gate** — the stripped chunk must be at least 20 characters.
+    2. **Word count gate** — the chunk must contain at least 10 words
+       (Tamil Unicode tokens or ASCII ``\\w+`` tokens).
+    3. **Tamil content gate** — the chunk must contain at least 20 Tamil
+       Unicode characters (``U+0B80``–``U+0BFF``), ensuring non-Tamil noise
+       fragments are excluded.
+
+    Args:
+        chunk (str): Text chunk string to evaluate.
+
+    Returns:
+        bool: ``True`` if the chunk passes all three quality gates;
+        ``False`` otherwise.
+    """
     if not chunk or len(chunk.strip()) < 20:
         return False
 
@@ -186,7 +270,21 @@ def validate_chunk(chunk: str) -> bool:
 
 
 def list_s3_json_files(bucket: str, prefix: str, suffix: str) -> List[str]:
-    """List all JSON files in S3 bucket with given prefix and suffix."""
+    """List all S3 object keys matching a given prefix and suffix.
+
+    Uses the S3 list paginator to enumerate all objects under ``prefix`` in
+    ``bucket`` and returns only those keys whose name ends with ``suffix``.
+
+    Args:
+        bucket (str): S3 bucket name to scan.
+        prefix (str): Key prefix to filter the listing (e.g. ``"data/ponni/"``).
+        suffix (str): File suffix that qualifying keys must end with
+            (e.g. ``".json"``).
+
+    Returns:
+        List[str]: Sorted list of matching S3 object key strings. Returns an
+        empty list if no keys match.
+    """
     keys = []
     paginator = s3.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
@@ -199,7 +297,19 @@ def list_s3_json_files(bucket: str, prefix: str, suffix: str) -> List[str]:
 
 
 def extract_volume_from_s3_key(s3_key: str) -> str:
-    """Extract volume identifier from S3 key path."""
+    """Extract the volume directory identifier from an S3 object key path.
+
+    Splits the key on ``"/"`` and returns the first path component whose
+    lowercased value starts with ``"vol_"``.
+
+    Args:
+        s3_key (str): Full S3 object key (e.g.
+            ``"ponni/vol_3/issue_5/articles.json"``).
+
+    Returns:
+        str: Volume identifier string (e.g. ``"vol_3"``), or ``"unknown"``
+        if no path component matching the ``vol_*`` pattern is found.
+    """
     for part in s3_key.split("/"):
         if part.lower().startswith("vol_"):
             return part
@@ -207,17 +317,70 @@ def extract_volume_from_s3_key(s3_key: str) -> str:
 
 
 def is_author_file(s3_key: str) -> bool:
-    """Check if S3 key points to an authors.json file."""
+    """Return True if the S3 key points to an authors metadata file.
+
+    Args:
+        s3_key (str): Full S3 object key string.
+
+    Returns:
+        bool: ``True`` if the lowercased key ends with ``"authors.json"``;
+        ``False`` otherwise.
+    """
     return s3_key.lower().endswith("authors.json")
 
 
 def is_remaining_file(s3_key: str) -> bool:
-    """Check if S3 key points to a remaining context file."""
+    """Return True if the S3 key points to a remaining-context supplement file.
+
+    Remaining files contain supplementary article text loaded at query time
+    by :func:`llm.load_remaining_context_s3` and should be skipped during
+    indexing to avoid duplicate content in the vector store.
+
+    Args:
+        s3_key (str): Full S3 object key string.
+
+    Returns:
+        bool: ``True`` if the lowercased key contains ``"remaining_vol"``;
+        ``False`` otherwise.
+    """
     return "remaining_vol" in s3_key.lower()
 
 
 def load_documents_from_s3() -> List[Dict]:
-    """Load and process article documents from S3 with automatic tagging."""
+    """Load, tag, chunk, and prepare article documents from S3 for indexing.
+
+    Executes a two-pass pipeline:
+
+    **Pass 1 — Corpus collection**: Iterates all JSON files under
+    ``S3_PREFIX`` in ``S3_BUCKET`` (excluding author files and remaining
+    files), parses each ``articles`` array, and accumulates all non-empty
+    articles together with their originating S3 key and volume identifier.
+
+    **Pass 2 — Tagging, chunking, and document preparation**: Trains an
+    :class:`ArticleTagger` on the full article corpus, then for each article:
+
+    - Assigns content tags and Tamil-script tag labels via the tagger.
+    - Splits the article content into chunks using :func:`chunk_text` with
+      ``CHUNK_SIZE``.
+    - Validates each chunk with :func:`validate_chunk`; invalid chunks are
+      skipped and counted.
+    - Builds a document dict with a deterministic UUID5 ID, the chunk text,
+      and a full metadata payload including ``doc_id``, ``doc_issue``,
+      ``article_no``, ``author_name``, ``title``, ``year``, ``chunk_id``,
+      ``total_chunks``, ``volume``, ``tags``, and ``tags_tamil``.
+
+    Chunk quality statistics (total, valid, invalid, min/max/avg word count)
+    are logged at the end of the run.
+
+    Returns:
+        List[Dict]: List of document dicts, each containing:
+
+        - ``"id"`` (str): Deterministic UUID5 string.
+        - ``"text"`` (str): Validated chunk text.
+        - ``"metadata"`` (dict): Full article and chunk metadata.
+
+        Returns an empty list if no valid articles are found.
+    """
     documents = []
     chunk_stats = {"total": 0, "valid": 0, "invalid": 0, "word_counts": []}
 
@@ -362,7 +525,30 @@ def load_documents_from_s3() -> List[Dict]:
 
 
 def load_authors_from_s3() -> List[Dict]:
-    """Load author metadata from S3 authors.json files."""
+    """Load author metadata records from S3 ``authors.json`` files for indexing.
+
+    Scans all JSON files under ``S3_PREFIX`` in ``S3_BUCKET``, processes
+    only those identified as author files by :func:`is_author_file`, and
+    parses each file as a list of issue-level author records. For each
+    non-empty author name in each record, builds a document dict with a
+    deterministic UUID5 ID derived from the S3 key, ``doc_id``,
+    ``doc_issue``, and author name.
+
+    Args:
+        None
+
+    Returns:
+        List[Dict]: List of author document dicts, each containing:
+
+        - ``"id"`` (str): Deterministic UUID5 string.
+        - ``"text"`` (str): Author name string (used as the embedding input).
+        - ``"metadata"`` (dict): Keys ``"author"``, ``"doc_id"``,
+          ``"doc_issue"``, ``"volume"``, and ``"source"``
+          (fixed value ``"authors_json"``).
+
+        Returns an empty list if no author files are found or all fail to
+        parse.
+    """
     documents = []
 
     keys = list_s3_json_files(S3_BUCKET, S3_PREFIX, S3_SUFFIX)
@@ -419,7 +605,32 @@ def load_authors_from_s3() -> List[Dict]:
 
 
 def _do_full_index(client):
-    """Run full indexing: create collection, embed articles + authors, upsert."""
+    """Recreate the Qdrant collection and index all articles and authors.
+
+    Deletes any existing collection named ``COLLECTION_NAME``, creates a
+    fresh collection with one dense cosine-similarity vector space
+    (``"dense"``, dimension ``EMBEDDING_DIM``) and one IDF-modified sparse
+    vector space (``"sparse"``), then indexes documents in two phases:
+
+    **Phase 1 — Articles**: loads and chunks all article documents via
+    :func:`load_documents_from_s3`, generates dense and sparse embeddings
+    for each chunk, and upserts them to Qdrant in batches of ``BATCH_SIZE``
+    with payload type ``"article"``.
+
+    **Phase 2 — Authors**: loads all author records via
+    :func:`load_authors_from_s3`, embeds and upserts them in the same
+    batched manner with payload type ``"author"``.
+
+    Failed individual points are logged and skipped; the overall indexing
+    continues. Collection statistics (total points, article chunks, author
+    count) are logged on completion.
+
+    Args:
+        client (QdrantClient): Connected Qdrant client instance.
+
+    Returns:
+        None
+    """
     if client.collection_exists(COLLECTION_NAME):
         client.delete_collection(COLLECTION_NAME)
         logger.info("Deleted existing collection")
@@ -551,7 +762,32 @@ def _do_full_index(client):
 
 
 def main(force_reindex: bool = False):
-    """Run smart indexing with change detection and snapshot management."""
+    """Run smart indexing with change detection and S3 snapshot management.
+
+    Orchestrates the full indexing lifecycle:
+
+    1. **Force reindex path** (``force_reindex=True``): Skips all change
+       detection, runs :func:`_do_full_index` unconditionally, then saves
+       a fresh snapshot and metadata via :func:`_save_snapshot_and_metadata`.
+
+    2. **Change detection path** (default): Calls :func:`needs_reindex` to
+       compare the current S3 source data hash against the stored metadata.
+
+       - **No reindex needed + collection exists**: Logs the existing point
+         count and returns immediately.
+       - **No reindex needed + collection missing**: Attempts to restore the
+         collection from an S3 snapshot via :func:`restore_snapshot_from_s3`.
+         Falls through to full reindex if restoration fails.
+       - **Reindex needed**: Runs :func:`_do_full_index` and saves snapshot
+         and metadata.
+
+    Args:
+        force_reindex (bool): If ``True``, bypass change detection and always
+            perform a full reindex. Defaults to ``False``.
+
+    Returns:
+        None
+    """
     logger.info(f"Connecting to Qdrant server at {QDRANT_HOST}:{QDRANT_PORT}")
     client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
 
@@ -601,7 +837,32 @@ def main(force_reindex: bool = False):
 
 
 def _save_snapshot_and_metadata(client, s3_client):
-    """Save snapshot to S3 and update index metadata after indexing."""
+    """Save a Qdrant collection snapshot to S3 and write updated index metadata.
+
+    Called after a successful full index run to persist the collection state
+    for future snapshot-based restores and change-detection comparisons.
+    Performs three operations in sequence:
+
+    1. Fetches current collection info to obtain the live ``points_count``.
+    2. Creates a Qdrant snapshot and uploads it to S3 via
+       :func:`save_snapshot_to_s3`.
+    3. Computes a hash of the S3 source data via
+       :func:`compute_source_data_hash`, builds an index metadata record via
+       :func:`build_index_metadata`, and writes it to S3 via
+       :func:`save_index_metadata`.
+
+    All errors are caught and logged; a failure here does not corrupt the
+    already-completed Qdrant index.
+
+    Args:
+        client (QdrantClient): Connected Qdrant client instance, used to
+            fetch collection info and create the snapshot.
+        s3_client: Boto3 S3 client instance, used for all S3 read/write
+            operations.
+
+    Returns:
+        None
+    """
     try:
         info = client.get_collection(COLLECTION_NAME)
         snapshot_key = save_snapshot_to_s3(

@@ -15,13 +15,20 @@ TYPO_DISTANCE = 1
 
 
 def normalize_unicode(text: str) -> str:
-    """Normalize text to NFC (composed) form.
+    """Normalize text to Unicode NFC (composed) form.
 
-    Tamil text can arrive in different Unicode representations —
-    e.g. a base consonant + separate vowel sign (NFD) vs a single
-    precomposed codepoint (NFC).  Normalizing to NFC before any
-    comparison, hashing, or embedding ensures identical visual text
-    always has identical byte representation.
+    Tamil text can arrive in multiple Unicode representations — for example,
+    a base consonant followed by a separate vowel sign (NFD) versus a single
+    precomposed codepoint (NFC). Normalizing to NFC before any comparison,
+    hashing, or embedding call ensures that visually identical text always
+    has an identical byte representation.
+
+    Args:
+        text (str): Input string in any Unicode normalization form.
+
+    Returns:
+        str: NFC-normalized string, or the original value unchanged if
+        ``text`` is falsy.
     """
     if not text:
         return text
@@ -29,7 +36,21 @@ def normalize_unicode(text: str) -> str:
 
 
 def fuzzy_match_score(a: str, b: str) -> float:
-    """Return fuzzy similarity ratio between two strings."""
+    """Return the fuzzy similarity ratio between two strings.
+
+    Applies NFC normalization and lowercasing to both inputs before
+    computing the ratio via ``difflib.SequenceMatcher``. The result is
+    a value in ``[0.0, 1.0]`` where ``1.0`` means the strings are identical
+    and ``0.0`` means they share no common subsequence.
+
+    Args:
+        a (str): First string to compare.
+        b (str): Second string to compare.
+
+    Returns:
+        float: Similarity ratio in the range ``[0.0, 1.0]``. Returns
+        ``0.0`` if either input is falsy.
+    """
     if not a or not b:
         return 0.0
     return SequenceMatcher(
@@ -40,7 +61,21 @@ def fuzzy_match_score(a: str, b: str) -> float:
 
 
 def _edit_distance_one(a: str, b: str) -> bool:
-    """Check if edit distance between two strings is at most TYPO_DISTANCE."""
+    """Return the edit distance between two strings is at most ``TYPO_DISTANCE``.
+
+    Applies NFC normalization and lowercasing before computing the full
+    Levenshtein edit distance via dynamic programming. A fast length-
+    difference pre-check short-circuits the DP when the strings differ in
+    length by more than ``TYPO_DISTANCE`` characters.
+
+    Args:
+        a (str): First string to compare.
+        b (str): Second string to compare.
+
+    Returns:
+        bool: ``True`` if the Levenshtein distance between ``a`` and ``b``
+        is less than or equal to ``TYPO_DISTANCE``; ``False`` otherwise.
+    """
     a, b = normalize_unicode(a).lower(), normalize_unicode(b).lower()
     if abs(len(a) - len(b)) > TYPO_DISTANCE:
         return False
@@ -57,18 +92,30 @@ def _edit_distance_one(a: str, b: str) -> bool:
     return prev[lb] <= TYPO_DISTANCE
 
 
-# ============================================================================
-# TAMIL-SAFE SUFFIX STRIPPING HELPERS
-# NOTE: \b (word boundary) does NOT work with Tamil Unicode characters.
-# We use (?=\s|$) or explicit end-of-string anchors instead.
-# ============================================================================
-
-
 def _strip_tamil_possessive_suffixes(text: str) -> str:
-    r"""Strip common Tamil possessive/genitive suffixes at word boundaries.
+    r"""Strip common Tamil possessive and genitive suffixes at word boundaries.
 
-    Uses (?=\s|$) instead of \b for Tamil Unicode compatibility.
-    \b (ASCII word boundary) does NOT work with Tamil Unicode.
+    Applies a sequence of regex substitutions in specificity order (longer
+    and more specific suffixes first) to avoid partial stripping. Uses
+    ``(?=\s|$)`` as the word-boundary anchor instead of ``\b`` because
+    ``\b`` (ASCII word boundary) does not work with Tamil Unicode characters.
+
+    Supported suffix transformations include:
+
+    - ``னின்`` → ``ன்``  (e.g. ``பாரதிதாசனின்`` → ``பாரதிதாசன்``)
+    - ``ரின்`` → ``ர்``  (e.g. ``பாவேந்தரின்`` → ``பாவேந்தர்``)
+    - ``யின்`` → ``""``  (e.g. ``கிருஷ்ணாமூர்த்தியின்`` → ``கிருஷ்ணாமூர்த்தி``)
+    - ``னால்`` → ``ன்``, ``ரால்`` → ``ர்``, ``யால்`` → ``""``
+    - ``னை`` → ``ன்``, ``ரை`` → ``ர்``, ``யை`` → ``""``
+    - Generic ``ஆல்`` and ``ஐ`` at word end
+
+    Args:
+        text (str): Input string potentially containing Tamil possessive
+            suffixes.
+
+    Returns:
+        str: String with possessive suffixes stripped from word-final
+        positions, after NFC normalization.
     """
     text = normalize_unicode(text)
     # Order matters: longer/more-specific suffixes first to avoid partial stripping
@@ -107,19 +154,58 @@ def _strip_tamil_possessive_suffixes(text: str) -> str:
 
 
 def _strip_tamil_possessive_suffix_word(word: str) -> str:
-    """Strip Tamil possessive suffix from a single word token."""
+    """Strip Tamil possessive suffixes from a single word token.
+
+    Thin wrapper around :func:`_strip_tamil_possessive_suffixes` that
+    strips leading and trailing whitespace from the result, making it
+    convenient for per-token processing.
+
+    Args:
+        word (str): A single Tamil word token.
+
+    Returns:
+        str: The word with any possessive suffix removed and surrounding
+        whitespace stripped.
+    """
     return _strip_tamil_possessive_suffixes(word).strip()
 
 
-# ============================================================================
 # PATTERN BANK — central store for all Tamil/English phrase patterns
 # Extend any list here to support new question phrasings without
 # touching any logic elsewhere.
-# ============================================================================
 
 
 class _PatternBank:
-    """Central store for every Tamil / English phrase pattern."""
+    """Central store for all phrase patterns used in query classification.
+
+    Acts as a single source of truth for every phrase list consumed by the
+    CSV query system, author detection, topic extraction, and noise-stripping
+    logic. Extending any list here propagates the change to all callers
+    without modifying business logic elsewhere.
+
+    Class attributes:
+
+    - ``PONNI`` — Ponni magazine name variants in Tamil and English.
+    - ``LIST_ALL_AUTHORS`` — Trigger phrases for "list all authors" queries.
+    - ``TOPIC_AUTHOR`` — Trigger phrases for "who wrote X?" (topic → author)
+      queries, covering Tamil and English phrasings.
+    - ``AUTHOR_ACTION`` — Action phrases for "author → topics" queries
+      (what did X write?).
+    - ``KNOWN_AUTHORS`` — Known author name variants used for author-presence
+      detection in a query.
+    - ``TOPIC_NOISE_PHRASES`` — Multi-word phrases stripped from around the
+      topic title during extraction.
+    - ``TITLE_SUFFIXES`` — Content-type suffix words (e.g. ``"தொடர்"``,
+      ``"story"``) stripped only from the end of an extracted title.
+    - ``AUTHOR_NOISE_PHRASES`` — Multi-word phrases stripped from around the
+      author name during extraction.
+    - ``AUTHOR_NOISE_TOKENS`` — Single token stop-words dropped from author
+      strings after phrase removal.
+    - ``TOPIC_NOISE_TOKENS`` — Single token stop-words dropped from topic
+      strings after phrase removal.
+    - ``AUTHOR_CANONICAL`` — Mapping from known name variants and aliases to
+      their canonical author name string.
+    """
 
     # ── Ponni magazine name variants ─────────────────────────────────────────
     PONNI = [

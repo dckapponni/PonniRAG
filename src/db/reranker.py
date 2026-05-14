@@ -93,15 +93,33 @@ _load_failed = False
 
 
 def is_enabled() -> bool:
-    """Return True when the reranker is enabled and has not failed to load."""
+    """Return True when the reranker is enabled and has not permanently failed to load.
+
+    Combines two conditions: the ``ENABLE_RERANKER`` environment flag must
+    be truthy, and the module-level ``_load_failed`` flag must be ``False``
+    (i.e. no previous :func:`get_reranker` call raised an exception).
+
+    Returns:
+        bool: ``True`` if the reranker may be used; ``False`` if it has been
+        disabled via the environment flag or if the model failed to load
+        during this process lifetime.
+    """
     return ENABLE_RERANKER and not _load_failed
 
 
 def get_reranker():
-    """Load cross-encoder on first use. Returns None on failure.
+    """Load the cross-encoder model on first use and return the cached instance.
 
-    Subsequent calls after a load failure short-circuit to None so
-    callers can fall back to lexical reranking without retrying.
+    Uses a double-checked locking pattern with ``_model_lock`` to ensure the
+    model is initialized at most once in multi-threaded environments. After a
+    load failure, ``_load_failed`` is set to ``True`` and all subsequent
+    calls return ``None`` immediately without retrying, so callers can fall
+    back to lexical reranking without incurring repeated import overhead.
+
+    Returns:
+        CrossEncoder | None: The loaded ``sentence_transformers.CrossEncoder``
+        instance, or ``None`` if the model failed to load. A ``None`` return
+        permanently disables the reranker for the current process.
     """
     global _model, _load_failed
     if _load_failed:
@@ -129,7 +147,20 @@ def get_reranker():
 
 
 def _query_content_tokens(question: str) -> List[str]:
-    """Extract ordered content tokens from a query, stripping stopwords."""
+    """Extract ordered content tokens from a query, stripping Tamil stop words.
+
+    Applies Unicode NFC normalization, lowercases the question, and extracts
+    all Tamil (``஀``–``௿``) and Latin alphanumeric token sequences. Tokens
+    shorter than ``_HEADING_PHRASE_MIN_TOKEN`` characters or present in
+    ``_TAMIL_STOP`` are discarded.
+
+    Args:
+        question (str): Raw user query string.
+
+    Returns:
+        List[str]: Ordered list of content token strings suitable for
+        building query phrases for heading-match detection.
+    """
     q = unicodedata.normalize("NFC", question).lower()
     tokens = re.findall(r"[஀-௿a-z0-9]+", q)
     return [
@@ -140,10 +171,20 @@ def _query_content_tokens(question: str) -> List[str]:
 
 
 def _query_phrases(question: str) -> List[str]:
-    """Build consecutive n-gram phrases from query content tokens.
+    """Build consecutive n-gram phrases from a query's content tokens.
 
-    Yields longer phrases first so a literal title match like
-    "மே தினம்" wins over a single-token coincidence.
+    Generates all contiguous n-grams of length ``_HEADING_PHRASE_MIN_NGRAM``
+    up to ``min(4, n_tokens)`` from the content tokens produced by
+    :func:`_query_content_tokens`. Longer phrases are listed first so that a
+    literal multi-word title match (e.g. ``"மே தினம்"``) takes precedence
+    over a single-token coincidence during heading comparison.
+
+    Args:
+        question (str): Raw user query string.
+
+    Returns:
+        List[str]: Ordered list of phrase strings, from longest to shortest
+        n-gram, suitable for substring matching against document headings.
     """
     toks = _query_content_tokens(question)
     phrases = []
@@ -156,15 +197,28 @@ def _query_phrases(question: str) -> List[str]:
 def _clear_winner_matches(question: str, sources: List[Dict]) -> List[Dict]:
     """Return heading-phrase matches that justify skipping the cross-encoder.
 
-    A match is "clear" when:
-      - The matched query phrase has at least
-        ``RERANKER_CLEAR_WIN_MIN_PHRASE`` content tokens.
-      - The total number of matching docs is at most
-        ``RERANKER_CLEAR_WIN_MAX_MATCHES`` (otherwise we need CE to
-        pick among them).
+    Identifies sources whose heading literally contains a qualifying query
+    phrase. A match qualifies as a "clear winner" and short-circuits the
+    cross-encoder when both of the following hold:
 
-    The returned list preserves original retrieval order. An empty
-    list means there is no clear winner and the caller should run CE.
+    - The matched phrase has at least ``RERANKER_CLEAR_WIN_MIN_PHRASE``
+      content tokens (default: 2), reducing false positives from
+      single-token coincidences.
+    - The total number of matching documents is at most
+      ``RERANKER_CLEAR_WIN_MAX_MATCHES`` (default: 3); when many documents
+      share a heading phrase the cross-encoder is still needed to rank them.
+
+    When ``RERANKER_SKIP_CE_ON_CLEAR_WIN`` is disabled, always returns an
+    empty list.
+
+    Args:
+        question (str): Raw user query string.
+        sources (List[Dict]): Formatted source document dicts, each expected
+            to contain a ``"heading"`` key.
+
+    Returns:
+        List[Dict]: The matching source dicts in their original retrieval
+        order, or an empty list if no clear winner is found.
     """
     if not RERANKER_SKIP_CE_ON_CLEAR_WIN or not sources:
         return []
@@ -191,13 +245,33 @@ def _clear_winner_matches(question: str, sources: List[Dict]) -> List[Dict]:
 
 
 def _pin_heading_matches(question: str, sources: List[Dict], top_in: int) -> List[Dict]:
-    """Reorder ``sources`` so that heading-phrase matches lead.
+    """Reorder sources so that heading-phrase matches lead the candidate pool.
 
-    Any candidate whose heading contains a multi-token query phrase
-    (with stopwords removed) is moved to the front, preserving the
-    relative order among matches and among non-matches. Without this
-    pin, a rank-68 candidate whose title literally equals the query
-    phrase ("மே தினம்") never enters the cross-encoder's slice.
+    Without this step, a highly relevant document whose heading literally
+    matches a multi-token query phrase may rank beyond ``top_in`` in the
+    initial retrieval order and never reach the cross-encoder. This function
+    moves all such documents to the front of the list while preserving
+    relative order within the matched and unmatched groups respectively.
+
+    The lead block of matched documents is capped at ``top_in`` entries so
+    the cross-encoder always receives a healthy and diverse candidate pool.
+    Matched documents beyond the cap are appended after the non-matched
+    remainder.
+
+    When ``RERANKER_PIN_HEADING_MATCHES`` is disabled or no query phrases
+    can be extracted, the original ``sources`` list is returned unchanged.
+
+    Args:
+        question (str): Raw user query string.
+        sources (List[Dict]): Formatted source document dicts, each expected
+            to contain a ``"heading"`` key.
+        top_in (int): Maximum number of candidates to feed to the
+            cross-encoder; used to size the pinned lead block.
+
+    Returns:
+        List[Dict]: Reordered source list with heading-phrase matches at the
+        front, or the original list if no matches are found or the feature
+        is disabled.
     """
     if not RERANKER_PIN_HEADING_MATCHES or not sources:
         return sources
@@ -233,19 +307,32 @@ def _pin_heading_matches(question: str, sources: List[Dict], top_in: int) -> Lis
 
 
 def _adaptive_cutoff(scored: list, max_keep: int) -> List[Dict]:
-    """Pick top sources using cross-encoder score gaps, not a fixed count.
+    """Select top sources from cross-encoder results using adaptive score-gap cutoffs.
 
-    Always keeps at least ``RERANKER_MIN_OUT`` sources so the UI is never
-    empty when the reranker did run. After the minimum is satisfied, a
-    candidate is dropped when its score falls below either:
+    Rather than returning a fixed top-N, applies two data-driven stopping
+    criteria after the mandatory minimum (``RERANKER_MIN_OUT``) is satisfied:
 
-    * ``RERANKER_SCORE_FLOOR_RATIO`` × top_score — absolute relevance floor.
-    * ``RERANKER_GAP_RATIO`` × previous_score — sharp drop-off between
-      consecutive results.
+    - **Absolute floor**: drops a candidate when its score falls below
+      ``RERANKER_SCORE_FLOOR_RATIO × top_score``, eliminating documents
+      that are clearly less relevant than the best match.
+    - **Gap ratio**: drops a candidate when its score falls below
+      ``RERANKER_GAP_RATIO × previous_score``, catching sharp relevance
+      drop-offs between consecutive ranked results.
 
-    Together they yield a tight 3–5 source list when only a few docs are
+    This yields a tight 3–5 source list when only a few documents are
     clearly relevant, and a fuller list (up to ``max_keep``) when several
-    are roughly comparable.
+    documents score comparably.
+
+    Args:
+        scored (list): List of ``(source_dict, score)`` tuples sorted by
+            score in descending order, as produced by
+            ``model.predict`` + ``sorted``.
+        max_keep (int): Hard upper bound on the number of sources returned.
+
+    Returns:
+        List[Dict]: Source dicts that survived the cutoff, each augmented
+        with a ``"rerank_score"`` (float) key. Returns an empty list if
+        ``scored`` is empty.
     """
     if not scored:
         return []
@@ -273,7 +360,22 @@ def _adaptive_cutoff(scored: list, max_keep: int) -> List[Dict]:
 
 
 def _doc_text(src: Dict) -> str:
-    """Build the text passed to the cross-encoder for a single source."""
+    """Build the document text string passed to the cross-encoder for a single source.
+
+    Concatenates the ``"heading"`` and ``"content"`` (or ``"text"``) fields
+    of the source dict, separated by a space, after filtering out empty
+    parts. Applies Unicode NFC normalization and truncates the result to
+    ``RERANKER_MAX_CHARS`` characters to stay within the cross-encoder's
+    token budget.
+
+    Args:
+        src (Dict): Formatted source document dict, expected to contain
+            ``"heading"`` and optionally ``"content"`` or ``"text"`` keys.
+
+    Returns:
+        str: NFC-normalized, truncated document text string ready for
+        pairing with the query in a cross-encoder ``predict`` call.
+    """
     parts = [
         str(src.get("heading") or ""),
         str(src.get("content") or src.get("text") or ""),
@@ -289,18 +391,44 @@ def rerank_sources(
     top_in: int = None,
     top_out: int = None,
 ) -> Tuple[List[Dict], bool]:
-    """Rerank sources with cross-encoder.
+    """Rerank retrieved sources using a multilingual cross-encoder model.
+
+    Implements a three-path decision tree:
+
+    1. **Clear-winner bypass** — if :func:`_clear_winner_matches` finds
+       1–``RERANKER_CLEAR_WIN_MAX_MATCHES`` sources whose heading literally
+       contains a multi-token query phrase, returns those sources immediately
+       with a sentinel ``rerank_score`` of ``1.0``, skipping the
+       cross-encoder entirely (saves 10–30 s of CPU on title-style queries).
+
+    2. **Cross-encoder path** — pins heading-phrase matches to the front of
+       the candidate pool via :func:`_pin_heading_matches`, slices to
+       ``top_in`` candidates, calls ``model.predict`` in batches of
+       ``RERANKER_BATCH``, sorts by descending score, and applies
+       :func:`_adaptive_cutoff` to select the final ``top_out`` results.
+
+    3. **Failure path** — if the model is not loaded, disabled, or raises
+       during inference, returns ``([], False)`` so the caller falls back to
+       the legacy lexical filter.
 
     Args:
-        question: User query.
-        sources: List of source dicts (already formatted by format_sources).
-        top_in: Candidate pool size (default RERANKER_TOP_IN).
-        top_out: Results kept (default RERANKER_TOP_OUT).
+        question (str): User query string.
+        sources (List[Dict]): Formatted source document dicts produced by
+            ``format_sources``, each expected to contain ``"heading"`` and
+            ``"content"`` keys.
+        top_in (int | None): Number of candidates fed to the cross-encoder.
+            Defaults to ``RERANKER_TOP_IN`` (env: ``RERANKER_TOP_IN``,
+            default 30).
+        top_out (int | None): Maximum number of results kept after reranking.
+            Defaults to ``RERANKER_TOP_OUT`` (env: ``RERANKER_TOP_OUT``,
+            default 5).
 
     Returns:
-        (reranked_sources, success). When success is False the caller
-        should fall back to the legacy lexical filter. The returned
-        sources list is empty on failure.
+        Tuple[List[Dict], bool]: A two-element tuple where the first element
+        is the reranked (and possibly truncated) list of source dicts — each
+        augmented with a ``"rerank_score"`` (float) key — and the second
+        element is ``True`` on success or ``False`` when the caller should
+        fall back to lexical filtering.
     """
     if not sources:
         return [], True

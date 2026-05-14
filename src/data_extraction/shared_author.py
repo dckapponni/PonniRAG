@@ -1,4 +1,21 @@
-"""Shared author detection utilities using S3 data."""
+"""Shared author detection utilities using S3 data.
+
+Builds and exposes a cross-document author dictionary by scanning all
+raw TXT files in the S3 input prefix for TOC sections
+(பொருளடக்கம் → ஆகியோரின்) and extracting the author names listed
+between those markers.
+
+The resulting dictionary maps ``(doc_id, doc_issue)`` tuples to
+``(authors_original, authors_normalized)`` pairs and is passed to
+:func:`article_separation.parse_tamil_document` so that pattern
+extractors can recognize author names in documents whose own TOC is
+missing or malformed.
+
+Also provides :func:`check_author_ahead`, a lookahead helper that
+detects known author names in upcoming document lines during content
+collection, used by :mod:`content_extraction` to stop extraction
+before the next author's section begins.
+"""
 
 import logging
 import re
