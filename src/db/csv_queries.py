@@ -638,9 +638,6 @@ class EnhancedAuthorQuerySystem:
 
             # normalize endings
             for _pat, _repl in [
-                (r"த்தில்(?=\s|$)", "ம்"),
-                (r"த்தின்(?=\s|$)", "ம்"),
-                (r"த்திற்கு(?=\s|$)", "ம்"),
                 (r"யில்(?=\s|$)", ""),
                 (r"வில்(?=\s|$)", ""),
             ]:
