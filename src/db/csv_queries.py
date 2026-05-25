@@ -15,6 +15,7 @@ Usage::
 import logging
 import re
 import threading
+import unicodedata
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -1265,7 +1266,6 @@ def get_start_year(csv_path: str) -> str:
         return "ஆண்டு தகவலை கணக்கிட முடியவில்லை."
 
 
-# MAIN ENTRY POINT
 def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
     """Route a question to the appropriate CSV handler.
 
@@ -1283,9 +1283,12 @@ def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
         response_text is an empty string and the caller should proceed
         to vector search.
     """
+    logger.info(f"[CSV_HANDLER] Called with: '{question[:60]}'")
+
     if detect_start_year_query(question):
         logger.info("Detected start year query")
         return True, get_start_year(csv_path)
+
     if detect_issue_count_query(question):
         logger.info("Detected issue count query")
         return True, format_issue_count(get_issue_count(csv_path))
@@ -1296,6 +1299,177 @@ def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
         system = _author_system_cache[csv_path]
 
     if system.df is None or system.df.empty:
+        return False, ""
+
+    # Special case: issue table-of-contents query (பொருளடக்கம் / உள்ளடக்கம்)
+    content_keywords = [
+        "பொருளடக்கம்",
+        "பொருளடக்கத்தைக்",
+        "பொருளடக்கத்தை",
+        "உள்ளடக்ககத்தை",
+        "பொருளடக்க",
+        "உள்ளடக்கம்",
+        "உள்ளடக்க",
+    ]
+
+    if any(k in question for k in content_keywords):
+        logger.info("Detected table-of-contents query")
+
+        # Normalize to NFC so Tamil codepoints from different keyboards
+        # (browser, API, different IMEs) match the regex consistently.
+        question_nfc = unicodedata.normalize("NFC", question)
+
+        # Tamil word → integer mappings for மலர் (volume ordinals)
+        tamil_volume_numbers = {
+            "முதல்": 1,
+            "இரண்டாவது": 2,
+            "மூன்றாவது": 3,
+            "நான்காவது": 4,
+            "ஐந்தாவது": 5,
+            "ஆறாவது": 6,
+            "ஏழாவது": 7,
+            "எட்டாவது": 8,
+            "ஒன்பதாவது": 9,
+            "பத்தாவது": 10,
+        }
+
+        # Tamil word → integer mappings for இதழ் (both cardinal and ordinal)
+        tamil_issue_numbers = {
+            # cardinal
+            "ஒன்று": 1,
+            "இரண்டு": 2,
+            "மூன்று": 3,
+            "நான்கு": 4,
+            "ஐந்து": 5,
+            "ஆறு": 6,
+            "ஏழு": 7,
+            "எட்டு": 8,
+            "ஒன்பது": 9,
+            "பத்து": 10,
+            "பதினொன்று": 11,
+            "பன்னிரண்டு": 12,
+            "பதிமூன்று": 13,
+            "பதினான்கு": 14,
+            "பதினைந்து": 15,
+            "பதினாறு": 16,
+            "பதினேழு": 17,
+            "பதினெட்டு": 18,
+            "பத்தொன்பது": 19,
+            "இருபது": 20,
+            # ordinal
+            "முதல்": 1,
+            "இரண்டாவது": 2,
+            "மூன்றாவது": 3,
+            "நான்காவது": 4,
+            "ஐந்தாவது": 5,
+            "ஆறாவது": 6,
+            "ஏழாவது": 7,
+            "எட்டாவது": 8,
+            "ஒன்பதாவது": 9,
+            "பத்தாவது": 10,
+            "பதினொன்றாவது": 11,
+            "பன்னிரண்டாவது": 12,
+            "பதிமூன்றாவது": 13,
+            "பதினான்காவது": 14,
+            "பதினைந்தாவது": 15,
+            "பதினாறாவது": 16,
+            "பதினேழாவது": 17,
+            "பதினெட்டாவது": 18,
+            "பத்தொன்பதாவது": 19,
+            "இருபதாவது": 20,
+        }
+
+        tamil_volume_pattern = (
+            r"முதல்|இரண்டாவது|மூன்றாவது|நான்காவது|ஐந்தாவது|"
+            r"ஆறாவது|ஏழாவது|எட்டாவது|ஒன்பதாவது|பத்தாவது"
+        )
+
+        tamil_issue_pattern = (
+            r"முதல்|இரண்டாவது|மூன்றாவது|நான்காவது|ஐந்தாவது|"
+            r"ஆறாவது|ஏழாவது|எட்டாவது|ஒன்பதாவது|பத்தாவது|"
+            r"பதினொன்றாவது|பன்னிரண்டாவது|பதிமூன்றாவது|"
+            r"பதினான்காவது|பதினைந்தாவது|பதினாறாவது|"
+            r"பதினேழாவது|பதினெட்டாவது|பத்தொன்பதாவது|இருபதாவது|"
+            r"ஒன்று|இரண்டு|மூன்று|நான்கு|ஐந்து|ஆறு|ஏழு|எட்டு|"
+            r"ஒன்பது|பத்து|பதினொன்று|பன்னிரண்டு|பதிமூன்று|"
+            r"பதினான்கு|பதினைந்து|பதினாறு|பதினேழு|பதினெட்டு|"
+            r"பத்தொன்பது|இருபது"
+        )
+
+        # மலர் — all supported formats:
+        #   "ஆறாவது மலர்"   — Tamil ordinal word
+        #   "6 வது மலர்"    — digit + வது/ஆவது
+        #   "6 மலர்"        — bare digit (no வது)
+        volume_match = re.search(
+            r"(?:(\d+)\s*(?:வது|ஆவது)?\s+மலர"  # group(1): numeric
+            r"|(" + tamil_volume_pattern + r")\s+மலர)",  # group(2): Tamil word
+            question_nfc,
+        )
+
+        # இதழ் — all supported formats:
+        #   "11 வது இதழ்"         — digit + வது/ஆவது
+        #   "11 இதழ்"             — bare digit
+        #   "பதினொன்றாவது இதழ்"  — Tamil ordinal word
+        #   "பதினொன்று இதழ்"     — Tamil cardinal word
+        issue_match = re.search(
+            r"(?:(\d+)\s*(?:வது|ஆவது)?\s+இதழ"  # group(1): numeric
+            r"|(" + tamil_issue_pattern + r")\s+இதழ)",  # group(2): Tamil word
+            question_nfc,
+        )
+
+        logger.info(f"volume_match={volume_match}, issue_match={issue_match}")
+
+        if volume_match and issue_match:
+            # Resolve volume number
+            if volume_match.group(1) is not None:
+                volume = int(volume_match.group(1))
+            else:
+                volume = tamil_volume_numbers.get(volume_match.group(2))
+
+            # Resolve issue number
+            if issue_match.group(1) is not None:
+                issue = int(issue_match.group(1))
+            else:
+                issue = tamil_issue_numbers.get(issue_match.group(2))
+
+            if volume is None or issue is None:
+                logger.info(
+                    f"TOC — could not resolve numbers: volume={volume}, issue={issue}"
+                )
+                return False, ""
+
+            logger.info(f"TOC lookup — மலர்: {volume}, இதழ்: {issue}")
+
+            # pd.to_numeric handles int, float (6.0), and string ("6")
+            matches = system.df[
+                (pd.to_numeric(system.df["மலர்"], errors="coerce") == volume)
+                & (pd.to_numeric(system.df["இதழ்"], errors="coerce") == issue)
+            ]
+
+            if not matches.empty:
+                lines = [
+                    f"{volume} ஆம் மலர், {issue} ஆம் இதழின் பொருளடக்கம்:",
+                    "",
+                ]
+                for idx, (_, row) in enumerate(matches.iterrows(), 1):
+                    title = row.get("தலைப்பு", "")
+                    author = _format_author_display(str(row.get("ஆசிரியர்", "")))
+                    lines.append(f"{idx}. {title} — {author}")
+                return True, "\n".join(lines)
+            else:
+                logger.info(
+                    f"TOC lookup — no rows found for மலர்={volume}, இதழ்={issue}"
+                )
+                return True, (
+                    f"{volume} ஆம் மலர், {issue} ஆம் இதழில் எந்த கட்டுரையும் "
+                    f"கண்டுபிடிக்க முடியவில்லை."
+                )
+
+        # volume or issue not parsed — log and fall back
+        logger.info(
+            f"TOC query detected but மலர்/இதழ் could not be parsed — "
+            f"volume_match={volume_match}, issue_match={issue_match} — falling back"
+        )
         return False, ""
 
     query_type = system.detect_query_type(question)
@@ -1309,23 +1483,26 @@ def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
             query_type = "topic_author"
         else:
             return False, ""
+
     if query_type == "list_all_authors":
         return True, format_author_list(system.list_all_authors())
+
     if query_type == "author_topics":
         entity = system.extract_entity(question, "author_topics")
         logger.info(f"Extracted author: '{entity}'")
         if not entity:
-            return False, ""  # Fall through to vector search
+            return False, ""
         result = system.get_topics_by_author(entity)
         if not result.get("success"):
             logger.info("[CSV] Author query failed — falling back to vector search")
             return False, ""
         return True, format_author_topics(result)
+
     if query_type == "topic_author":
         entity = system.extract_entity(question, "topic_author")
         logger.info(f"Extracted topic: '{entity}'")
         if not entity:
-            return False, ""  # Fall through to vector search
+            return False, ""
         result = system.get_author_by_topic(entity)
         if not result.get("success"):
             logger.info("[CSV] Topic query failed — falling back to vector search")
