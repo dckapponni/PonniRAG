@@ -442,6 +442,7 @@ class EnhancedAuthorQuerySystem:
     # வாங்கலீயோ கதையின் கருத்து என்ன" goes to vector search even though
     # "அவர்கள் எழுதிய" matches AUTHOR_ACTION.
     _CONTENT_SEEKING = [
+        # Original entries
         "கருத்து",
         "சுருக்கம்",
         "சுருக்கமாக",
@@ -466,6 +467,62 @@ class EnhancedAuthorQuerySystem:
         "content",
         "full text",
         "show",
+        # Analytical / synthesis queries
+        "அரசியல் சூழல்",
+        "சமூக சூழல்",
+        "பொருளாதார சூழல்",
+        "இலக்கிய சூழல்",
+        "காலகட்டத்தின்",
+        "காலகட்டம்",
+        "வைத்து",
+        "கண்ணோட்டம்",
+        "போக்குகள்",
+        "ஆய்வு",
+        "ஒப்பீடு",
+        "தாக்கம்",
+        "பார்வை",
+        "கோணம்",
+        "நோக்கில்",
+        "அடிப்படையில்",
+        "மூலம் அறிய",
+        "மூலம் புரிய",
+        "கூறு",
+        "விரிவாக",
+        "விரிவாகக் கூறு",
+        "ஆராய்",
+        "எதிரொலி",
+        "தாக்கம்",
+        "பிரதிபலிக்கிறது",
+        "சித்தரிக்கிறது",
+        "வெளிப்படுகிறது",
+        "விவாதி",
+        "பகுப்பாய்வு",
+        "ஆய்வு செய்",
+        "விளக்குக",
+        "விளக்கம் தருக",
+        "கருத்துகள்",
+        "கருத்துக்கள்",
+        "கருத்தியல்",
+        "சிறப்பம்சங்கள்",
+        "முக்கியத்துவம்",
+        "பங்களிப்பு என்ன",
+        "எவ்வாறு",
+        "எப்படி",
+        "ஏன்",
+        "discuss",
+        "analyze",
+        "analyse",
+        "analysis",
+        "explain",
+        "elaborate",
+        "context",
+        "significance",
+        "impact",
+        "perspective",
+        "overview",
+        "insights",
+        "based on",
+        "using the",
     ]
 
     def detect_query_type(self, question: str) -> str:
@@ -1479,11 +1536,27 @@ def handle_author_query(question: str, csv_path: str) -> Tuple[bool, str]:
         if (
             any(word in question for word in ["இதழ்", "மலர்"])
             and "ஆண்டு" not in question
+            and not any(
+                word in question
+                for word in [
+                    "வைத்து",
+                    "சூழல்",
+                    "காலகட்டம்",
+                    "கூறு",
+                    "விளக்கு",
+                    "விவரி",
+                    "ஆராய்",
+                    "பார்வை",
+                    "கோணம்",
+                    "தாக்கம்",
+                    "பற்றி கூறு",
+                    "பற்றி விளக்கு",
+                ]
+            )
         ):
             query_type = "topic_author"
         else:
             return False, ""
-
     if query_type == "list_all_authors":
         return True, format_author_list(system.list_all_authors())
 
