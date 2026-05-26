@@ -30,10 +30,11 @@
 │  │  Pages:                  │    │              Uvicorn, 2 workers                  │ │
 │  │  / ─── Home (Search)     │    │                                                 │ │
 │  │  /library ─── Volumes    │    │  Endpoints:                                     │ │
-│  │  /library/:vol ─ Issues  │    │  POST /api/ask ──────── JSON Q&A                │ │
+│  │  /library/:vol ─ Issues  │    │  POST /api/ask ──────── JSON Q&A (+ tag filter) │ │
 │  │  /library/:vol/:iss ─ PDF│    │  POST /api/ask/stream ─ SSE streaming           │ │
-│  │  /tags ─── Categories    │    │  GET  /api/search ───── Archive search          │ │
-│  │  /about ─── About        │    │  GET  /api/tags ─────── Tag categories + counts  │ │
+│  │  /tags ─── Tag Browse     │    │  GET  /api/search ───── Archive search (+ tags) │ │
+│  │  /about ─── About        │    │  GET  /api/tags ─────── Tag taxonomy + counts     │ │
+│  │                          │    │  GET  /api/tags/:id/articles ── Tag articles     │ │
 │  │                          │    │  GET  /api/authors ──── Author listing           │ │
 │  │  Services:               │    │  GET  /api/topics ───── Topic search             │ │
 │  │  api.js (axios)          │    │  GET  /api/library ──── Volumes/Issues/PDF       │ │
@@ -42,8 +43,8 @@
 │  │  Tech: React 18.2        │    │                                                 │ │
 │  │  react-router-dom 6.20   │    │  Tech: FastAPI + Uvicorn                        │ │
 │  │  axios 1.6               │    │  Python 3.x, Pydantic                           │ │
-│  │  react-markdown 10.1     │    │  sentence-transformers                           │ │
-│  └──────────────────────────┘    │  google-genai, pandas                            │ │
+│  │  react-markdown 10.1     │    │  sentence-transformers, cross-encoder            │ │
+│  └──────────────────────────┘    │  google-genai, pandas, fastembed                  │ │
 │                                  └────────┬──────────┬─────────────────────────────┘ │
 │                                           │          │                                │
 │                          ┌────────────────┘          └──────────────────┐             │
@@ -53,16 +54,18 @@
 │  │        QDRANT (qdrant container)     │          │      EXTERNAL SERVICES       │  │
 │  │              Port 6333               │          │                              │  │
 │  │                                      │          │  ┌────────────────────────┐  │  │
-│  │  Collection: tamil_nexus_documents   │          │  │   Gemini 2.5 Flash     │  │  │
+│  │  Collection: qdrant_indexer           │          │  │   Gemini 2.5 Flash     │  │  │
 │  │                                      │          │  │   (Google Cloud)       │  │  │
 │  │  Named Vectors:                      │          │  │                        │  │  │
 │  │  ├─ dense: 1024-dim cosine           │          │  │  LLM answer generation │  │  │
 │  │  │  (intfloat/multilingual-e5-large) │          │  │  CSV gist summarize    │  │  │
-│  │  └─ sparse: BM25-style hashed tokens │          │  │  Streaming responses   │  │  │
+│  │  └─ sparse: BM25 (Qdrant/bm25        │
+│  │     via fastembed)                   │          │  │  Streaming responses   │  │  │
 │  │                                      │          │  └────────────────────────┘  │  │
 │  │  Payload: type, content, chunk_id,   │          │                              │  │
 │  │  metadata (doc_id, title, author,    │          │  ┌────────────────────────┐  │  │
-│  │  volume, year, issue, s3_key)        │          │  │      AWS S3            │  │  │
+│  │  volume, year, issue, s3_key,        │
+│  │  tags, tags_tamil)                   │          │  │      AWS S3            │  │  │
 │  │                                      │          │  │   Bucket: ponni-dev    │  │  │
 │  │  Volume: qdrant_data (persistent)    │          │  │   Region: ap-south-1   │  │  │
 │  │  Health: TCP check every 15s         │          │  │                        │  │  │
@@ -91,6 +94,8 @@
                                  │ • NFC normalize│
                                  │ • Injection    │
                                  │   detection    │
+                                 │ • Truncate to  │
+                                 │   500 chars    │
                                  └───────┬───────┘
                                          │ (blocked if HIGH injection)
                                          ▼
@@ -127,8 +132,8 @@
         │  • Author listing     │               │  ┌────────────────────┐  │
         │  • Topic → authors    │               │  │  Dense Prefetch    │  │
         │  • Author → topics    │               │  │  E5 embeddings     │  │
-        │  • Issue counts       │               │  │  cosine ≥ 0.8      │  │
-        │                       │               │  │  limit: 60         │  │
+        │  • Issue counts       │               │  │  cosine ≥ 0.65     │  │
+        │                       │               │  │  limit: 200        │  │
         │ Source: summary.csv   │               │  └────────┬───────────┘  │
         │ (pandas DataFrame)    │               │           │              │
         └───────────┬───────────┘               │  ┌────────┴───────────┐  │
@@ -137,13 +142,15 @@
                     ▼                            │  └────────┬───────────┘  │
         ┌───────────────────────┐               │  ┌────────┴───────────┐  │
         │  CSV LLM Gist         │               │  │  Sparse Prefetch   │  │
-        │                       │               │  │  BM25-style tokens │  │
+        │                       │               │  │  BM25 (fastembed)   │  │
         │  _CSV_SYSTEM_PROMPT   │               │  │  no threshold      │  │
-        │  (50-150 word gist)   │               │  │  limit: 60         │  │
+        │  (50-150 word gist)   │               │  │  limit: 200        │  │
         │                       │               │  └────────────────────┘  │
         │  "Summarize counts,   │               │           │              │
         │   key names, trends.  │               │           ▼              │
-        │   Don't repeat data." │               │  Top 30 fused results    │
+        │   Don't repeat data." │               │  Top fused results           │
+        │           │           │               │  (optional tag filter:       │
+        │           │           │               │   MatchAny metadata.tags)    │
         │           │           │               └──────────┬───────────────┘
         │           ▼           │                          │
         │  ┌─────────────────┐  │                          ▼
@@ -160,13 +167,17 @@
         │  │ தரவுத்தள தகவல்: │  │                          │
         │  │ {raw CSV data}  │  │                          ▼
         │  └─────────────────┘  │               ┌──────────────────────────┐
-        │                       │               │  _select_relevant_docs    │
-        │  sources: []          │               │                          │
-        │  (no evidence card)   │               │  Score-gap filtering:     │
-        └───────────┬───────────┘               │  • Floor: ≥ 30% of top   │
-                    │                            │  • Gap: ≥ 40% of prev    │
-                    │                            │  • Min: 1, Max: 10       │
-                    │                            │  • Dedup by content hash │
+        │                       │               │  Cross-Encoder Reranker   │
+        │  sources: []          │               │  (BAAI/bge-reranker-      │
+        │  (no evidence card)   │               │   v2-m3)                  │
+        └───────────┬───────────┘               │                          │
+                    │                            │  • Heading-phrase pinning │
+                    │                            │  • Adaptive score floor   │
+                    │                            │    (40% of top score)     │
+                    │                            │  • Gap cutoff             │
+                    │                            │    (50% of prev score)    │
+                    │                            │  • Top-in: 30, Out: 5    │
+                    │                            │  • Min: 3 results        │
                     │                            └──────────┬───────────────┘
                     │                                        │
                     │                                        ▼
@@ -195,6 +206,9 @@
                     │                            │   Ponni context,         │
                     │                            │   formatting rules)      │
                     │                            │                          │
+                    │                            │  max_output_tokens: 4096 │
+                    │                            │  temperature: 0.0        │
+                    │                            │                          │
                     │                            │  Fallback:               │
                     │                            │  generate_extractive_    │
                     │                            │  answer() if LLM fails   │
@@ -204,9 +218,9 @@
                     │                            ┌──────────────────────────┐
                     │                            │  format_sources           │
                     │                            │                          │
-                    │                            │  Same _select_relevant_  │
-                    │                            │  docs set → full merged  │
-                    │                            │  content as evidence     │
+                    │                            │  Reranked docs → full    │
+                    │                            │  merged content as       │
+                    │                            │  evidence (incl. tags)   │
                     │                            └──────────┬───────────────┘
                     │                                        │
                     └────────────────┬───────────────────────┘
@@ -239,12 +253,13 @@ hybrid_search.py   ← Orchestrator (ask_question, embeddings, caching, model lo
        │                      (imports tamil_text)
        │
        ├── llm.py             Gemini LLM layer: prompts, sync/async/streaming
-       │                      generation, extractive fallback
+       │                      generation, extractive fallback, S3 context loading
        │                      (imports guardrails for prompt hardening)
        │
        ├── search.py          Vector search document processing: chunk retrieval,
-       │                      merging, relevance filtering, context building
-       │                      (leaf — constants defined locally)
+       │                      merging (grouped by title), relevance filtering,
+       │                      context building
+       │                      (imports COLLECTION_NAME from embeddings)
        │
        ├── cache.py           Thread-safe LRU response cache with TTL
        │                      Auto-invalidates when Qdrant points_count changes
@@ -258,17 +273,38 @@ article_tagger.py   Hybrid article tagger: rule-based + TF-IDF fallback
                      TAXONOMY (15 categories), ArticleTagger class
                      Fully offline, deterministic, no LLM
 
-embeddings.py       Embedding engine: dense (E5) + sparse (BM25-style) vectors
+embeddings.py       Embedding engine: dense (E5) + sparse (BM25) vectors
                      Thread-safe singleton loading, CSV semantic search
-                     HybridQdrantSearch class with tag filtering
+                     HybridQdrantSearch class with tag filtering support
+                     (imports sparse.py for BM25)
+
+sparse.py           BM25 sparse embeddings via fastembed (Qdrant/bm25 model)
+                     Separate doc/query embedding functions with weight modes
+                     Controlled by ENABLE_RERANKER flag
+                     (leaf — fastembed only)
+
+reranker.py         Cross-encoder reranking (BAAI/bge-reranker-v2-m3)
+                     Heading-phrase pinning, adaptive score flooring,
+                     clear-win skip optimization
+                     Env-configurable: model, top-in/out, thresholds
+                     (leaf — sentence-transformers CrossEncoder)
 
 snapshot_manager.py  Qdrant snapshot backup/restore via S3
                      Reindex detection using embedding fingerprint + source hash
 
+update_csv_tags.py   Syncs tags from Qdrant back to summary.csv
+                     Matches rows by doc_id + doc_issue + article_no (chunk_id=0)
+                     Adds வகை (category) column with Tamil tag names
+
 api.py              FastAPI endpoints (imports from hybrid_search)
                      S3 image proxy for volume/issue covers
-                     Includes /api/tags and /api/tags/{id}/articles
+                     Tag endpoints: /api/tags, /api/tags/{id}/articles
+                     Tag filtering on /api/ask and /api/search
+
 qdrant_indexer.py    Vector indexing with E5 passage:/query: prefixes
+                     Integrates ArticleTagger during indexing (2-pass)
+                     Stores tags + tags_tamil in Qdrant payload
+
 streamlit_app.py     Legacy Streamlit UI (Ask AI, Library, Tags/Categories, About)
 ```
 
@@ -293,14 +329,16 @@ All external consumers (`api.py`, tests) import from `hybrid_search` — the re-
 ┌──────────────────┐     ┌──────────────────┐     ┌──────────────────────┐
 │    Qdrant        │     │  Qdrant Indexer   │     │ Content Extraction   │
 │                  │     │                   │     │                      │
-│  tamil_nexus_    │     │  qdrant_indexer   │     │  content_extraction  │
-│  documents       │◄────│  .py              │◄────│  .py                 │
+│  qdrant_indexer  │     │  qdrant_indexer   │     │  content_extraction  │
+│  (collection)    │◄────│  .py              │◄────│  .py                 │
 │                  │     │                   │     │                      │
-│  Dense: 1024-dim │     │  Chunk (500 char) │     │  Metadata: title,    │
-│  Sparse: BM25    │     │  E5 embed (dense) │     │  author, year, issue │
-│  Payload: meta   │     │  BM25 hash (sparse)│    │  → JSON to S3        │
-└──────────────────┘     │  Batch upsert 100 │     └──────────────────────┘
-                         └──────────────────┘
+│  Dense: 1024-dim │     │  Pass 1: Collect  │     │  Metadata: title,    │
+│  Sparse: BM25    │     │    articles for   │     │  author, year, issue │
+│  Payload: meta   │     │    tagger training│     │  → JSON to S3        │
+│  + tags          │     │  Pass 2: Tag +    │     └──────────────────────┘
+│                  │     │    chunk + embed   │
+│  Snapshots → S3  │     │    + batch upsert  │
+└──────────────────┘     └──────────────────┘
 ```
 
 ---
@@ -349,12 +387,19 @@ Output Guardrails
 │                  │     │  1. Rule-based:      │     │                  │
 │  From Qdrant     │     │     keyword patterns  │     │  Written to:     │
 │  payload or CSV  │     │     per category      │     │  • Qdrant payload│
-│                  │     │  2. TF-IDF fallback:  │     │  • summary.csv   │
-│                  │     │     trained on labeled │     │    (வகை column)  │
-│                  │     │     articles           │     │                  │
+│                  │     │  2. TF-IDF fallback:  │     │    (tags +       │
+│                  │     │     trained on labeled │     │     tags_tamil)  │
+│                  │     │     articles           │     │  • summary.csv   │
+│                  │     │     threshold: 0.15    │     │    (வகை column)  │
 └─────────────────┘     │  3. Serial detection: │     └──────────────────┘
                          │     multi-part fiction │
                          └─────────────────────┘
+
+TAXONOMY (15 categories):
+  FICTION, EDITORIAL, LITERARY_REVIEW, POETRY, QA_COLUMN,
+  ARTS_CULTURE, SATIRE_HUMOR, CLASSICAL_LIT, PUBLIC_FORUM,
+  WOMENS_ISSUES, RELIGIOUS_DEBATE, CHILDRENS, POLITICAL,
+  BIOGRAPHY, GENERAL
 
 update_csv_tags.py — Syncs tags from Qdrant back to summary.csv
                      Matches rows by doc_id + doc_issue + article_no (chunk_id=0)
@@ -386,6 +431,110 @@ Browser                      FastAPI                         AWS S3
 
 No presigned URLs — proxy endpoints never expire. Browser caches for 1 hour.
 PDF links use Google Drive URLs directly from `magazine_registry.json`.
+
+---
+
+## Cross-Encoder Reranking Pipeline (Phase 1.1)
+
+```
+Fused RRF Results (top 30)
+       │
+       ▼
+┌──────────────────────────┐
+│  Heading-Phrase Pinning   │
+│                           │
+│  If query phrase matches  │
+│  article title exactly:   │
+│  • Pin to top (skip CE)   │
+│  • Min 2-word phrase      │
+│  • Max 3 pinned docs      │
+└──────────┬───────────────┘
+           │
+           ▼
+┌──────────────────────────┐
+│  Cross-Encoder Scoring    │
+│                           │
+│  Model: BAAI/bge-reranker │
+│         -v2-m3            │
+│  Input: (query, doc) pairs│
+│  Batch size: 16           │
+│  Max chars/doc: 800       │
+└──────────┬───────────────┘
+           │
+           ▼
+┌──────────────────────────┐
+│  Adaptive Score Cutoff    │
+│                           │
+│  Floor: score ≥ 40% of   │
+│         top_score         │
+│  Gap:   score ≥ 50% of   │
+│         prev_score        │
+│  Min output: 3            │
+│  Max output: 5            │
+└──────────┬───────────────┘
+           │
+           ▼
+  Reranked top-K results
+```
+
+All thresholds env-configurable. Set `ENABLE_RERANKER=0` to bypass entirely.
+
+---
+
+## Qdrant Snapshot Management (Phase 1.1)
+
+```
+┌──────────────────┐     ┌─────────────────────┐     ┌──────────────────┐
+│  snapshot_manager │     │  Reindex Detection   │     │  S3 Backup       │
+│  .py              │     │                      │     │                  │
+│                   │────►│  SHA-256 fingerprint  │     │  ponni-dev/      │
+│  On startup:      │     │  of: model + dim +    │     │  snapshots/      │
+│  • Check if index │     │  chunk_size           │     │                  │
+│    is current     │     │                      │     │  Save/restore    │
+│  • Restore from   │     │  SHA-256 hash of     │     │  Qdrant snapshots│
+│    S3 if needed   │     │  S3 source file keys  │     │                  │
+│                   │     │  + timestamps         │     │                  │
+└──────────────────┘     └─────────────────────┘     └──────────────────┘
+```
+
+---
+
+## Frontend: Tag Browse Page (`/tags`) (Phase 1.1)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  TagBrowse.js                                                    │
+│                                                                  │
+│  ┌─────────────────────┐  ┌──────────────────────────────────┐  │
+│  │  LEFT SIDEBAR        │  │  RIGHT CONTENT PANE              │  │
+│  │                      │  │                                  │  │
+│  │  Volume Accordion    │  │  State 1: Empty                  │  │
+│  │  ├─ Volume 1 ▼       │  │    "Select a volume to browse"   │  │
+│  │  │  ├─ Issue 6       │  │                                  │  │
+│  │  │  ├─ Issue 7       │  │  State 2: Issue Articles         │  │
+│  │  │  └─ PONGAL        │  │    Article list with:            │  │
+│  │  ├─ Volume 2 ▶       │  │    • Title, author, year         │  │
+│  │  └─ Volume 3 ▶       │  │    • Tag badges                  │  │
+│  │                      │  │    • Category/search filters     │  │
+│  │  ─────────────────   │  │    • PDF link button             │  │
+│  │  Category Filter ▼    │  │                                  │  │
+│  │  (from /api/tags)    │  │  State 3: Article Detail          │  │
+│  │                      │  │    Full content, metadata,        │  │
+│  │  Search Input        │  │    tags, word count, stats        │  │
+│  │  (client-side filter)│  │                                  │  │
+│  │                      │  │                                  │  │
+│  │  Result Count        │  │                                  │  │
+│  └─────────────────────┘  └──────────────────────────────────┘  │
+│                                                                  │
+│  API Calls:                                                      │
+│  • getTags() — taxonomy load                                    │
+│  • getVolumes() — volume list                                   │
+│  • getVolumeIssues(volId) — lazy-load on expand                 │
+│  • getIssueArticles(volId, issId) — articles for issue          │
+│  • getArticleContent(docId, docIssue, articleNo) — full article │
+│  • getPDFLink(volId, issId) — PDF URL                           │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -429,13 +578,13 @@ messages state:                       HistoryMessage validation:
   {role: "user", content: "Q2"},      • Alternating role pattern enforced
   {role: "assistant", content: "A2"}, • HIGH injection → turn dropped
 ]                                     • Content sanitized per turn
-       │
+       │                              • 15,000 char max per message
        ▼
 Last 3 Q&A turns (6 messages)
 sent as `history` in POST body
        │
-       ▼
-Gemini receives conversation context
+       ▼                              Request ID tracking prevents
+Gemini receives conversation context  stale stream callbacks
 → enables follow-up questions
 ```
 
@@ -471,17 +620,19 @@ Cache is skipped when conversation history is present (each turn is unique).
 |---|---|
 | intfloat/multilingual-e5-large | Dense embeddings (1024-dim, cosine) |
 | sentence-transformers | Embedding model inference |
+| BAAI/bge-reranker-v2-m3 | Cross-encoder reranking (multilingual) |
+| Qdrant/bm25 (fastembed) | BM25 sparse embeddings |
 | PyTorch (CUDA 11.8 / CPU) | Model runtime with GPU/CPU auto-detection |
 | Google Gemini 2.5 Flash (google-genai) | LLM answer generation, CSV summarization, streaming |
-| scikit-learn | Cosine similarity for CSV semantic search |
+| scikit-learn | Cosine similarity for CSV semantic search, TF-IDF for tagging |
 | sentencepiece | Tokenization |
 
 ### Data & Storage
 
 | Technology | Purpose |
 |---|---|
-| Qdrant | Vector database — hybrid search (dense + sparse + RRF) |
-| AWS S3 (boto3) | Document storage (PDFs, DOCX, extracted JSON) |
+| Qdrant | Vector database — hybrid search (dense + sparse + RRF) + tag filtering |
+| AWS S3 (boto3) | Document storage (PDFs, DOCX, extracted JSON, Qdrant snapshots) |
 | pandas | CSV article metadata (summary.csv) |
 | docx2txt | DOCX text extraction |
 
@@ -508,6 +659,20 @@ Cache is skipped when conversation history is present (each turn is unique).
 | `GEMINI_MODEL` | api | LLM model (default: gemini-2.5-flash) |
 | `QDRANT_HOST` | api | Qdrant hostname (default: qdrant) |
 | `QDRANT_PORT` | api | Qdrant port (default: 6333) |
+| `ENABLE_RERANKER` | api | Enable cross-encoder reranking (default: 1) |
+| `RERANKER_MODEL` | api | Reranker model (default: BAAI/bge-reranker-v2-m3) |
+| `RERANKER_TOP_IN` | api | Candidates fed to reranker (default: 30) |
+| `RERANKER_TOP_OUT` | api | Results kept after reranking (default: 5) |
+| `RERANKER_MIN_OUT` | api | Minimum results to return (default: 3) |
+| `RERANKER_SCORE_FLOOR_RATIO` | api | Min score as ratio of top (default: 0.4) |
+| `RERANKER_GAP_RATIO` | api | Gap cutoff ratio vs prev (default: 0.5) |
+| `RERANKER_MAX_CHARS` | api | Per-doc truncation for reranker (default: 800) |
+| `RERANKER_BATCH` | api | Reranker batch size (default: 16) |
+| `RERANKER_PIN_HEADING_MATCHES` | api | Enable heading-phrase pinning (default: 1) |
+| `RERANKER_SKIP_CE_ON_CLEAR_WIN` | api | Skip CE on clear title match (default: 1) |
+| `RERANKER_CLEAR_WIN_MIN_PHRASE` | api | Min phrase words for clear win (default: 2) |
+| `RERANKER_CLEAR_WIN_MAX_MATCHES` | api | Max pinned docs (default: 3) |
+| `RAG_DEBUG` | api | Debug logging flag (default: 0) |
 
 ---
 
@@ -525,16 +690,28 @@ Cache is skipped when conversation history is present (each turn is unique).
 
 ```python
 # Collection
-COLLECTION_NAME    = "tamil_nexus_documents"
+COLLECTION_NAME    = "qdrant_indexer"
 EMBEDDING_MODEL    = "intfloat/multilingual-e5-large"
 EMBEDDING_DIM      = 1024
 
 # Search
-SCORE_THRESHOLD    = 0.8     # min cosine similarity for dense prefetch
-RELEVANCE_FLOOR    = 0.3     # doc score ≥ 30% of top → included
-RELEVANCE_GAP      = 0.4     # doc score < 40% of prev → cutoff
-MAX_SOURCES        = 10      # max evidence cards
+SCORE_THRESHOLD    = 0.65    # min cosine similarity for dense prefetch
+MAX_SOURCES        = 100     # max evidence cards
 CONTEXT_BUDGET     = 15000   # chars distributed equally across docs
+MAX_QUERY_LENGTH   = 500     # query truncation limit
+
+# Reranker (Phase 1.1 — env-configurable, defaults shown)
+RERANKER_MODEL            = "BAAI/bge-reranker-v2-m3"
+RERANKER_TOP_IN           = 30      # candidates into reranker
+RERANKER_TOP_OUT          = 5       # results out of reranker
+RERANKER_MIN_OUT          = 3       # minimum results guaranteed
+RERANKER_SCORE_FLOOR_RATIO = 0.4   # score ≥ 40% of top
+RERANKER_GAP_RATIO        = 0.5    # score ≥ 50% of prev
+RERANKER_MAX_CHARS        = 800    # per-doc content truncation
+
+# Tagging (Phase 1.1)
+TFIDF_THRESHOLD    = 0.15   # min TF-IDF similarity for category assignment
+TAXONOMY_SIZE      = 15     # number of article categories
 
 # Indexing
 CHUNK_SIZE         = 500     # characters per chunk
@@ -545,12 +722,30 @@ CACHE_MAX_SIZE     = 100     # LRU entries
 CACHE_TTL          = 3600    # seconds (1 hour)
 
 # LLM
+GEMINI_MODEL       = "gemini-2.5-flash"  # configurable via env
 GEMINI_TEMPERATURE = 0.0
-GEMINI_MAX_TOKENS  = 2048
+GEMINI_MAX_TOKENS  = 4096
 GEMINI_TOP_P       = 0.9
 
 # S3
 BUCKET_NAME        = "ponni-dev"
 INPUT_PREFIX       = "Raw_Proof_Read_Content/"
 OUTPUT_PREFIX      = "output_json/"
+```
+
+---
+
+## API Pydantic Models (Phase 1.1 additions)
+
+```python
+# Tag endpoints
+TagInfo           = {id, tamil, english, count}
+TagsResponse      = {success, tags: List[TagInfo]}
+TagArticleInfo    = {doc_id, doc_issue, title, author_name, year, tags}
+TagArticlesResponse = {success, tag_id, tag_tamil, count, articles}
+
+# Enhanced existing models
+QuestionRequest.tags: Optional[List[str]]       # filter by tag IDs
+SourceDocument.tags:  Optional[List[str]]       # tags on evidence cards
+ArticleContentResponse.tags: Optional[List[str]] # tags on full article
 ```
