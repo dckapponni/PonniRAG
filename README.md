@@ -170,6 +170,7 @@ python -m evaluation.evaluate --dataset evaluation/ground_truth_data.csv --outpu
 | `evaluation/ground_truth_data.csv` | 50 Tamil Q&A pairs for evaluation |
 | `evaluation/ground_truth_template.csv` | Template for adding new questions |
 | `evaluation/ground_truth_report.xlsx` | Latest evaluation results with per-question breakdown |
+| `evaluation/sample_dataset.json` | Sample evaluation dataset in JSON format |
 
 ---
 
@@ -220,6 +221,12 @@ python -m evaluation.evaluate --dataset evaluation/ground_truth_data.csv --outpu
 │   │   ├── streamlit_app.py     # Legacy Streamlit UI
 │   │   ├── tamil_text.py        # Tamil NLP utilities, fuzzy matching, pattern bank
 │   │   └── update_csv_tags.py   # Maintenance: update CSV with Qdrant tags
+│   ├── scripts/
+│   │   ├── upload_pdfs_to_s3.py # Bulk upload PDFs to S3
+│   │   ├── debug_topk.py        # Debug retrieval top-k ranking
+│   │   └── Gemini_Image_Enhancement/
+│   │       ├── enhance_images.py  # Gemini-powered cover image enhancement
+│   │       └── requirements.txt
 │   ├── tests/                   # Unit and integration tests
 │   └── evaluation/
 │       ├── evaluate.py          # Evaluation pipeline & CLI
@@ -391,6 +398,25 @@ python -m evaluation.evaluate --dataset evaluation/ground_truth_data.csv --outpu
         </blockquote>
     </details>
     <details>
+        <summary><b>scripts</b></summary>
+        <blockquote>
+            <table>
+            <tr>
+                <td><b><a href='scripts/upload_pdfs_to_s3.py'>upload_pdfs_to_s3.py</a></b></td>
+                <td>- Bulk upload of magazine PDFs to S3 with proper key naming conventions<br>- Reads from local directory and uploads to configured S3 bucket/prefix</td>
+            </tr>
+            <tr>
+                <td><b><a href='scripts/debug_topk.py'>debug_topk.py</a></b></td>
+                <td>- Debug utility to inspect retrieval top-k ranking and reranker scores<br>- Prints dense, sparse, and reranked results side-by-side for a given query</td>
+            </tr>
+            <tr>
+                <td><b><a href='scripts/Gemini_Image_Enhancement/enhance_images.py'>Gemini_Image_Enhancement/enhance_images.py</a></b></td>
+                <td>- Uses Gemini to enhance and upscale magazine cover images<br>- Processes S3-stored covers for improved visual quality</td>
+            </tr>
+            </table>
+        </blockquote>
+    </details>
+    <details>
         <summary><b>evaluation</b></summary>
         <blockquote>
             <table>
@@ -541,6 +567,14 @@ python -m evaluation.evaluate --dataset evaluation/ground_truth_data.csv --outpu
                 <td><b><a href='tests/test_update_csv_tags.py'>test_update_csv_tags.py</a></b></td>
                 <td>- Unit tests for CSV tag sync from Qdrant: tag retrieval, fallback logic, CSV update.</td>
             </tr>
+            <tr>
+                <td><b><a href='tests/test_reranker.py'>test_reranker.py</a></b></td>
+                <td>- Unit tests for cross-encoder reranking: score cutoff, heading pinning, clear-win skip, env config overrides.</td>
+            </tr>
+            <tr>
+                <td><b><a href='tests/test_upload_pdfs_to_s3.py'>test_upload_pdfs_to_s3.py</a></b></td>
+                <td>- Unit tests for bulk PDF upload to S3.</td>
+            </tr>
             </table>
         </blockquote>
     </details>
@@ -577,12 +611,12 @@ This module provides utility functions for managing document storage and process
 
 Before getting started with Ponni RAG, ensure your runtime environment meets the following requirements:
 
-- **Programming Language:** Python 3.9+
+- **Programming Language:** Python 3.9+, Node.js 18+ (for React frontend)
 - **Required Services:**
   - AWS S3 (for document storage)
   - Qdrant Vector Database (local or cloud instance)
   - Gemini API key ([get one here](https://ai.google.dev/))
-  - CUDA-compatible GPU (optional, for faster embedding generation)
+  - CUDA-compatible GPU (optional, for faster embedding and reranker inference)
 
 ### Installation
 
@@ -617,13 +651,54 @@ pip install -r requirements.txt
 6. Configure environment variables:
 ```sh
 cp .env.example .env
-# Edit .env with your credentials:
-#   AWS_ACCESS_KEY_ID=<your-access-key>
-#   AWS_SECRET_ACCESS_KEY=<your-secret-key>
-#   GEMINI_API_KEY=<your-gemini-api-key>
+# Edit .env with your credentials
 ```
 
+**Required variables:**
+
+| Variable | Description |
+|----------|-------------|
+| `AWS_ACCESS_KEY_ID` | AWS access key for S3 document storage |
+| `AWS_SECRET_ACCESS_KEY` | AWS secret key |
+| `GEMINI_API_KEY` | Google Gemini API key ([get one here](https://ai.google.dev/)) |
+
+**Optional variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AWS_DEFAULT_REGION` | `ap-south-1` | AWS region for S3 |
+| `QDRANT_HOST` | `localhost` | Qdrant server hostname |
+| `QDRANT_PORT` | `6333` | Qdrant server port |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model for answer generation |
+| `HF_TOKEN` | — | Hugging Face token (if gated model downloads need auth) |
+| `RAG_DEBUG` | `0` | Set `1` to log dense vs sparse top-10 per query (verbose, dev only) |
+
+**Cross-encoder reranker variables:**
+
+The reranker (`BAAI/bge-reranker-v2-m3`) re-scores retrieval candidates for higher relevance. Enabled by default.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_RERANKER` | `1` | Set `0` to disable reranker and fall back to lexical filter |
+| `RERANKER_MODEL` | `BAAI/bge-reranker-v2-m3` | Cross-encoder model (multilingual, incl. Tamil) |
+| `RERANKER_TOP_IN` | `30` | Number of candidates fed into reranker |
+| `RERANKER_TOP_OUT` | `5` | Upper cap on returned sources |
+| `RERANKER_MIN_OUT` | `3` | Minimum sources returned when reranker ran |
+| `RERANKER_SCORE_FLOOR_RATIO` | `0.4` | Drop docs scoring < 40% of top score |
+| `RERANKER_GAP_RATIO` | `0.5` | Drop after a > 50% score drop from previous doc |
+| `RERANKER_MAX_CHARS` | `800` | Max chars per document sent to reranker |
+| `RERANKER_BATCH` | `16` | Batch size for cross-encoder inference |
+| `RERANKER_PIN_HEADING_MATCHES` | `1` | Pin heading-phrase matches into reranker pool even if ranked deep |
+
 ### Usage
+
+**Start Qdrant** (required before running the backend):
+```sh
+# Using Docker (recommended)
+docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant
+
+# Or use a cloud instance and set QDRANT_HOST/QDRANT_PORT in .env
+```
 
 **Run document indexing:**
 ```sh
@@ -678,6 +753,8 @@ The application can be deployed using Docker Compose, which orchestrates three s
 ```sh
 cp .env.docker.example .env.docker
 # Edit .env.docker with your AWS credentials and Gemini API key
+# See the environment variables table above for all available options
+# Note: QDRANT_HOST defaults to 'qdrant' (Docker service name) in .env.docker.example
 ```
 
 2. **Build and start all services:**
@@ -732,10 +809,15 @@ The FastAPI service exposes the following endpoints:
 | `GET` | `/api/library/volumes` | List all volumes |
 | `GET` | `/api/library/volumes/{id}/issues` | Get issues for a volume |
 | `GET` | `/api/library/volumes/{id}/issues/{issue}/pdf` | Get PDF link |
+| `GET` | `/api/library/volumes/{id}/issues/{issue}/articles` | Get articles for an issue (includes tags) |
+| `GET` | `/api/articles/content` | Get full article content with tags |
 | `GET` | `/api/tags` | List all article categories with counts |
 | `GET` | `/api/tags/{tag_id}/articles` | Get articles for a category |
+| `GET` | `/api/images/volumes/{id}/cover` | S3 proxy for volume cover image |
+| `GET` | `/api/images/volumes/{id}/issues/{issue}/cover` | S3 proxy for issue cover image |
 | `GET` | `/api/cache/stats` | Cache hit/miss stats |
 | `POST` | `/api/cache/clear` | Clear response cache |
+| `GET` | `/api/debug/s3` | Debug S3 connectivity and bucket listing |
 
 ### Building Individual Images
 
@@ -860,3 +942,5 @@ frontend/
 | [LLM Analysis Report](docs/PonniRAG%20—%20LLM-Anaylsis%20Report.docx) | LLM performance analysis and comparison |
 | [OCR Framework Analysis](docs/PonniRAG%20—%20OCR%20Framework%20Analysis.docx) | OCR framework evaluation for Tamil document processing |
 | [Project Status Report](docs/PonniRAG%20—%20Project%20Status%20Report.docx) | Current project status and milestones |
+| [Indexed Data](docs/PonniRAG%20–%20Indexed%20Data.xlsx) | Indexed document inventory and metadata |
+| [UAT Testing](docs/PonniRAG%20—%20UAT%20Testing.xlsx) | User acceptance testing checklist and results |
