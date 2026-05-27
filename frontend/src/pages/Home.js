@@ -177,7 +177,12 @@ const Home = ({ language }) => {
       ) : (
         <div className="chat-messages">
           {messages.map((message, index) => (
-            <ChatMessage key={index} message={message} language={language} />
+            <ChatMessage
+              key={index}
+              message={message}
+              language={language}
+              isStreaming={isLoading && index === messages.length - 1 && message.role === 'assistant'}
+            />
           ))}
           {isLoading && messages.length > 0 && messages[messages.length - 1]?.content === '' && (
             <div className="loading-spinner">

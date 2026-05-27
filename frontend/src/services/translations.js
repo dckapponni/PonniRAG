@@ -52,6 +52,7 @@ const translations = {
     tags_word_count: "சொற்கள்",
     tags_collection: "தொகுப்பு",
     tags_volume_label: "மலர்",
+    gathering_evidence: "ஆதாரங்களைச் சேகரிக்கிறது...",
   },
   en: {
     app_title: "Ponni Archive",
@@ -106,6 +107,7 @@ const translations = {
     tags_word_count: "Words",
     tags_collection: "Collection",
     tags_volume_label: "Volume",
+    gathering_evidence: "Gathering evidence...",
   },
 };
 
