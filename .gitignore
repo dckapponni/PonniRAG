@@ -24,3 +24,7 @@ src/scripts/debug_took.py
 src/scripts/upload_manifest.json
 /src/scripts/upload_manifest.json
 !report/htmlcov/**
+
+src/scripts/Gemini_Image_Enhancement/input_images/
+src/scripts/Gemini_Image_Enhancement/venv/
+src/scripts/Gemini_Image_Enhancement/.env
