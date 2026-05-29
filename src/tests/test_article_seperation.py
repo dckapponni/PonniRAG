@@ -1323,7 +1323,7 @@ class TestRunPatternExtraction:
         lines = ["", "Content line"]
         processed = [False, False]
 
-        result = run_pattern_extraction(
+        articles, remaining = run_pattern_extraction(
             lines,
             0,
             processed,
@@ -1335,8 +1335,8 @@ class TestRunPatternExtraction:
             "test.txt",
             1,
         )
-        assert len(result) == 1
-        assert result[0]["title"] == "Title"
+        assert len(articles) == 1
+        assert articles[0]["title"] == "Title"
 
     @patch("data_extraction.article_seperation." "extract_pattern_a_forward")
     @patch("data_extraction.article_seperation." "extract_pattern_b_forward")
@@ -1369,7 +1369,7 @@ class TestRunPatternExtraction:
         lines = ["", "Content"]
         processed = [False, False]
 
-        result = run_pattern_extraction(
+        articles, remaining = run_pattern_extraction(
             lines,
             0,
             processed,
@@ -1381,7 +1381,7 @@ class TestRunPatternExtraction:
             "test.txt",
             1,
         )
-        assert any(a["title"] == "Title C" for a in result)
+        assert any(a["title"] == "Title C" for a in articles)
 
     @patch("data_extraction.article_seperation." "extract_pattern_a_forward")
     @patch("data_extraction.article_seperation." "extract_pattern_b_forward")
@@ -1408,7 +1408,7 @@ class TestRunPatternExtraction:
         lines = ["line1"]
         processed = [True]
 
-        result = run_pattern_extraction(
+        articles, remaining = run_pattern_extraction(
             lines,
             0,
             processed,
@@ -1420,7 +1420,8 @@ class TestRunPatternExtraction:
             "test.txt",
             1,
         )
-        assert result == []
+        assert articles == []
+        assert remaining == []
 
     @patch("data_extraction.article_seperation." "extract_pattern_a_forward")
     @patch("data_extraction.article_seperation." "extract_pattern_b_forward")
@@ -1453,7 +1454,7 @@ class TestRunPatternExtraction:
         lines = ["", "Content"]
         processed = [False, False]
 
-        result = run_pattern_extraction(
+        articles, remaining = run_pattern_extraction(
             lines,
             0,
             processed,
@@ -1465,7 +1466,8 @@ class TestRunPatternExtraction:
             "test.txt",
             1,
         )
-        assert any(a["title"] == "Leftover" for a in result)
+        assert any(a["title"] == "Leftover" for a in articles)
+        assert any(a["title"] == "Leftover" for a in remaining)
 
 
 class TestParseTamilDocumentAdditional:

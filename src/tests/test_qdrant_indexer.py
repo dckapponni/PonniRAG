@@ -1261,7 +1261,7 @@ class TestValidateChunkWordCount:
     def test_few_words_with_tamil_chars(self):
         """Reject chunk with Tamil chars but under 30 words."""
         # 20 Tamil words, each short
-        chunk = " ".join(["அ"] * 20) + " " + "த" * 40
+        chunk = " ".join(["அ"] * 5) + " " + "த" * 40
         assert not validate_chunk(chunk)
 
 

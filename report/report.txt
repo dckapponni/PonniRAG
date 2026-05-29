@@ -1,98 +1,70 @@
-============================= test session starts ==============================
-platform linux -- Python 3.12.3, pytest-9.0.2, pluggy-1.6.0
-rootdir: /home/ubuntu/Ponni_Rag/Tagging_feature/src
-plugins: cov-7.0.0, anyio-4.13.0, asyncio-1.3.0
-asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collected 1478 items
-
-tests/test_api.py ...................................................... [  3%]
-................................                                         [  5%]
-tests/test_article_patterns.py .....................................     [  8%]
-tests/test_article_seperation.py ....................................... [ 10%]
-......................................................                   [ 14%]
-tests/test_article_tagger.py ......................                      [ 16%]
-tests/test_cache.py ....................                                 [ 17%]
-tests/test_content_extraction.py ....................................... [ 20%]
-.......                                                                  [ 20%]
-tests/test_content_extraction_integration.py ....                        [ 20%]
-tests/test_csv_fuzzy_matcher.py ........................................ [ 23%]
-...........................................                              [ 26%]
-tests/test_csv_queries_author_display.py ............................... [ 28%]
-...................................................................      [ 33%]
-tests/test_doc_utils.py ................................................ [ 36%]
-...........                                                              [ 37%]
-tests/test_doc_utils_integration.py .........                            [ 37%]
-tests/test_evaluation.py ............................................... [ 40%]
-...................................................                      [ 44%]
-tests/test_guardrails.py ............................................... [ 47%]
-...................................................                      [ 50%]
-tests/test_hybrid_search.py ............................................ [ 53%]
-........................................................................ [ 58%]
-........................................................................ [ 63%]
-..............................                                           [ 65%]
-tests/test_llm_fallback.py ............................................. [ 68%]
-.............................                                            [ 70%]
-tests/test_qdrant_indexer.py ........................................... [ 73%]
-...................................................                      [ 77%]
-tests/test_retry.py ........................................             [ 79%]
-tests/test_s3_utils.py ................................................. [ 83%]
-........                                                                 [ 83%]
-tests/test_shared_author.py ...............................              [ 85%]
-tests/test_shared_author_integration.py .                                [ 85%]
-tests/test_shared_author_local.py ................                       [ 86%]
-tests/test_snapshot_manager.py .....................                     [ 88%]
-tests/test_streamlit_app.py ............................................ [ 91%]
-...........................                                              [ 93%]
-tests/test_text_extraction.py ......................                     [ 94%]
-tests/test_text_processing.py .......................................    [ 97%]
-tests/test_text_processing_integration.py .....                          [ 97%]
-tests/test_unicode_normalization.py ....................                 [ 98%]
-tests/test_update_csv_tags.py ................                           [100%]
-
+........................................................................ [  4%]
+........................................................................ [  9%]
+........................................................................ [ 13%]
+........................................................................ [ 18%]
+........................................................................ [ 23%]
+........................................................................ [ 27%]
+........................................................................ [ 32%]
+........................................................................ [ 36%]
+........................................................................ [ 41%]
+........................................................................ [ 46%]
+........................................................................ [ 50%]
+........................................................................ [ 55%]
+........................................................................ [ 59%]
+........................................................................ [ 64%]
+........................................................................ [ 69%]
+........................................................................ [ 73%]
+.........................................................s.............. [ 78%]
+........................................................................ [ 82%]
+........................................................................ [ 87%]
+........................................................................ [ 92%]
+........................................................................ [ 96%]
+....................................................                     [100%]
 =============================== warnings summary ===============================
-tests/test_api.py::TestHealthEndpoint::test_health_all_healthy
-  /home/ubuntu/Ponni_Rag/Tagging_feature/src/db/api.py:191: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+src/tests/test_api.py::TestHealthEndpoint::test_health_all_healthy
+  /home/ubuntu/Ponni_Rag/Tagging_feature/src/db/api.py:353: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
     class ArticleInfo(BaseModel):
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
 ================================ tests coverage ================================
 _______________ coverage: platform linux, python 3.12.3-final-0 ________________
 
-Name                                     Stmts   Miss Branch BrPart  Cover   Missing
-------------------------------------------------------------------------------------
-data_extraction/__init__.py                  0      0      0      0   100%
-data_extraction/article_patterns.py        408     40    246     41    87%   115, 135, 156->155, 249->247, 256->247, 291, 296->306, 301-304, 306->317, 310-313, 315, 318-320, 326, 330->353, 332->331, 359-361, 398, 412->442, 417, 424, 429->412, 439, 452-458, 473, 478->475, 484, 524->526, 565-566, 575->625, 581-582, 589, 595-596, 598, 601->622, 628->627, 633, 636, 644->643, 663->795, 735, 742, 769->768
-data_extraction/article_seperation.py      415     25    142      8    94%   260-261, 299-300, 330->320, 353-354, 456-468, 548-550, 657->656, 669->668, 694, 748->764, 909->913, 921-937
-data_extraction/content_extraction.py      157     12     74     10    90%   40-41, 75-78, 141, 150, 162->220, 174->173, 185, 217->216, 223->222, 298, 308, 316, 336-340
-data_extraction/csv_fuzzy_matcher.py       248      1     98      3    99%   416, 418->426, 586->536
-data_extraction/doc_utils.py               275     26    146     14    90%   62, 87->90, 92-94, 174-175, 184-185, 230, 273-276, 281, 290->284, 294, 325-327, 409, 415, 418, 452-454, 495-497, 539->544
-data_extraction/s3_utils.py                148     15     20      2    88%   15-20, 65-66, 102-105, 145-146, 192-193
-data_extraction/shared_author.py            91      8     36      5    90%   32, 47-52, 124, 127->122, 128->122, 133->89
-data_extraction/shared_author_local.py      19      1      8      1    93%   34
-data_extraction/text_extraction.py         104     14     14      1    87%   56-58, 62-64, 194-201
-data_extraction/text_processing.py          86      5     30      2    94%   115-119, 149->152, 154->157
-db/__init__.py                               0      0      0      0   100%
-db/api.py                                  556     17    118     17    95%   355, 362-365, 374, 444-445, 485, 578->566, 686->664, 773->736, 805->807, 827-829, 853->855, 894->896, 1013, 1099->1076, 1133->1113, 1155, 1160, 1246->1227, 1281-1283
-db/article_tagger.py                        86      8     36      3    88%   293, 307-310, 367-371
-db/cache.py                                 83      2     14      0    98%   99-100
-db/csv_queries.py                          473     24    254     20    93%   39, 242, 246, 250, 339->344, 344->exit, 397, 414, 438-439, 449-452, 656->675, 680-687, 695, 697-698, 704-711, 712->721, 719, 725, 787->789, 799->801, 811->813
-db/embeddings.py                           162     16     50     12    87%   31-32, 37-38, 72, 104->111, 118->124, 133->155, 135->155, 137, 150-152, 166->200, 171, 236-237, 247, 281-282, 318
-db/guardrails.py                            98      0     42      0   100%
-db/hybrid_search.py                        491     51    208     24    87%   387->419, 395, 406, 409, 497, 508, 538->587, 581, 608, 624, 644->649, 677-680, 701, 708, 779->831, 787-829, 847-854, 864-871, 888->893, 895->911, 921-925, 948, 952-956, 1090->1094, 1096-1097, 1145->1151
-db/llm.py                                  226      0     84      3    99%   267->271, 685->687, 687->696
-db/qdrant_indexer.py                       322     12    106      4    96%   56-57, 165-167, 297-299, 615-622
-db/retry.py                                 98     11     34      1    91%   31-32, 47-48, 69-70, 85-87, 142, 186
-db/search.py                               158      1     66      4    98%   51->25, 216->223, 272, 307->309
-db/snapshot_manager.py                     107      7     18      0    94%   70-72, 154-155, 204-205
-db/streamlit_app.py                        702    164    258     47    72%   38-39, 65, 91-92, 95, 115-121, 135, 143, 169-170, 174-175, 181, 526-527, 598->600, 639-644, 683->686, 729, 731->735, 735->exit, 739, 741-754, 771-778, 826->825, 839, 880, 896->895, 907-908, 945->949, 948, 950->exit, 955->957, 960->950, 962-963, 969-1023, 1033, 1061-1079, 1126-1202, 1228->1239, 1248-1264, 1304->1307, 1313->1316, 1330-1339, 1371, 1372->1383, 1447, 1470, 1471->1482, 1490-1542, 1556->1564, 1583, 1593, 1605->1607, 1607->1609, 1609->1611, 1611->exit, 1622, 1634-1639, 1761, 1769
-db/tamil_text.py                            51      1     14      0    98%   111
-db/update_csv_tags.py                       89      1     28      1    98%   191
-evaluation/__init__.py                       4      0      0      0   100%
-evaluation/dataset.py                       78      0     24      1    99%   154->161
-evaluation/evaluate.py                     166      5     30      3    96%   55, 249-251, 305->308, 519
-evaluation/metrics.py                      125      4     10      1    96%   221-232
-------------------------------------------------------------------------------------
-TOTAL                                     6026    471   2208    228    90%
-Coverage HTML written to dir report/htmlcov
-Coverage XML written to file report/coverage.xml
-======================= 1478 passed, 1 warning in 59.15s =======================
+Name                                               Stmts   Miss  Cover   Missing
+--------------------------------------------------------------------------------
+src/tests/conftest.py                                104     22    79%   71, 96-97, 173-179, 193-195, 209-211, 223-226, 238-243
+src/tests/test_api.py                                796      1    99%   1523
+src/tests/test_article_patterns.py                   339      4    99%   52-53, 291, 1102
+src/tests/test_article_seperation.py                 925     10    99%   77-78, 206-207, 356, 1104-1105, 1120-1121, 1860
+src/tests/test_article_tagger.py                     118      0   100%
+src/tests/test_cache.py                              161      6    96%   194-195, 218-219, 225-226
+src/tests/test_content_extraction.py                 274      5    98%   424-425, 469-470, 1004
+src/tests/test_content_extraction_integration.py      28      1    96%   73
+src/tests/test_csv_fuzzy_matcher.py                  405      0   100%
+src/tests/test_csv_queries_author_display.py         615      7    99%   251-252, 1081, 1098, 1117, 1147, 1177
+src/tests/test_doc_utils.py                          311      3    99%   1271-1272, 1276
+src/tests/test_doc_utils_integration.py               54      1    98%   136
+src/tests/test_evaluation.py                         659      3    99%   28, 304-305
+src/tests/test_guardrails.py                         454      2    99%   781-782
+src/tests/test_hybrid_search.py                     1802      7    99%   213, 1069-1070, 1080-1081, 1420, 3652
+src/tests/test_llm_fallback.py                       697      0   100%
+src/tests/test_qdrant_indexer.py                     797     10    99%   402, 559-562, 981, 986-987, 1009, 1300
+src/tests/test_reranker.py                           147      7    95%   245-258
+src/tests/test_retry.py                              218     16    93%   42-43, 52-53, 66-67, 77-78, 125-126, 135-136, 146-147, 158-159
+src/tests/test_s3_utils.py                           374      5    99%   189, 291, 735, 902, 1247
+src/tests/test_shared_author.py                      229     19    92%   135-136, 191-192, 220-221, 397-398, 470, 620-621, 649-650, 679-681, 827-828, 934
+src/tests/test_shared_author_integration.py           15      1    93%   34
+src/tests/test_shared_author_local.py                 94      1    99%   336
+src/tests/test_snapshot_manager.py                   215      0   100%
+src/tests/test_streamlit_app.py                      850     54    94%   43, 46, 49, 52, 55-57, 65, 114, 117, 220, 259, 297, 341, 344, 347, 352, 357, 363, 368, 535-538, 755-762, 785-788, 1036-1049, 1109, 1112, 1118-1121, 1126, 1147, 1332, 1559
+src/tests/test_text_extraction.py                    187      1    99%   791
+src/tests/test_text_processing.py                    221      1    99%   580
+src/tests/test_text_processing_integration.py         39      1    97%   129
+src/tests/test_unicode_normalization.py              102      0   100%
+src/tests/test_update_csv_tags.py                    161      2    99%   22, 32
+src/tests/test_upload_pdfs_to_s3.py                  141      1    99%   287
+--------------------------------------------------------------------------------
+TOTAL                                              11532    191    98%
+Coverage HTML written to dir /home/ubuntu/Ponni_Rag/Tagging_feature/report/htmlcov
+Coverage XML written to file /home/ubuntu/Ponni_Rag/Tagging_feature/report/coverage.xml
+Coverage JSON written to file /home/ubuntu/Ponni_Rag/Tagging_feature/report/coverage.json
+1563 passed, 1 skipped, 1 warning in 95.01s (0:01:35)
