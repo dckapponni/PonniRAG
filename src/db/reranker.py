@@ -37,7 +37,7 @@ RERANKER_MIN_OUT = int(os.environ.get("RERANKER_MIN_OUT", "3"))
 RERANKER_SCORE_FLOOR_RATIO = float(os.environ.get("RERANKER_SCORE_FLOOR_RATIO", "0.4"))
 RERANKER_GAP_RATIO = float(os.environ.get("RERANKER_GAP_RATIO", "0.5"))
 RERANKER_MAX_CHARS = int(os.environ.get("RERANKER_MAX_CHARS", "800"))
-RERANKER_BATCH = int(os.environ.get("RERANKER_BATCH", "16"))
+RERANKER_BATCH = int(os.environ.get("RERANKER_BATCH", "32"))
 RERANKER_PIN_HEADING_MATCHES = os.environ.get(
     "RERANKER_PIN_HEADING_MATCHES", "1"
 ).lower() in ("1", "true", "yes")

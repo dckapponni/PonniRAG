@@ -634,8 +634,9 @@ async def lifespan(app: FastAPI):
     Startup sequence:
         1. Verify Qdrant connectivity and log point count.
         2. Pre-cache the :class:`EnhancedAuthorQuerySystem` from CSV.
-        3. Pre-warm ML models (dense E5, sparse BM25, cross-encoder) to
-           avoid cold-start timeouts on the first user request.
+        3. Pre-warm ML models (dense E5, sparse BM25, cross-encoder) and
+           content vocabulary to avoid cold-start timeouts on the first
+           user request.
         4. Validate the Gemini API key and log round-trip latency.
 
     Shutdown:
@@ -681,6 +682,11 @@ async def lifespan(app: FastAPI):
         logger.info("Sparse BM25 model warm")
         get_reranker()
         logger.info("Cross-encoder reranker warm")
+
+        from hybrid_search import _build_content_vocab
+
+        _build_content_vocab()
+        logger.info("Content vocabulary warm")
     except Exception as e:
         logger.warning(f"Model pre-warm failed (will lazy-load on first call): {e!r}")
 
