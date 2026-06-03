@@ -1,36 +1,11 @@
 """
 Image Quality Enhancement using Google Gemini (google-genai SDK).
 
-This module provides an automated pipeline for enhancing the quality of images
-using Google's Gemini generative AI models. It supports both general images and
-text-heavy images, applying appropriate enhancement prompts for each type.
-
-Workflow:
-    1. Load images from the ``input_images/`` directory.
-    2. Auto-detect the best available Gemini image-generation model.
-    3. Classify each image as ``"text"`` or ``"image"`` to select the right prompt.
-    4. Send the image to the Gemini API and receive an enhanced version.
-    5. Save each enhanced image as a PNG to the ``enhanced_images/`` directory.
-
-Supported input formats:
-    JPEG, PNG, BMP, WebP, TIFF
-
-Environment variables:
-    GEMINI_API_KEY or GOOGLE_API_KEY: Required. Your Google Gemini API key,
-    loaded automatically from a ``.env`` file if present.
-
-Dependencies:
-    - google-genai  (``pip install google-genai``)
-    - Pillow        (``pip install Pillow``)
-    - python-dotenv (``pip install python-dotenv``)
-
-Example:
-    Place images in ``input_images/`` and run::
-
-        python enhance_images.py
-
-    Enhanced outputs will appear in ``enhanced_images/`` as
-    ``<original_stem>_enhanced.png``.
+This version:
+- Recursively scans all folders inside INPUT_DIR
+- Preserves the same folder structure in OUTPUT_DIR
+- Enhances all supported images
+- Skips already processed files
 """
 
 import io
@@ -48,350 +23,428 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%H:%M:%S",
 )
+
 log = logging.getLogger(__name__)
 
+# ============================================================
+# ENV
+# ============================================================
 
 load_dotenv()
+
 API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+
 if not API_KEY:
-    sys.exit("  Set GEMINI_API_KEY in your .env file.")
+    sys.exit("Set GEMINI_API_KEY in .env")
 
 try:
     from google import genai
     from google.genai import types
 except ImportError:
-    sys.exit(" Run:  pip install google-genai")
+    sys.exit("Run: pip install google-genai")
 
 client = genai.Client(api_key=API_KEY)
 
-# Ordered list of candidate model IDs to probe for image-generation support.
-# The first model that successfully returns an image will be used for all
-# subsequent enhancement calls.
+# ============================================================
+# CONFIG
+# ============================================================
+
 IMAGE_GEN_CANDIDATES = [
-    "gemini-3.1-flash-image-preview",
-    "gemini-2.5-flash-image",
+    "gemini-3.1-flash-image"
 ]
 
-SUPPORTED = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff", ".tif"}
-INPUT_DIR = Path("input_images")
-OUTPUT_DIR = Path("enhanced_images")
+SUPPORTED = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".bmp",
+    ".webp",
+    ".tiff",
+    ".tif",
+}
+
+# INPUT ROOT FOLDER
+INPUT_DIR = Path(
+    "/home/ubuntu/Ponni_Rag/Tagging_feature/src/scripts/Gemini_Image_Enhancement/input"
+)
+
+# OUTPUT ROOT FOLDER
+OUTPUT_DIR = Path(
+    "/home/ubuntu/Ponni_Rag/Tagging_feature/src/scripts/Gemini_Image_Enhancement/enhanced_image"
+)
+
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+# ============================================================
+# PROMPTS
+# ============================================================
+# ============================================================
+# PROMPTS
+# ============================================================
 
-PROMPT_IMAGE = """Enhance the quality of this cropped image.
-Instructions:
-- Improve image sharpness and clarity.
-- Remove blur, noise, and compression artifacts.
-- Preserve the original content and structure.
-- Improve lighting and readability.
-- Keep the image natural and clean.
-- Generate a high-resolution enhanced version.
-- Use a clean white background if applicable.
-- Do not change the actual objects or drawing content.
-- Return only the enhanced image."""
+PROMPT_IMAGE = """You are an image enhancement tool. Your ONLY job is to improve visual quality.
 
-PROMPT_TEXT = """Enhance this cropped text image while preserving original typography.
-Instructions:
-- Improve text clarity and readability.
-- Keep the original font style unchanged.
-- Preserve the exact text content.
-- Remove noise, blur, shadows, and unwanted marks.
-- Place the content on a pure white background.
-- Align the text neatly.
-- Do not modify the wording, spacing, or font appearance.
-- Generate a clean high-resolution version suitable for layouts and publishing.
-- Return only the enhanced image."""
+STRICT RULES — NEVER VIOLATE:
+- DO NOT add, remove, or alter any text, letters, words, or characters in the image.
+- DO NOT translate, correct, or rewrite any text you see.
+- DO NOT add new objects, shapes, or elements.
+- DO NOT change the background colour or scene composition.
+- DO NOT change the colours of existing objects.
+
+ALLOWED enhancements ONLY:
+- Increase sharpness and clarity.
+- Reduce blur, noise, grain, and compression artifacts.
+- Improve brightness and contrast for better readability.
+- Produce a high-resolution clean output.
+
+Return ONLY the enhanced image. No text. No explanation."""
+
+
+PROMPT_TEXT = """You are an image cleaning tool. Your ONLY job is to clean and sharpen this text image.
+
+STRICT RULES — NEVER VIOLATE:
+- DO NOT change, correct, translate, or rewrite any word, letter, character, or punctuation.
+- DO NOT add any new text or remove any existing text.
+- Every character in the output must be pixel-for-pixel faithful to the input text.
+- If you cannot guarantee the text is unchanged, return the image as-is with only background cleaning.
+
+ALLOWED enhancements ONLY:
+- Replace the background with a pure solid white (#FFFFFF).
+- Remove stains, shadows, noise, blur, and smudges from the background.
+- Sharpen and darken the existing text strokes for better legibility.
+- Preserve the exact font style, size, weight, and spacing.
+- Preserve the exact original layout and line breaks.
+
+Return ONLY the enhanced image. No text. No explanation."""
+
+
+PROMPT_IMAGE_TEXT = """You are an image enhancement tool for images that contain both visuals and text.
+
+STRICT RULES — NEVER VIOLATE:
+- DO NOT change, correct, translate, or rewrite any word, letter, character, or punctuation visible in the image.
+- DO NOT add any new text or symbols.
+- DO NOT remove any existing text.
+- DO NOT change the colours, shapes, or positions of any objects.
+- DO NOT alter the layout or composition of the image.
+- If in doubt about any text character, preserve it exactly as it appears.
+
+ALLOWED enhancements ONLY:
+- Replace the background with a pure solid white (#FFFFFF).
+- Remove noise, blur, stains, shadows, and compression artifacts.
+- Improve sharpness and contrast of both text and visual elements.
+- Increase overall resolution and clarity.
+
+Return ONLY the enhanced image. No text. No explanation."""
+
+# ============================================================
+# HELPERS
+# ============================================================
 
 
 def classify_image(pil_img: Image.Image) -> str:
-    """Classify a PIL image as either ``"text"`` or ``"image"``.
-
-    Uses a heuristic based on the proportion of near-white pixels and the
-    number of distinct colour clusters in a 128×128 thumbnail. Images with a
-    large white area and low colour diversity are treated as text scans or
-    diagrams; everything else is treated as a photographic image.
-
-    Args:
-        pil_img: An opened PIL ``Image`` object to classify.
-
-    Returns:
-        ``"text"`` if the image appears to be a text or diagram scan,
-        ``"image"`` otherwise.
-    """
     try:
         small = pil_img.convert("RGB").resize((128, 128))
-        import warnings
 
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            pixels = list(small.getdata())
-        white = sum(1 for r, g, b in pixels if r > 200 and g > 200 and b > 200)
-        div = len({(r >> 4, g >> 4, b >> 4) for r, g, b in pixels})
-        return "text" if (white / len(pixels) > 0.55 and div < 60) else "image"
+        pixels = list(small.getdata())
+
+        white = sum(
+            1
+            for r, g, b in pixels
+            if r > 200 and g > 200 and b > 200
+        )
+
+        white_ratio = white / len(pixels)
+
+        div = len(
+            {
+                (r >> 4, g >> 4, b >> 4)
+                for r, g, b in pixels
+            }
+        )
+
+        if white_ratio > 0.55 and div < 60:
+            return "text"
+
+        elif white_ratio > 0.25 and div < 120:
+            return "image_text"
+
+        return "image"
+
     except Exception:
         return "image"
 
 
 def to_png_bytes(pil_img: Image.Image) -> bytes:
-    """Encode a PIL image as raw PNG bytes.
-
-    The image is first converted to RGB (stripping any alpha channel) before
-    encoding, ensuring the output is a plain 24-bit PNG compatible with the
-    Gemini API.
-
-    Args:
-        pil_img: The source ``Image`` object to encode.
-
-    Returns:
-        A ``bytes`` object containing the PNG-encoded image data.
-    """
     buf = io.BytesIO()
+
     pil_img.convert("RGB").save(buf, format="PNG")
+
     return buf.getvalue()
 
 
 def save_white_bg(img: Image.Image, path: Path) -> None:
-    """Composite a PIL image onto a white background and save it as PNG.
 
-    If the image has an alpha channel (mode ``RGBA`` or ``LA``), it is
-    flattened against a solid white canvas before saving. Images in other
-    non-RGB modes are converted to ``RGB``. The result is always saved as an
-    optimised PNG.
-
-    Args:
-        img:  The ``Image`` object to save.
-        path: Destination file path (should end in ``.png``).
-    """
     if img.mode in ("RGBA", "LA"):
+
         bg = Image.new("RGB", img.size, (255, 255, 255))
+
         bg.paste(img, mask=img.split()[-1])
+
         img = bg
+
     elif img.mode != "RGB":
         img = img.convert("RGB")
+
     img.save(path, "PNG", optimize=True)
 
 
-def call_gemini(model: str, img_bytes: bytes, prompt: str) -> bytes | None:
-    """Send an image and a text prompt to a Gemini model and return image bytes.
+def call_gemini(model: str, img_bytes: bytes, prompt: str):
 
-    Constructs a multimodal request containing the PNG image and the
-    enhancement prompt, then parses the first ``inline_data`` part from the
-    model's response. If the model returns text instead of an image (e.g.
-    because the prompt was declined or the model lacks image-output support),
-    the text is logged as a warning and ``None`` is returned.
-
-    Args:
-        model:     The Gemini model identifier string (e.g.
-                   ``"gemini-3.1-flash-image-preview"``).
-        img_bytes: Raw PNG bytes of the image to enhance.
-        prompt:    The natural-language enhancement instruction.
-
-    Returns:
-        Raw image bytes returned by the model, or ``None`` if no image part
-        was found in the response.
-    """
     response = client.models.generate_content(
         model=model,
         contents=[
-            types.Part.from_bytes(data=img_bytes, mime_type="image/png"),
+            types.Part.from_bytes(
+                data=img_bytes,
+                mime_type="image/png",
+            ),
             types.Part.from_text(text=prompt),
         ],
         config=types.GenerateContentConfig(
             response_modalities=["IMAGE", "TEXT"],
         ),
     )
+
     for part in response.candidates[0].content.parts:
-        if hasattr(part, "inline_data") and part.inline_data and part.inline_data.data:
+
+        if (
+            hasattr(part, "inline_data")
+            and part.inline_data
+            and part.inline_data.data
+        ):
             return part.inline_data.data
-    for part in response.candidates[0].content.parts:
-        if hasattr(part, "text") and part.text:
-            log.warning("  Model returned text instead of image: %s", part.text[:200])
+
     return None
 
 
-def probe_models(candidates: list) -> str | None:
-    """Find the first model in *candidates* that can generate images.
+def probe_models(candidates):
 
-    Sends a tiny 32×32 white PNG to each candidate model in order and returns
-    the identifier of the first model that responds with an image. This probing
-    step avoids hard-coding a single model name and gracefully handles API
-    rollouts where a model may not yet be available in a given region or tier.
+    log.info("Probing models...")
 
-    Args:
-        candidates: Ordered list of Gemini model identifier strings to test.
-
-    Returns:
-        The identifier of the first working model, or ``None`` if every
-        candidate fails or returns no image.
-    """
-    log.info("Probing models for image-generation capability…")
     tiny = io.BytesIO()
-    Image.new("RGB", (32, 32), (255, 255, 255)).save(tiny, format="PNG")
+
+    Image.new(
+        "RGB",
+        (32, 32),
+        (255, 255, 255),
+    ).save(tiny, format="PNG")
+
     tiny_bytes = tiny.getvalue()
+
     for model in candidates:
+
         try:
-            log.info("  Testing: %s", model)
-            raw = call_gemini(model, tiny_bytes, "Return this image unchanged.")
+            log.info("Testing: %s", model)
+
+            raw = call_gemini(
+                model,
+                tiny_bytes,
+                "Return this image unchanged.",
+            )
+
             if raw:
-                log.info("  ✓ '%s' confirmed — using this model.", model)
+                log.info("Using model: %s", model)
                 return model
-            log.warning("  ✗ '%s' returned no image.", model)
+
         except Exception as e:
-            log.warning("  ✗ '%s' error: %s", model, str(e)[:120])
+            log.warning("%s failed: %s", model, str(e)[:120])
+
     return None
 
 
-FAIL_LOG: list[str] = []  # tracks all failed files
+FAIL_LOG = []
+
+# ============================================================
+# ENHANCE SINGLE IMAGE
+# ============================================================
 
 
-def enhance_single(model: str, img_path: Path, retries: int = 3) -> bool:
-    """Enhance a single image file and write the result to ``OUTPUT_DIR``.
+def enhance_single(model: str, img_path: Path, retries: int = 3):
 
-    Opens the image, classifies it as text or photographic, selects the
-    appropriate Gemini prompt, and calls the API with automatic retry logic.
-    Rate-limit (HTTP 429) and server-error (HTTP 500/503) responses trigger
-    progressively longer back-off delays. Already-enhanced files (where an
-    output PNG already exists) are skipped without an API call.
-
-    On failure, the filename and reason are appended to the module-level
-    ``FAIL_LOG`` list so a summary can be printed and saved at the end of a
-    batch run.
-
-    Args:
-        model:   The Gemini model identifier to use for enhancement.
-        img_path: Path to the source image file.
-        retries: Maximum number of API call attempts before giving up.
-                 Defaults to ``3``.
-
-    Returns:
-        ``True`` if the image was successfully enhanced and saved (or was
-        already present), ``False`` if all attempts failed.
-    """
     try:
         pil_img = Image.open(img_path)
+
     except Exception as e:
-        log.error("  Cannot open file: %s", e)
-        FAIL_LOG.append(f"{img_path.name}  →  cannot open: {e}")
+
+        FAIL_LOG.append(f"{img_path} -> cannot open: {e}")
+
         return False
 
-    out_path = OUTPUT_DIR / f"{img_path.stem}_enhanced.png"
+    # Preserve folder structure
+    relative_path = img_path.relative_to(INPUT_DIR)
+
+    out_path = (
+        OUTPUT_DIR
+        / relative_path.parent
+        / f"{img_path.stem}_enhanced.png"
+    )
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
     if out_path.exists():
-        log.info("  ⏭  Already enhanced, skipping.")
+        log.info("Already exists -> skipping")
         return True
 
+    # classify
     ctype = classify_image(pil_img)
-    prompt = PROMPT_TEXT if ctype == "text" else PROMPT_IMAGE
+
+    if ctype == "text":
+        prompt = PROMPT_TEXT
+
+    elif ctype == "image_text":
+        prompt = PROMPT_IMAGE_TEXT
+
+    else:
+        prompt = PROMPT_IMAGE
+
     img_bytes = to_png_bytes(pil_img)
-    log.info("  → type: %s  |  size: %dx%d", ctype, pil_img.width, pil_img.height)
+
+    log.info(
+        "Type: %s | Size: %dx%d",
+        ctype,
+        pil_img.width,
+        pil_img.height,
+    )
 
     for attempt in range(1, retries + 1):
+
         try:
+
             raw = call_gemini(model, img_bytes, prompt)
+
             if raw:
+
                 enhanced = Image.open(io.BytesIO(raw))
+
                 save_white_bg(enhanced, out_path)
-                log.info(
-                    "  ✓ Saved → %s  (%dx%d)",
-                    out_path.name,
-                    enhanced.width,
-                    enhanced.height,
-                )
+
+                log.info("Saved -> %s", out_path)
+
                 return True
 
             log.warning(
-                "  Attempt %d/%d: no image returned, retrying…", attempt, retries
+                "No image returned (%d/%d)",
+                attempt,
+                retries,
             )
+
             time.sleep(2 * attempt)
 
         except Exception as e:
+
             err = str(e)
-            if "429" in err or "RESOURCE_EXHAUSTED" in err:
+
+            if "429" in err:
+
                 wait = 20 * attempt
-                log.warning("  Rate limited – waiting %ds before retry…", wait)
+
+                log.warning("Rate limit -> waiting %ds", wait)
+
                 time.sleep(wait)
-            elif "500" in err or "503" in err:
-                wait = 10 * attempt
-                log.warning("  Server error – waiting %ds before retry…", wait)
-                time.sleep(wait)
+
             else:
-                log.warning("  Attempt %d/%d error: %s", attempt, retries, err[:150])
+
+                log.warning(
+                    "Attempt %d failed: %s",
+                    attempt,
+                    err[:150],
+                )
+
                 time.sleep(3 * attempt)
 
-    reason = f"no image after {retries} attempts"
-    FAIL_LOG.append(f"{img_path.name}  →  {reason}")
-    log.error("  ✗ Failed: %s", reason)
+    FAIL_LOG.append(f"{img_path} -> failed after retries")
+
     return False
 
 
-def main() -> None:
-    """Run the full image-enhancement batch pipeline.
+# ============================================================
+# MAIN
+# ============================================================
 
-    Steps performed:
 
-    1. Validate that ``INPUT_DIR`` exists and contains at least one supported
-       image file.
-    2. Probe ``IMAGE_GEN_CANDIDATES`` to find a working Gemini model.
-    3. Iterate over every input image, skipping files that already have a
-       corresponding output in ``OUTPUT_DIR``.
-    4. Call :func:`enhance_single` for each remaining file, sleeping 1.5 s
-       between requests to stay within typical rate limits.
-    5. Print a summary of enhanced, skipped, and failed counts. If any files
-       failed, write the details to ``enhanced_images/_failed.txt``.
+def main():
 
-    Exits with a non-zero status via ``sys.exit`` if ``INPUT_DIR`` is missing,
-    contains no supported images, or no working model can be found.
-    """
     if not INPUT_DIR.exists():
-        sys.exit(f"  Folder '{INPUT_DIR}' not found.")
+        sys.exit(f"Folder not found: {INPUT_DIR}")
 
+    # RECURSIVE SEARCH
     images = sorted(
-        p for p in INPUT_DIR.iterdir() if p.is_file() and p.suffix.lower() in SUPPORTED
+        p
+        for p in INPUT_DIR.rglob("*")
+        if p.is_file() and p.suffix.lower() in SUPPORTED
     )
+
     if not images:
-        sys.exit(f"  No images found in '{INPUT_DIR}'.")
+        sys.exit("No images found")
 
     model = probe_models(IMAGE_GEN_CANDIDATES)
+
     if not model:
-        sys.exit("  No working image-generation model found.")
+        sys.exit("No working Gemini image model found")
 
     log.info("=" * 60)
-    log.info("Images : %d  |  Model : %s", len(images), model)
-    log.info("Output : %s", OUTPUT_DIR.resolve())
+    log.info("Total Images : %d", len(images))
+    log.info("Output Folder: %s", OUTPUT_DIR)
     log.info("=" * 60)
 
-    success = failed = skipped = 0
-    for i, p in enumerate(images, 1):
-        log.info("[%d/%d] %s", i, len(images), p.name)
+    success = 0
+    failed = 0
+    skipped = 0
 
-        out_path = OUTPUT_DIR / f"{p.stem}_enhanced.png"
+    for idx, img_path in enumerate(images, 1):
+
+        relative_path = img_path.relative_to(INPUT_DIR)
+
+        log.info(
+            "[%d/%d] %s",
+            idx,
+            len(images),
+            relative_path,
+        )
+
+        out_path = (
+            OUTPUT_DIR
+            / relative_path.parent
+            / f"{img_path.stem}_enhanced.png"
+        )
+
         if out_path.exists():
-            log.info("  ⏭  Already done, skipping.")
+
             skipped += 1
+
+            log.info("Skipping existing")
+
             continue
 
-        if enhance_single(model, p):
+        if enhance_single(model, img_path):
             success += 1
         else:
             failed += 1
 
-        if i < len(images):
-            time.sleep(1.5)
+        time.sleep(1.5)
 
     log.info("=" * 60)
     log.info("SUMMARY")
-    log.info("   Enhanced : %d", success)
-    log.info("   Skipped  : %d  (already existed)", skipped)
-    log.info("   Failed   : %d", failed)
+    log.info("Enhanced : %d", success)
+    log.info("Skipped  : %d", skipped)
+    log.info("Failed   : %d", failed)
 
     if FAIL_LOG:
-        log.info("")
-        log.info("Failed files:")
-        for entry in FAIL_LOG:
-            log.info("  • %s", entry)
+
         fail_file = OUTPUT_DIR / "_failed.txt"
+
         fail_file.write_text("\n".join(FAIL_LOG))
-        log.info("")
-        log.info("Failed list saved → %s", fail_file)
+
+        log.info("Failed list saved -> %s", fail_file)
 
     log.info("=" * 60)
 
