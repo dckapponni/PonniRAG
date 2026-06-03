@@ -49,9 +49,7 @@ client = genai.Client(api_key=API_KEY)
 # CONFIG
 # ============================================================
 
-IMAGE_GEN_CANDIDATES = [
-    "gemini-3.1-flash-image"
-]
+IMAGE_GEN_CANDIDATES = ["gemini-3.1-flash-image"]
 
 SUPPORTED = {
     ".jpg",
@@ -147,20 +145,11 @@ def classify_image(pil_img: Image.Image) -> str:
 
         pixels = list(small.getdata())
 
-        white = sum(
-            1
-            for r, g, b in pixels
-            if r > 200 and g > 200 and b > 200
-        )
+        white = sum(1 for r, g, b in pixels if r > 200 and g > 200 and b > 200)
 
         white_ratio = white / len(pixels)
 
-        div = len(
-            {
-                (r >> 4, g >> 4, b >> 4)
-                for r, g, b in pixels
-            }
-        )
+        div = len({(r >> 4, g >> 4, b >> 4) for r, g, b in pixels})
 
         if white_ratio > 0.55 and div < 60:
             return "text"
@@ -216,11 +205,7 @@ def call_gemini(model: str, img_bytes: bytes, prompt: str):
 
     for part in response.candidates[0].content.parts:
 
-        if (
-            hasattr(part, "inline_data")
-            and part.inline_data
-            and part.inline_data.data
-        ):
+        if hasattr(part, "inline_data") and part.inline_data and part.inline_data.data:
             return part.inline_data.data
 
     return None
@@ -282,11 +267,7 @@ def enhance_single(model: str, img_path: Path, retries: int = 3):
     # Preserve folder structure
     relative_path = img_path.relative_to(INPUT_DIR)
 
-    out_path = (
-        OUTPUT_DIR
-        / relative_path.parent
-        / f"{img_path.stem}_enhanced.png"
-    )
+    out_path = OUTPUT_DIR / relative_path.parent / f"{img_path.stem}_enhanced.png"
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -378,9 +359,7 @@ def main():
 
     # RECURSIVE SEARCH
     images = sorted(
-        p
-        for p in INPUT_DIR.rglob("*")
-        if p.is_file() and p.suffix.lower() in SUPPORTED
+        p for p in INPUT_DIR.rglob("*") if p.is_file() and p.suffix.lower() in SUPPORTED
     )
 
     if not images:
@@ -411,11 +390,7 @@ def main():
             relative_path,
         )
 
-        out_path = (
-            OUTPUT_DIR
-            / relative_path.parent
-            / f"{img_path.stem}_enhanced.png"
-        )
+        out_path = OUTPUT_DIR / relative_path.parent / f"{img_path.stem}_enhanced.png"
 
         if out_path.exists():
 
