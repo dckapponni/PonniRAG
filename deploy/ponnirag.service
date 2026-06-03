@@ -1,0 +1,18 @@
+[Unit]
+Description=PonniRAG Application Stack
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/ubuntu/PonniRAG
+ExecStart=/home/ubuntu/PonniRAG/deploy/ponnirag-startup.sh
+ExecStop=/usr/bin/docker compose down
+TimeoutStartSec=300
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
