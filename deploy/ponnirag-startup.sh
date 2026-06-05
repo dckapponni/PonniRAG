@@ -3,7 +3,7 @@
 # Brings up Docker Compose, waits for health, runs warm-up query.
 set -euo pipefail
 
-APP_DIR="/home/ubuntu/PonniRAG"
+APP_DIR="/home/ubuntu/Ponni_Rag/Tagging_feature"
 API_URL="http://localhost:8000"
 HEALTH_URL="${API_URL}/health"
 WARMUP_URL="${API_URL}/api/ask"
