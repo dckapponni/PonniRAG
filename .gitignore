@@ -34,3 +34,4 @@ src/scripts/Gemini_Image_Enhancement/Enhanced_vol-7/
 src/scripts/Gemini_Image_Enhancement/Enhanced_vol-5/
 src/scripts/Gemini_Image_Enhancement/venv/
 src/scripts/Gemini_Image_Enhancement/.env
+.gstack/

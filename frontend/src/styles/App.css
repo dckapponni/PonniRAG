@@ -1049,6 +1049,15 @@ html, body {
   font-weight: 500;
 }
 
+.history-section-title {
+  font-size: 1.35rem;
+  font-weight: 600;
+  color: #1e293b;
+  margin: 0 0 1.25rem 0;
+  line-height: 1.6;
+  letter-spacing: -0.01em;
+}
+
 .about-divider {
   border: none;
   height: 1px;
