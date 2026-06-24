@@ -1443,20 +1443,15 @@ async def get_issue_statistics():
 
 
 @app.get("/api/library/volumes", response_model=List[VolumeInfo], tags=["Library"])
-async def list_volumes(request: Request):
+async def list_volumes():
     """List all volumes in the Ponni digital library.
 
     Derives year ranges from per-issue year fields so multi-year volumes
     display an accurate range (e.g. ``"2018-2020"``).
 
-    Args:
-        request: Incoming HTTP request (used to derive the base URL for
-            cover image proxy URLs).
-
     Returns:
         List of :class:`VolumeInfo` objects, one per volume.
     """
-    base = str(request.base_url).rstrip("/")
     result = []
     for vol in _magazine["volumes"]:
         # Derive year range from per-issue years
@@ -1471,7 +1466,7 @@ async def list_volumes(request: Request):
                 id=vol["id"],
                 year=year_display,
                 issue_count=len(vol["issues"]),
-                cover_image_url=f"{base}/api/images/volumes/{vol['id']}/cover",
+                cover_image_url=f"/api/images/volumes/{vol['id']}/cover",
             )
         )
     return result
@@ -1482,13 +1477,11 @@ async def list_volumes(request: Request):
     response_model=List[VolumeIssue],
     tags=["Library"],
 )
-async def get_volume_issues(volume_id: int, request: Request):
+async def get_volume_issues(volume_id: int):
     """List all issues for a given volume.
 
     Args:
         volume_id: Volume number (1–8).
-        request: Incoming HTTP request (used to derive the base URL for
-            cover image proxy URLs).
 
     Returns:
         List of :class:`VolumeIssue` objects in registry order.
@@ -1496,7 +1489,6 @@ async def get_volume_issues(volume_id: int, request: Request):
     Raises:
         HTTPException 404: Volume not found, or no issues registered.
     """
-    base = str(request.base_url).rstrip("/")
     vol_data = next((v for v in _magazine["volumes"] if v["id"] == volume_id), None)
     if not vol_data:
         raise HTTPException(status_code=404, detail="Volume not found")
@@ -1512,8 +1504,7 @@ async def get_volume_issues(volume_id: int, request: Request):
                 has_pdf=bool(issue.get("pdf_url")),
                 pdf_url=issue.get("pdf_url"),
                 cover_image_url=(
-                    f"{base}/api/images/volumes/"
-                    f"{volume_id}/issues/{issue_name}/cover"
+                    f"/api/images/volumes/" f"{volume_id}/issues/{issue_name}/cover"
                 ),
             )
         )
