@@ -179,12 +179,19 @@ def _s3_key_with_fallback(key: str) -> list:
     return keys
 
 
+# In-process cache of fetched image bytes, keyed by primary S3 key.
+# Covers are few and immutable, so cache successes for the process lifetime
+# to avoid re-hitting S3 (and the extension-fallback round-trips) on every
+# page load. Browser Cache-Control still handles repeat client requests.
+_image_byte_cache: Dict[str, dict] = {}
+
+
 def _fetch_s3_image(key: str) -> Optional[dict]:
     """Download an image from S3, retrying with alternate file extensions.
 
-    Iterates through candidate keys produced by :func:`_s3_key_with_fallback`
-    and returns the first successful result.  Logs a warning if all
-    candidates fail.
+    Successful results are cached in-process keyed by ``key`` so subsequent
+    requests skip the S3 round-trip (and any failed extension-fallback
+    probes) entirely. Failures are not cached.
 
     Args:
         key: Primary S3 object key for the image.
@@ -193,12 +200,17 @@ def _fetch_s3_image(key: str) -> Optional[dict]:
         A dict with keys ``"body"`` (``bytes``) and ``"content_type"``
         (``str``) on success, or ``None`` if the image cannot be retrieved.
     """
+    cached = _image_byte_cache.get(key)
+    if cached is not None:
+        return cached
     for candidate in _s3_key_with_fallback(key):
         try:
             resp = _s3_client.get_object(Bucket=_s3_conf["bucket"], Key=candidate)
             body = resp["Body"].read()
             content_type = resp.get("ContentType", "image/jpeg")
-            return {"body": body, "content_type": content_type}
+            result = {"body": body, "content_type": content_type}
+            _image_byte_cache[key] = result
+            return result
         except ClientError as e:
             if e.response["Error"]["Code"] == "NoSuchKey":
                 continue
@@ -209,6 +221,34 @@ def _fetch_s3_image(key: str) -> Optional[dict]:
             return None
     logger.warning(f"S3 image not found with any extension: {key}")
     return None
+
+
+async def _warm_cover_cache() -> None:
+    """Prefetch all volume and issue cover images into the byte cache.
+
+    Runs at startup so the first user does not pay the cross-cloud S3
+    round-trip for every cover. Fetches run concurrently (bounded) in
+    worker threads; individual failures are tolerated.
+    """
+    keys = []
+    for vol in _magazine["volumes"]:
+        vk = _volume_cover_s3_key(vol["id"])
+        if vk:
+            keys.append(vk)
+        for iss in vol["issues"]:
+            ik = _issue_cover_s3_key(vol["id"], str(iss["num"]))
+            if ik:
+                keys.append(ik)
+
+    sem = asyncio.Semaphore(8)
+
+    async def _warm(key: str) -> bool:
+        async with sem:
+            return bool(await asyncio.to_thread(_fetch_s3_image, key))
+
+    results = await asyncio.gather(*(_warm(k) for k in keys), return_exceptions=True)
+    ok = sum(1 for r in results if r is True)
+    logger.info(f"Cover cache warm: {ok}/{len(keys)} images prefetched")
 
 
 logging.basicConfig(
@@ -689,6 +729,13 @@ async def lifespan(app: FastAPI):
         logger.info("Content vocabulary warm")
     except Exception as e:
         logger.warning(f"Model pre-warm failed (will lazy-load on first call): {e!r}")
+
+    # Prefetch cover images so the first library page load is served from
+    # memory instead of paying the cross-cloud S3 round-trip per cover.
+    try:
+        await _warm_cover_cache()
+    except Exception as e:
+        logger.warning(f"Cover cache warm failed (will lazy-load on demand): {e!r}")
 
     # Validate Gemini API key (also primes the health check cache)
     gemini_health = check_gemini_health()

@@ -1354,6 +1354,15 @@ class TestS3KeyWithFallback:
 class TestFetchS3Image:
     """Tests for _fetch_s3_image helper."""
 
+    @pytest.fixture(autouse=True)
+    def _clear_image_cache(self):
+        """Reset the in-process image byte cache before each test."""
+        from db.api import _image_byte_cache
+
+        _image_byte_cache.clear()
+        yield
+        _image_byte_cache.clear()
+
     @patch("db.api._s3_client")
     @patch("db.api._s3_conf", {"bucket": "test-bucket"})
     def test_fetch_success(self, mock_s3):
