@@ -4,6 +4,7 @@ Handles document chunk retrieval, merging, context building,
 relevance filtering, and output formatting.
 """
 
+import concurrent.futures
 import hashlib
 import logging
 import re
@@ -14,6 +15,15 @@ from qdrant_client import QdrantClient, models
 from retry import with_qdrant_retry
 
 logger = logging.getLogger(__name__)
+
+# Per-document chunk retrieval fans out one Qdrant scroll per candidate
+# document. Running these serially is the dominant query latency (a 200-chunk
+# candidate pool can map to >100 documents, each a ~350 ms round-trip). Hydrate
+# them concurrently against the (thread-safe) HTTP client instead.
+_HYDRATE_MAX_WORKERS = 16
+_hydrate_executor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=_HYDRATE_MAX_WORKERS, thread_name_prefix="hydrate"
+)
 
 
 def retrieve_all_chunks_for_document(
@@ -117,9 +127,9 @@ def merge_consecutive_chunks(client: QdrantClient, points) -> List[Dict]:
         ``"chunk_count"``, ``"score"``, and ``"tags"``.
         Sorted by ``"score"`` descending.
     """
+    # Phase 1: collect unique candidate documents in score order (no I/O).
     seen_docs = set()
-    merged_docs = []
-
+    candidates = []
     for p in points:
         payload = p.payload or {}
         if payload.get("type") != "article":
@@ -137,8 +147,13 @@ def merge_consecutive_chunks(client: QdrantClient, points) -> List[Dict]:
         if doc_key in seen_docs:
             continue
         seen_docs.add(doc_key)
+        candidates.append((p, metadata, title))
 
-        all_chunks = retrieve_all_chunks_for_document(
+    # Phase 2: hydrate each candidate's full chunk set concurrently. Each
+    # retrieval is an independent Qdrant scroll, so fanning them out turns
+    # ~N serial round-trips into ~N / workers.
+    def _hydrate(metadata, title):
+        return retrieve_all_chunks_for_document(
             client,
             doc_id=metadata.get("doc_id"),
             doc_issue=metadata.get("doc_issue"),
@@ -146,6 +161,16 @@ def merge_consecutive_chunks(client: QdrantClient, points) -> List[Dict]:
             title=title or None,
         )
 
+    chunk_results = list(
+        _hydrate_executor.map(
+            lambda c: _hydrate(c[1], c[2]),
+            candidates,
+        )
+    )
+
+    # Phase 3: build merged documents in the original score order.
+    merged_docs = []
+    for (p, metadata, title), all_chunks in zip(candidates, chunk_results):
         if not all_chunks:
             continue
 

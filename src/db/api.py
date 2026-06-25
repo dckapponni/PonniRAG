@@ -29,7 +29,9 @@ Dependencies:
 import asyncio
 import json
 import logging
+import queue
 import sys
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -1032,29 +1034,60 @@ async def ask_question_stream_endpoint(request: QuestionRequest):
     """
     history = _truncate_history(request)
 
+    # Retrieval + first-token latency can leave the SSE response with no bytes
+    # for several seconds. A long all-silent stream is liable to be severed by
+    # intermediaries (ERR_INCOMPLETE_CHUNKED_ENCODING client-side), so the
+    # producer runs on a worker thread while the response loop emits a comment
+    # heartbeat whenever no real event has arrived within HEARTBEAT_SECONDS.
+    HEARTBEAT_SECONDS = 10
+
     def event_generator():
-        """Yield SSE events for streaming response."""
-        try:
-            for event in ask_question_stream(
-                question=request.question,
-                filter_tags=request.tags,
-                history=history,
-                language=request.language,
-            ):
-                if event["type"] == "token":
-                    data = json.dumps({"content": event["content"]})
-                    yield f"event: token\ndata: {data}\n\n"
-                elif event["type"] == "fallback":
-                    data = json.dumps({"reason": event["reason"]})
-                    yield f"event: fallback\ndata: {data}\n\n"
-                elif event["type"] == "sources":
-                    data = json.dumps({"sources": event["sources"]})
-                    yield f"event: sources\ndata: {data}\n\n"
-            yield "event: done\ndata: {}\n\n"
-        except Exception as e:
-            logger.error(f"Streaming error: {e}", exc_info=True)
-            err = json.dumps({"error": "An internal error occurred."})
-            yield f"event: error\ndata: {err}\n\n"
+        """Yield SSE events for streaming response, with idle heartbeats."""
+        events: "queue.Queue" = queue.Queue()
+        DONE = object()
+
+        def produce():
+            try:
+                for event in ask_question_stream(
+                    question=request.question,
+                    filter_tags=request.tags,
+                    history=history,
+                    language=request.language,
+                ):
+                    events.put(("event", event))
+            except Exception as e:
+                logger.error(f"Streaming error: {e}", exc_info=True)
+                events.put(("error", None))
+            finally:
+                events.put((DONE, None))
+
+        threading.Thread(target=produce, daemon=True).start()
+
+        while True:
+            try:
+                kind, event = events.get(timeout=HEARTBEAT_SECONDS)
+            except queue.Empty:
+                yield ": keepalive\n\n"
+                continue
+
+            if kind is DONE:
+                break
+            if kind == "error":
+                err = json.dumps({"error": "An internal error occurred."})
+                yield f"event: error\ndata: {err}\n\n"
+                continue
+
+            if event["type"] == "token":
+                data = json.dumps({"content": event["content"]})
+                yield f"event: token\ndata: {data}\n\n"
+            elif event["type"] == "fallback":
+                data = json.dumps({"reason": event["reason"]})
+                yield f"event: fallback\ndata: {data}\n\n"
+            elif event["type"] == "sources":
+                data = json.dumps({"sources": event["sources"]})
+                yield f"event: sources\ndata: {data}\n\n"
+
+        yield "event: done\ndata: {}\n\n"
 
     return StreamingResponse(
         event_generator(),

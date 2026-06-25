@@ -604,6 +604,44 @@ def load_authors_from_s3() -> List[Dict]:
     return documents
 
 
+# Payload fields used in scroll/search filters. Without keyword indexes,
+# every filtered scroll is a full collection scan (the dominant query latency
+# on slower hosts). Indexing turns each into an O(log n) lookup.
+_FILTER_INDEX_FIELDS = (
+    "type",
+    "metadata.doc_id",
+    "metadata.doc_issue",
+    "metadata.volume",
+    "metadata.title",
+    "metadata.tags",
+)
+
+
+def ensure_payload_indexes(client):
+    """Create keyword payload indexes on all filtered fields, idempotently.
+
+    Safe to call on an existing, populated collection — Qdrant builds the
+    indexes in the background without re-indexing vectors. Re-creating an
+    index that already exists is a no-op (errors are logged and ignored).
+
+    Args:
+        client (QdrantClient): Connected Qdrant client instance.
+
+    Returns:
+        None
+    """
+    for field in _FILTER_INDEX_FIELDS:
+        try:
+            client.create_payload_index(
+                collection_name=COLLECTION_NAME,
+                field_name=field,
+                field_schema=models.PayloadSchemaType.KEYWORD,
+            )
+            logger.info(f"Payload index ensured: {field}")
+        except Exception as e:
+            logger.warning(f"Payload index for {field} not created: {e}")
+
+
 def _do_full_index(client):
     """Recreate the Qdrant collection and index all articles and authors.
 
@@ -648,6 +686,8 @@ def _do_full_index(client):
         },
     )
     logger.info(f"Created collection: {COLLECTION_NAME}")
+
+    ensure_payload_indexes(client)
 
     logger.info(f"\n{'-'*60}")
     logger.info("INDEXING ARTICLE DOCUMENTS")
@@ -808,6 +848,9 @@ def main(force_reindex: bool = False):
         # Check if collection already exists in Qdrant (e.g. Docker volume survived)
         if client.collection_exists(COLLECTION_NAME):
             info = client.get_collection(COLLECTION_NAME)
+            # Self-heal indexes for collections created before they existed
+            # (idempotent; no reindex of vectors).
+            ensure_payload_indexes(client)
             logger.info(
                 f"Collection '{COLLECTION_NAME}' exists with "
                 f"{info.points_count} points — nothing to do"
@@ -890,5 +933,16 @@ if __name__ == "__main__":
         action="store_true",
         help="Force full re-index ignoring S3 state",
     )
+    parser.add_argument(
+        "--ensure-indexes",
+        action="store_true",
+        help="Create payload indexes on the existing collection and exit "
+        "(no reindex; safe on populated data)",
+    )
     args = parser.parse_args()
-    main(force_reindex=args.force_reindex)
+    if args.ensure_indexes:
+        logger.info(f"Connecting to Qdrant server at {QDRANT_HOST}:{QDRANT_PORT}")
+        _client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+        ensure_payload_indexes(_client)
+    else:
+        main(force_reindex=args.force_reindex)
