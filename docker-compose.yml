@@ -50,6 +50,16 @@ services:
       - RERANKER_SKIP_CE_ON_CLEAR_WIN=${RERANKER_SKIP_CE_ON_CLEAR_WIN:-1}
       - RERANKER_CLEAR_WIN_MIN_PHRASE=${RERANKER_CLEAR_WIN_MIN_PHRASE:-2}
       - RERANKER_CLEAR_WIN_MAX_MATCHES=${RERANKER_CLEAR_WIN_MAX_MATCHES:-3}
+      # Models are baked into the image and persisted via the hf_cache volume,
+      # so loads should never reach the network. Offline mode avoids the slow
+      # huggingface.co update-check round-trips on every model load.
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-1}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-1}
+    volumes:
+      # Persist the ML model cache (HuggingFace, fastembed, torch) across
+      # rebuilds. On first creation Docker seeds this volume from the baked
+      # image cache, so models are not re-downloaded.
+      - hf_cache:/root/.cache
     restart: unless-stopped
 
   frontend:
