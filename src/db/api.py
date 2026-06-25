@@ -739,6 +739,25 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Cover cache warm failed (will lazy-load on demand): {e!r}")
 
+    # Run one full search+rerank pass (no LLM) so the cross-encoder's first
+    # forward pass and the Qdrant connection pool are warm before any live
+    # query. Loading the model (above) is not enough — the first inference
+    # carries a large one-time cost, especially on CPU-only hosts. This makes
+    # warm-up self-contained in the app, so it happens on every container
+    # start (manual `docker-compose up` included), not only via the systemd
+    # deploy script's warm-up query.
+    try:
+        from hybrid_search import ask_question
+
+        await asyncio.to_thread(
+            ask_question,
+            "பொன்னி இதழ் பற்றி சொல்லுங்கள்",
+            use_llm=False,
+        )
+        logger.info("Search + reranker pipeline warm (first forward pass done)")
+    except Exception as e:
+        logger.warning(f"Pipeline warm-up query failed (non-fatal): {e!r}")
+
     # Validate Gemini API key (also primes the health check cache)
     gemini_health = check_gemini_health()
     if gemini_health["healthy"]:
@@ -777,6 +796,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/health/live", tags=["Health"])
+async def liveness_check():
+    """Cheap process-liveness probe — no external backend calls.
+
+    Used by the container HEALTHCHECK so the periodic probe does not hit
+    Gemini (which costs API quota) or Qdrant. Returns ``200`` as long as
+    the API process is serving requests. Use ``/health`` for full
+    backend status.
+
+    Returns:
+        Dict with a static ``status`` of ``"alive"``.
+    """
+    return {"status": "alive"}
 
 
 @app.get("/health", response_model=HealthResponse, tags=["Health"])

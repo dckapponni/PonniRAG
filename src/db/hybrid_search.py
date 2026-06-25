@@ -1687,29 +1687,10 @@ def ask_question_stream(
             _rerank_or_filter, question, merged_docs
         )
 
-        # Pre-check Gemini health before streaming LLM
-        gemini_health = check_gemini_health()
-        if not gemini_health["healthy"]:
-            logger.error(f"Gemini unhealthy (stream): {gemini_health}")
-            facts = extract_key_facts(merged_docs, question)
-            answer = generate_extractive_answer(facts, question)
-            if answer:
-                yield {"type": "token", "content": answer}
-            else:
-                yield {
-                    "type": "token",
-                    "content": _msg(
-                        language,
-                        "மன்னிக்கவும், LLM சேவை தற்போது கிடைக்கவில்லை.",
-                        "Sorry, the LLM service is currently unavailable.",
-                    ),
-                }
-            try:
-                yield {"type": "sources", "sources": rerank_future.result(timeout=60)}
-            except Exception as e:
-                logger.warning(f"Rerank future failed in degraded path: {e!r}")
-                yield {"type": "sources", "sources": format_sources(merged_docs)}
-            return
+        # No upfront Gemini health probe: it added a round-trip to the hot
+        # path, and a down/exhausted Gemini is already handled below — a
+        # failed or near-empty stream falls through to the extractive
+        # fallback (token_count < 10), which serves the same degraded answer.
 
         # Stream LLM tokens and accumulate for caching
         token_count = 0
@@ -1739,9 +1720,23 @@ def ask_question_stream(
 
         try:
             sources = rerank_future.result(timeout=90)
+        except concurrent.futures.TimeoutError:
+            # The rerank is genuinely slow (CPU-starved host). Wait on the
+            # in-flight future rather than launching a second cross-encoder
+            # pass — recomputing would fight the original for the same cores
+            # and make both slower. Fall back to cheap lexical sources only
+            # if it is truly stuck.
+            logger.warning(
+                "Rerank exceeded 90s; awaiting in-flight result (no recompute)"
+            )
+            try:
+                sources = rerank_future.result(timeout=210)
+            except Exception as e:
+                logger.warning(f"Rerank still unavailable: {e!r}; using lexical")
+                sources = format_sources(merged_docs)
         except Exception as e:
-            logger.warning(f"Rerank future failed: {e!r}; falling back inline")
-            sources = _rerank_or_filter(question, merged_docs)
+            logger.warning(f"Rerank future failed: {e!r}; using lexical sources")
+            sources = format_sources(merged_docs)
 
         if fallback_reason:
             yield {"type": "fallback", "reason": fallback_reason}

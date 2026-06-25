@@ -3016,14 +3016,14 @@ class TestAskQuestionStream:
     @patch("hybrid_search.get_qdrant_client")
     @patch("hybrid_search.HybridQdrantSearch")
     @patch("hybrid_search.merge_consecutive_chunks")
-    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.generate_llm_answer_stream")
     @patch("hybrid_search.extract_key_facts")
     @patch("hybrid_search.generate_extractive_answer")
     def test_stream_gemini_unhealthy_extractive(
         self,
         mock_extract,
         mock_facts,
-        mock_gemini,
+        mock_stream_llm,
         mock_merge,
         mock_search_cls,
         mock_client,
@@ -3031,24 +3031,29 @@ class TestAskQuestionStream:
         mock_cache,
         mock_h,
     ):
-        """Test streaming with unhealthy Gemini uses extractive."""
+        """A down Gemini (empty LLM stream) falls back to extractive."""
         mock_h.return_value = {"healthy": True, "points_count": 1000}
         mock_cache.get.return_value = None
         mock_cache.check_version = MagicMock()
+        mock_cache.put = MagicMock()
         mock_csv.exists.return_value = False
         mock_client.return_value = MagicMock()
         mock_searcher = MagicMock()
         mock_searcher.search.return_value = [MagicMock()]
         mock_search_cls.return_value = mock_searcher
         mock_merge.return_value = [_make_merged_doc()]
-        mock_gemini.return_value = {"healthy": False}
+        # Gemini down → stream yields nothing → token_count < 10 → fallback
+        mock_stream_llm.return_value = iter([])
         mock_facts.return_value = [{"sentence": "fact", "score": 10}]
-        mock_extract.return_value = "extractive answer"
+        # Must exceed the 50-char floor in _llm_fallback_answer to be kept
+        extractive = (
+            "This is a sufficiently long extractive answer drawn " "from the sources."
+        )
+        mock_extract.return_value = extractive
 
         output = list(hs.ask_question_stream("test"))
         tokens = [o["content"] for o in output if o["type"] == "token"]
-        assert "extractive answer" in tokens
-        # 1126-1141
+        assert extractive in tokens
 
     @patch("hybrid_search.check_qdrant_health")
     @patch("hybrid_search._response_cache")
@@ -3056,14 +3061,14 @@ class TestAskQuestionStream:
     @patch("hybrid_search.get_qdrant_client")
     @patch("hybrid_search.HybridQdrantSearch")
     @patch("hybrid_search.merge_consecutive_chunks")
-    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.generate_llm_answer_stream")
     @patch("hybrid_search.extract_key_facts")
     @patch("hybrid_search.generate_extractive_answer")
     def test_stream_gemini_unhealthy_no_extractive(
         self,
         mock_extract,
         mock_facts,
-        mock_gemini,
+        mock_stream_llm,
         mock_merge,
         mock_search_cls,
         mock_client,
@@ -3071,24 +3076,27 @@ class TestAskQuestionStream:
         mock_cache,
         mock_h,
     ):
-        """Test streaming Gemini unhealthy no extractive."""
+        """Down Gemini with no extractive content emits last-resort message."""
         mock_h.return_value = {"healthy": True, "points_count": 1000}
         mock_cache.get.return_value = None
         mock_cache.check_version = MagicMock()
+        mock_cache.put = MagicMock()
         mock_csv.exists.return_value = False
         mock_client.return_value = MagicMock()
         mock_searcher = MagicMock()
         mock_searcher.search.return_value = [MagicMock()]
         mock_search_cls.return_value = mock_searcher
         mock_merge.return_value = [_make_merged_doc()]
-        mock_gemini.return_value = {"healthy": False}
+        mock_stream_llm.return_value = iter([])
         mock_facts.return_value = []
         mock_extract.return_value = ""
 
         output = list(hs.ask_question_stream("test"))
+        # Last-resort fallback fires with the "answer is in the sources" message
+        reasons = [o.get("reason") for o in output if o["type"] == "fallback"]
         tokens = [o["content"] for o in output if o["type"] == "token"]
-        assert any("LLM" in t or "unavailable" in t.lower() for t in tokens)
-        # 1135-1143
+        assert "extractive" in reasons
+        assert any("ஆதாரங்கள" in t or "sources" in t.lower() for t in tokens)
 
     @patch("hybrid_search.check_qdrant_health")
     @patch("hybrid_search._response_cache")

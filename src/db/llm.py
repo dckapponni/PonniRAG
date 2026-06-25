@@ -446,7 +446,7 @@ def _get_gemini_client():
 
 _gemini_health_cache = {"result": None, "timestamp": 0}
 _gemini_health_lock = threading.Lock()
-_GEMINI_HEALTH_TTL = 60  # seconds — recheck every 60s
+_GEMINI_HEALTH_TTL = 300  # seconds — recheck every 5 min (cuts API spam)
 
 
 def check_gemini_health(ttl: int = _GEMINI_HEALTH_TTL) -> Dict:
