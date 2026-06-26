@@ -89,4 +89,10 @@ WORKDIR /app/src
 
 
 
-CMD ["uvicorn", "db.api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+# Single worker on purpose: the request path is CPU-bound ML inference
+# (E5 embed + cross-encoder rerank). On a low-core host, multiple workers
+# contend for the same cores and oversubscribe torch threads, making every
+# request slower and doubling model memory. One worker lets the models use
+# all cores without contention. Raise this only if cores >> 4 and you need
+# request concurrency.
+CMD ["uvicorn", "db.api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
