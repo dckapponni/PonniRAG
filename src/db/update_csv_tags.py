@@ -54,7 +54,38 @@ def get_tags_from_qdrant(
     doc_issue: str,
     article_no: str,
 ) -> list:
-    """Query Qdrant for tags of a specific article."""
+    """Query Qdrant for the Tamil category tags of a specific article.
+
+    Attempts two matching strategies in order:
+
+    1. **Primary match** — filters by ``type="article"``,
+       ``metadata.doc_id``, ``metadata.doc_issue``, ``metadata.chunk_id=0``,
+       and ``metadata.article_no``. The ``article_no`` value is tried as an
+       integer first (since Qdrant may store it as either int or string) and
+       falls back to a string match if integer conversion fails. Scroll is
+       limited to 1 point.
+    2. **Fallback match** — if the primary match returns no points or raises
+       an exception, repeats the scroll without the ``article_no`` filter,
+       returning tags from the first article found in the given
+       ``doc_id`` + ``doc_issue`` combination.
+
+    In both cases the ``tags_tamil`` field is read from the first matching
+    point's ``metadata`` payload.
+
+    Args:
+        client (QdrantClient): Connected Qdrant client instance.
+        doc_id (str): Volume number string matching ``metadata.doc_id``
+            (CSV column ``மலர்``).
+        doc_issue (str): Issue number string matching ``metadata.doc_issue``
+            (CSV column ``இதழ்``).
+        article_no (str): Article serial number string matching
+            ``metadata.article_no`` (CSV column ``வ.எ.``). Pass an empty
+            string to skip the primary match and use the fallback directly.
+
+    Returns:
+        list: List of Tamil tag strings from ``metadata.tags_tamil``, or
+        an empty list if no matching point is found in Qdrant.
+    """
     # Primary: match by doc_id + doc_issue + article_no
     filter_conditions = [
         models.FieldCondition(key="type", match=models.MatchValue(value="article")),
@@ -111,7 +142,33 @@ def get_tags_from_qdrant(
 
 
 def main():
-    """Update summary.csv with article tags from Qdrant."""
+    """Update ``summary.csv`` with article category tags fetched from Qdrant.
+
+    Executes the following pipeline:
+
+    1. **CSV loading** — reads ``summary.csv`` via ``load_csv`` (which
+       correctly handles multi-author cells containing commas inside
+       brackets that ``pd.read_csv`` would silently drop) and strips
+       whitespace from all column names.
+    2. **Validation** — confirms that the required ``மலர்`` (volume) and
+       ``இதழ்`` (issue) columns are present; logs a warning if the
+       ``வ.எ.`` (serial number) column is absent and falls back to
+       issue-level matching.
+    3. **Tag retrieval loop** — iterates every row, normalizes ``doc_id``,
+       ``doc_issue``, and ``article_no`` (removing trailing ``.0`` from
+       values that pandas read as floats), calls
+       :func:`get_tags_from_qdrant`, and accumulates the comma-joined
+       Tamil tag strings. Progress is logged every 100 rows.
+    4. **CSV write-back** — assigns the accumulated tag strings to a new
+       ``வகை`` column and overwrites ``summary.csv`` in place with
+       UTF-8 encoding.
+
+    Exits early with an error log if the CSV file is not found or if
+    required columns are missing.
+
+    Returns:
+        None
+    """
     if not CSV_PATH.exists():
         logger.error(f"CSV not found: {CSV_PATH}")
         return

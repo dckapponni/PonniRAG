@@ -97,8 +97,35 @@ class MockTextEmbedding:
             yield list(zip([1, 2, 3], [0.1, 0.2, 0.3]))
 
 
+class _MockSparseEmbedding:
+    """Mock fastembed SparseEmbedding with .indices / .values arrays."""
+
+    def __init__(self, indices, values):
+        """Store the mock sparse vector arrays."""
+        self.indices = np.array(indices)
+        self.values = np.array(values)
+
+
+class MockSparseTextEmbedding:
+    """Mock FastEmbed SparseTextEmbedding (Qdrant/bm25) for tests."""
+
+    def __init__(self, *args, **kwargs):
+        """Initialize the mock encoder."""
+
+    def embed(self, texts, **kwargs):
+        """Yield a deterministic doc-side sparse embedding per input."""
+        for _ in texts:
+            yield _MockSparseEmbedding([1, 2, 3], [0.5, 0.3, 0.2])
+
+    def query_embed(self, texts, **kwargs):
+        """Yield a deterministic query-side sparse embedding per input."""
+        for _ in texts:
+            yield _MockSparseEmbedding([1, 2, 3], [1.0, 1.0, 1.0])
+
+
 mock_fastembed = Mock()
 mock_fastembed.TextEmbedding = MockTextEmbedding
+mock_fastembed.SparseTextEmbedding = MockSparseTextEmbedding
 sys.modules["fastembed"] = mock_fastembed
 
 

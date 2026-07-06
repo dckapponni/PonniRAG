@@ -1,5 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import { Viewer, Worker } from '@react-pdf-viewer/core';
+import { defaultLayoutPlugin } from '@react-pdf-viewer/default-layout';
+import '@react-pdf-viewer/core/lib/styles/index.css';
+import '@react-pdf-viewer/default-layout/lib/styles/index.css';
 import { getTranslation } from '../services/translations';
 import { getPDFLink } from '../services/api';
 
@@ -8,24 +12,31 @@ const PDFViewer = ({ language }) => {
   const [pdfData, setPdfData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const defaultLayoutPluginInstance = defaultLayoutPlugin();
   const t = (key) => getTranslation(language, key);
 
   useEffect(() => {
-    const fetchPDFLink = async () => {
-      try {
-        setLoading(true);
-        const data = await getPDFLink(volumeId, issueId);
-        setPdfData(data);
-      } catch (err) {
-        console.error('Error fetching PDF link:', err);
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
+    let cancelled = false;
+    setLoading(true);
+    getPDFLink(volumeId, issueId)
+      .then((data) => {
+        if (!cancelled) setPdfData(data);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
     };
-
-    fetchPDFLink();
   }, [volumeId, issueId]);
+
+  const rawProxy = pdfData && pdfData.found ? pdfData.proxy_url : null;
+  const fileUrl = rawProxy
+    ? (rawProxy.startsWith('http') ? rawProxy : window.location.origin + rawProxy)
+    : null;
 
   return (
     <div className="library-container">
@@ -44,34 +55,60 @@ const PDFViewer = ({ language }) => {
         <div className="library-title-rule" />
       </div>
 
-      {loading ? (
+      {loading && (
         <div className="loading-spinner">
           <div className="spinner"></div>
           <span>{t('loading_pdf')}</span>
         </div>
-      ) : error ? (
-        <p style={{ color: '#64748b', padding: '1rem 0' }}>{t('error_loading_pdf')}: {error}</p>
-      ) : pdfData && pdfData.found ? (
+      )}
+
+      {!loading && error && (
+        <p style={{ color: '#64748b', padding: '1rem 0' }}>
+          {t('error_loading_pdf')}: {error}
+        </p>
+      )}
+
+      {!loading && !error && fileUrl && (
         <>
           <div className="pdf-container">
-            <iframe
-              src={pdfData.embed_url}
-              title={`Volume ${volumeId} Issue ${issueId}`}
-              allow="autoplay"
-            />
+            <Worker workerUrl="/pdf.worker.min.js">
+              <Viewer
+                fileUrl={fileUrl}
+                plugins={[defaultLayoutPluginInstance]}
+                renderError={(e) => (
+                  <div style={{ padding: '1rem', color: '#b91c1c' }}>
+                    {t('error_loading_pdf')}: {(e && e.message) || 'Render failed'}
+                  </div>
+                )}
+              />
+            </Worker>
           </div>
-          <div className="pdf-actions">
-            <a
-              href={pdfData.pdf_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="pdf-link"
-            >
-              {t('open_pdf')}
-            </a>
-          </div>
+          {pdfData.pdf_url && (
+            <div className="pdf-actions">
+              <a
+                href={pdfData.pdf_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="pdf-link"
+              >
+                {t('open_pdf')}
+              </a>
+            </div>
+          )}
         </>
-      ) : (
+      )}
+
+      {!loading && !error && !fileUrl && pdfData && pdfData.found && pdfData.embed_url && (
+        <div className="pdf-container">
+          <iframe
+            src={pdfData.embed_url}
+            title={`Volume ${volumeId} Issue ${issueId}`}
+            allow="autoplay"
+          />
+        </div>
+      )}
+
+      {!loading && !error && pdfData && !pdfData.found && (
         <p style={{ color: '#64748b', padding: '1rem 0' }}>{t('pdf_not_available')}</p>
       )}
     </div>

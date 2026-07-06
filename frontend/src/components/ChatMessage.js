@@ -113,8 +113,19 @@ const Sources = ({ sources, language }) => {
   );
 };
 
-const ChatMessage = ({ message, language }) => {
+const EvidenceLoader = ({ language }) => {
+  const t = (key) => getTranslation(language, key);
+  return (
+    <div className="evidence-loader">
+      <div className="evidence-loader-bar" />
+      <span>{t('gathering_evidence')}</span>
+    </div>
+  );
+};
+
+const ChatMessage = ({ message, language, isStreaming }) => {
   const isUser = message.role === 'user';
+  const showEvidenceLoader = isStreaming && !isUser && message.content && (!message.sources || message.sources.length === 0);
 
   return (
     <div className={`chat-message ${isUser ? 'user' : 'assistant'}`}>
@@ -127,6 +138,7 @@ const ChatMessage = ({ message, language }) => {
         ) : (
           <ReactMarkdown>{message.content}</ReactMarkdown>
         )}
+        {showEvidenceLoader && <EvidenceLoader language={language} />}
         {!isUser && message.sources && (
           <Sources sources={message.sources} language={language} />
         )}

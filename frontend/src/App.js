@@ -6,6 +6,7 @@ import Library from './pages/Library';
 import Issues from './pages/Issues';
 import PDFViewer from './pages/PDFViewer';
 import About from './pages/About';
+import History from './pages/History';
 import TagBrowse from './pages/TagBrowse';
 import './styles/App.css';
 
@@ -26,6 +27,7 @@ function App() {
           <Route path="/library/volume/:volumeId" element={<Issues language={language} />} />
           <Route path="/library/volume/:volumeId/issue/:issueId" element={<PDFViewer language={language} />} />
           <Route path="/tags" element={<TagBrowse language={language} />} />
+          <Route path="/history" element={<History language={language} />} />
           <Route path="/about" element={<About language={language} />} />
         </Routes>
       </div>

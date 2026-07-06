@@ -3016,14 +3016,14 @@ class TestAskQuestionStream:
     @patch("hybrid_search.get_qdrant_client")
     @patch("hybrid_search.HybridQdrantSearch")
     @patch("hybrid_search.merge_consecutive_chunks")
-    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.generate_llm_answer_stream")
     @patch("hybrid_search.extract_key_facts")
     @patch("hybrid_search.generate_extractive_answer")
     def test_stream_gemini_unhealthy_extractive(
         self,
         mock_extract,
         mock_facts,
-        mock_gemini,
+        mock_stream_llm,
         mock_merge,
         mock_search_cls,
         mock_client,
@@ -3031,24 +3031,29 @@ class TestAskQuestionStream:
         mock_cache,
         mock_h,
     ):
-        """Test streaming with unhealthy Gemini uses extractive."""
+        """A down Gemini (empty LLM stream) falls back to extractive."""
         mock_h.return_value = {"healthy": True, "points_count": 1000}
         mock_cache.get.return_value = None
         mock_cache.check_version = MagicMock()
+        mock_cache.put = MagicMock()
         mock_csv.exists.return_value = False
         mock_client.return_value = MagicMock()
         mock_searcher = MagicMock()
         mock_searcher.search.return_value = [MagicMock()]
         mock_search_cls.return_value = mock_searcher
         mock_merge.return_value = [_make_merged_doc()]
-        mock_gemini.return_value = {"healthy": False}
+        # Gemini down → stream yields nothing → token_count < 10 → fallback
+        mock_stream_llm.return_value = iter([])
         mock_facts.return_value = [{"sentence": "fact", "score": 10}]
-        mock_extract.return_value = "extractive answer"
+        # Must exceed the 50-char floor in _llm_fallback_answer to be kept
+        extractive = (
+            "This is a sufficiently long extractive answer drawn " "from the sources."
+        )
+        mock_extract.return_value = extractive
 
         output = list(hs.ask_question_stream("test"))
         tokens = [o["content"] for o in output if o["type"] == "token"]
-        assert "extractive answer" in tokens
-        # 1126-1141
+        assert extractive in tokens
 
     @patch("hybrid_search.check_qdrant_health")
     @patch("hybrid_search._response_cache")
@@ -3056,14 +3061,14 @@ class TestAskQuestionStream:
     @patch("hybrid_search.get_qdrant_client")
     @patch("hybrid_search.HybridQdrantSearch")
     @patch("hybrid_search.merge_consecutive_chunks")
-    @patch("hybrid_search.check_gemini_health")
+    @patch("hybrid_search.generate_llm_answer_stream")
     @patch("hybrid_search.extract_key_facts")
     @patch("hybrid_search.generate_extractive_answer")
     def test_stream_gemini_unhealthy_no_extractive(
         self,
         mock_extract,
         mock_facts,
-        mock_gemini,
+        mock_stream_llm,
         mock_merge,
         mock_search_cls,
         mock_client,
@@ -3071,24 +3076,27 @@ class TestAskQuestionStream:
         mock_cache,
         mock_h,
     ):
-        """Test streaming Gemini unhealthy no extractive."""
+        """Down Gemini with no extractive content emits last-resort message."""
         mock_h.return_value = {"healthy": True, "points_count": 1000}
         mock_cache.get.return_value = None
         mock_cache.check_version = MagicMock()
+        mock_cache.put = MagicMock()
         mock_csv.exists.return_value = False
         mock_client.return_value = MagicMock()
         mock_searcher = MagicMock()
         mock_searcher.search.return_value = [MagicMock()]
         mock_search_cls.return_value = mock_searcher
         mock_merge.return_value = [_make_merged_doc()]
-        mock_gemini.return_value = {"healthy": False}
+        mock_stream_llm.return_value = iter([])
         mock_facts.return_value = []
         mock_extract.return_value = ""
 
         output = list(hs.ask_question_stream("test"))
+        # Last-resort fallback fires with the "answer is in the sources" message
+        reasons = [o.get("reason") for o in output if o["type"] == "fallback"]
         tokens = [o["content"] for o in output if o["type"] == "token"]
-        assert any("LLM" in t or "unavailable" in t.lower() for t in tokens)
-        # 1135-1143
+        assert "extractive" in reasons
+        assert any("ஆதாரங்கள" in t or "sources" in t.lower() for t in tokens)
 
     @patch("hybrid_search.check_qdrant_health")
     @patch("hybrid_search._response_cache")
@@ -3576,6 +3584,76 @@ class TestFilterSourcesByRelevance:
         result = hs._filter_sources_by_relevance("கருணாநிதி படைப்புகள்", sources)
         assert len(result) == 1
         assert result[0]["author_name"] == "கருணாநிதி"
+
+    def test_two_char_tamil_token_captured(self):
+        """2-char Tamil tokens like 'மே' must be picked up by the regex."""
+        # Doc heading is the 2-char + 4-char title; only 'மே' connects
+        # them to the query. Under the old {3,} regex 'மே' was dropped
+        # entirely and this doc would not survive filtering.
+        sources = [
+            _make_merged_doc(
+                heading="மே தினம்",
+                content="மே தினம் கவிதை",
+            ),
+        ]
+        result = hs._filter_sources_by_relevance(
+            "பொன்னியில் மே தினம் என்ற தலைப்பு", sources
+        )
+        assert len(result) == 1
+
+    def test_heading_bigram_boost_outranks_higher_count_doc(self):
+        """Heading-phrase docs outrank higher-count docs without a phrase hit.
+
+        A doc whose heading literally contains a query bigram must rank
+        above a doc with more total token matches but no heading-phrase hit.
+        """
+        # "மே தினம்" appears as a contiguous bigram in the question.
+        # First source: heading is exactly that phrase, body has only
+        # one matching token. Second source: heading unrelated, body
+        # has many matching tokens (literary-form discussion).
+        sources = [
+            # Generic literary-form discussion — body matches many tokens.
+            _make_merged_doc(
+                heading="இலக்கிய வடிவங்கள்",
+                content=(
+                    "இலக்கிய வடிவத்தை சுட்டுகிறது என்பது " "எந்த வகை என்பதை ஆராய்கிறது"
+                ),
+            ),
+            # The actual May Day article — body short, heading is the phrase.
+            _make_merged_doc(
+                heading="மே தினம்",
+                content="தொழிலாளர் தினம் பற்றிய கவிதை",
+            ),
+        ]
+        result = hs._filter_sources_by_relevance(
+            "பொன்னியில் மே தினம் என்ற இலக்கிய வடிவத்தை சுட்டுகிறது",
+            sources,
+        )
+        # Both kept, but the heading-bigram doc must be first.
+        assert len(result) >= 1
+        assert result[0]["heading"] == "மே தினம்"
+
+    def test_tiebreaker_preserves_original_retrieval_order(self):
+        """When match count and heading_hit are equal, original order wins."""
+        # Both docs match exactly one term ('கருணாநிதி'), neither has a
+        # heading hit on the query phrase. With the old sort-by-count the
+        # output order was non-deterministic; now it must mirror input.
+        sources = [
+            _make_merged_doc(
+                heading="முதல் கட்டுரை",
+                content="கருணாநிதி பற்றி",
+                author_name="ஆசிரியர் A",
+            ),
+            _make_merged_doc(
+                heading="இரண்டாம் கட்டுரை",
+                content="கருணாநிதி குறித்து",
+                author_name="ஆசிரியர் B",
+            ),
+        ]
+        result = hs._filter_sources_by_relevance("கருணாநிதி படைப்புகள்", sources)
+        assert len(result) == 2
+        assert result[0]["heading"] == "முதல் கட்டுரை"
+        assert result[1]["heading"] == "இரண்டாம் கட்டுரை"
 
 
 if __name__ == "__main__":

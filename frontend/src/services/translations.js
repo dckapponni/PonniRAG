@@ -3,6 +3,7 @@ const translations = {
     app_title: "பொன்னி களஞ்சியம்",
     nav_ask_ai: "AI-யிடம் கேளுங்கள்",
     nav_library: "நூலகம்",
+    nav_history: "வரலாறு",
     nav_about: "பற்றி",
     nav_toggle: "English",
     hero_input_placeholder: "பொன்னி வரலாறு பற்றி கேளுங்கள்...",
@@ -52,11 +53,13 @@ const translations = {
     tags_word_count: "சொற்கள்",
     tags_collection: "தொகுப்பு",
     tags_volume_label: "மலர்",
+    gathering_evidence: "ஆதாரங்களைச் சேகரிக்கிறது...",
   },
   en: {
     app_title: "Ponni Archive",
     nav_ask_ai: "Ask AI",
     nav_library: "Library",
+    nav_history: "History",
     nav_about: "About",
     nav_toggle: "தமிழ்",
     hero_input_placeholder: "Ask about Ponni history...",
@@ -106,6 +109,7 @@ const translations = {
     tags_word_count: "Words",
     tags_collection: "Collection",
     tags_volume_label: "Volume",
+    gathering_evidence: "Gathering evidence...",
   },
 };
 

@@ -1,4 +1,30 @@
-"""CSV fuzzy matching utilities for Tamil document article extraction."""
+"""CSV fuzzy matching utilities for Tamil document article extraction.
+
+Provides the CSV-driven extraction path that is fully independent of
+the TOC (பொருளடக்கம்) section. All article metadata — title, author,
+volume, issue, and year — is sourced from ``summary.csv``; only the
+article body text is located by fuzzy-matching each CSV title against
+the raw document lines.
+
+Key responsibilities:
+
+- **Filename / text parsing** — :func:`extract_malar_ithal_from_filename`
+  and :func:`extract_malar_ithal_from_text` extract மலர் and இதழ்
+  identifiers used to filter the relevant CSV rows.
+- **CSV row matching** — :func:`match_csv_rows` joins document
+  identifiers to CSV rows using exact then fuzzy இதழ் matching,
+  handling special cases such as ``"பொங்கல் மலர்"``.
+- **Title boundary detection** — :func:`find_article_boundary_fuzzy`
+  locates the standalone (non-TOC) occurrence of each CSV title in
+  the full document and determines the end boundary from the next
+  title.
+- **Skip-phrase filtering** — section-header and page-marker lines
+  are excluded from both title search and extracted content so that
+  OCR noise does not corrupt article bodies.
+- **Multi-author field parsing** — bracket-wrapped comma-separated
+  author fields (e.g. ``[பாண்டியன், நா. வேத்தரசன்]``) are handled
+  correctly via :func:`parse_author_field`.
+"""
 
 import logging
 import re
@@ -8,6 +34,64 @@ from pathlib import Path
 import pandas as pd
 
 logger = logging.getLogger("TamilDocProcessor.csv_fuzzy_matcher")
+
+# Lines that contain ONLY these phrases (after stripping) are skipped
+SKIP_STANDALONE_PHRASES = {
+    "ஓரங்க நாடகம்",
+    "தொடர் கதை",
+    "சிறுவர் அரங்கம்",
+    "பொங்கல் மலர்",
+    "செய்திப்பாட்டு",
+    "சிறுவர்",
+    "அரங்கம்",
+}
+
+# Regex to detect page-marker lines like:
+# --- Page 51 (vol1-08i-sep47-xx_51.png) ---
+_PAGE_MARKER_RE = re.compile(r"^-{2,}\s*Page\s+\d+.*-{2,}$", re.IGNORECASE)
+
+
+def is_skip_line(line: str) -> bool:
+    """Return True if this standalone line should cause the article to be skipped.
+
+    Matches:
+    - Lines whose stripped text is exactly one of SKIP_STANDALONE_PHRASES
+    - Page-marker lines like '--- Page 51 (vol1-08i-sep47-xx_51.png) ---'
+
+    Args:
+        line (str): raw line text
+
+    Returns:
+        bool: True if the line should be skipped
+    """
+    stripped = line.strip()
+    if stripped in SKIP_STANDALONE_PHRASES:
+        return True
+    if _PAGE_MARKER_RE.match(stripped):
+        return True
+    return False
+
+
+def strip_skip_phrases_from_content(content: str) -> str:
+    """Remove skip-phrase lines from extracted article content.
+
+    Handles cases where a skip phrase bleeds into the end (or start)
+    of an article's extracted text because it sits just beyond the
+    article boundary in the document.
+
+    A line is removed if:
+    - Its stripped text is exactly a SKIP_STANDALONE_PHRASES entry, OR
+    - It matches the page-marker pattern
+
+    Args:
+        content (str): raw extracted article content
+
+    Returns:
+        str: content with skip-phrase lines removed, re-stripped
+    """
+    lines = content.split("\n")
+    cleaned = [line for line in lines if not is_skip_line(line)]
+    return "\n".join(cleaned).strip()
 
 
 def load_csv(csv_path):
@@ -330,6 +414,11 @@ def find_article_boundary_fuzzy(lines, title, next_title=None):
     because TOC lines are longer (title + author + page) and
     therefore have lower similarity to just the title.
 
+    Skip logic:
+    - Lines that are exactly a SKIP_STANDALONE_PHRASES entry are
+      excluded from candidate collection entirely.
+    - Page-marker lines (--- Page N (...) ---) are also excluded.
+
     Args:
         lines (list): ALL document lines (full document, including TOC)
         title (str): article title from CSV
@@ -352,6 +441,12 @@ def find_article_boundary_fuzzy(lines, title, next_title=None):
 
         for i, line in enumerate(lines):
             stripped = line.strip()
+
+            # Skip section-header / page-marker lines
+            if is_skip_line(stripped):
+                logger.debug(f"Skipping line {i} (skip phrase): '{stripped}'")
+                continue
+
             line_clean = remove_symbols(stripped)
 
             if not line_clean:
@@ -399,6 +494,11 @@ def find_article_boundary_fuzzy(lines, title, next_title=None):
 
             for i in range(start_line + 1, len(lines)):
                 stripped = lines[i].strip()
+
+                # Skip section-header / page-marker lines for boundary too
+                if is_skip_line(stripped):
+                    continue
+
                 line_clean = remove_symbols(stripped)
 
                 if not line_clean:
@@ -430,6 +530,10 @@ def find_article_boundary_fuzzy(lines, title, next_title=None):
             content_lines.pop()
 
         content = "\n".join(content_lines).strip()
+
+        # Remove any skip-phrase lines that bled into the extracted content
+        content = strip_skip_phrases_from_content(content)
+
         return content, start_line, end_line
 
     except Exception as e:
@@ -451,6 +555,12 @@ def extract_articles_from_csv(lines, csv_df, file_path):
     - TOC lines contain title + author + page → lower similarity
     - Standalone lines contain only the title → near-exact match
 
+    Skip logic:
+    - If a CSV title is exactly a SKIP_STANDALONE_PHRASES entry,
+      the entire article row is skipped before any search begins.
+    - During document search, lines matching skip phrases or
+      page-marker patterns are invisible to the title matcher.
+
     Author field format:
     - Single author:   [நக்கீரன்]
     - Multi-author:    [பாண்டியன், நா. வேத்தரசன், வணங்காமுடி]
@@ -465,8 +575,9 @@ def extract_articles_from_csv(lines, csv_df, file_path):
     1. Extract மலர்/இதழ் from filename
     2. If filename fails → try document text
     3. Match CSV rows (exact then fuzzy இதழ் matching)
-    4. For each CSV title → find standalone title in full document
-    5. Return articles + extracted line ranges
+    4. For each CSV title → skip if it is a known section header
+    5. Find standalone title in full document
+    6. Return articles + extracted line ranges
 
     All metadata (doc_id, doc_issue, author, title, year) from CSV.
     Only content is extracted from document text.
@@ -551,6 +662,11 @@ def extract_articles_from_csv(lines, csv_df, file_path):
             logger.warning(f"Empty title at CSV row {idx}, skipping")
             continue
 
+        # Skip articles whose CSV title is a known section header / skip phrase
+        if is_skip_line(title):
+            logger.info(f"Skipping CSV row {idx} — title is a skip phrase: '{title}'")
+            continue
+
         # Get next title for boundary detection
         next_title = None
         if idx_pos + 1 < len(matched_articles):
@@ -596,9 +712,7 @@ def extract_articles_from_csv(lines, csv_df, file_path):
             )
             logger.warning(f"  Could not extract '{title[:40]}' " f"- {reason}")
 
-    # ----------------------------------------------------------------
     # Build authors_list — one entry per unique author across all rows
-    # ----------------------------------------------------------------
     authors_list = []
     unique_authors = set()
 

@@ -18,14 +18,35 @@ import { getTranslation } from '../services/translations';
  *   null/undef  → ""
  */
 const flattenAuthor = (val) => {
+  if (!val) return '';
+
+  // Real array
   if (Array.isArray(val)) {
     return val
-      .filter((v) => v && v !== 'NA' && v !== 'nan' && v !== 'None')
+      .filter((v) => v && !['NA', 'nan', 'None'].includes(v))
       .join(', ');
   }
-  const s = String(val || '').trim();
-  return ['NA', 'nan', 'None', ''].includes(s) ? '' : s;
+
+  // Stringified array like '["A"]'
+  if (typeof val === 'string') {
+    try {
+      const parsed = JSON.parse(val);
+
+      if (Array.isArray(parsed)) {
+        return parsed
+          .filter((v) => v && !['NA', 'nan', 'None'].includes(v))
+          .join(', ');
+      }
+    } catch (e) {
+      // normal string
+    }
+
+    return val.replace(/[\[\]"]/g, '').trim();
+  }
+
+  return String(val);
 };
+
 
 // ============================================================================
 // Component

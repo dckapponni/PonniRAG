@@ -503,6 +503,43 @@ html, body {
   }
 }
 
+/* Evidence Loading Indicator */
+.evidence-loader {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+  padding: 0.5rem 0;
+  color: #64748b;
+  font-size: 0.85rem;
+  animation: fadeIn 0.3s ease;
+}
+
+.evidence-loader-bar {
+  width: 120px;
+  height: 3px;
+  background: #e2e8f0;
+  border-radius: 2px;
+  overflow: hidden;
+  position: relative;
+}
+
+.evidence-loader-bar::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -40%;
+  width: 40%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, #3b82f6, transparent);
+  animation: evidenceSlide 1.2s ease-in-out infinite;
+}
+
+@keyframes evidenceSlide {
+  0% { left: -40%; }
+  100% { left: 100%; }
+}
+
 /* Sources Section */
 .sources-container {
   margin-top: 1rem;
@@ -872,6 +909,16 @@ html, body {
   border: none;
 }
 
+.pdf-container > div {
+  height: 100%;
+  width: 100%;
+}
+
+.pdf-container [data-testid="default-layout__container"],
+.pdf-container .rpv-default-layout__container {
+  height: 100% !important;
+}
+
 .pdf-actions {
   display: flex;
   align-items: center;
@@ -1000,6 +1047,15 @@ html, body {
   color: #64748b;
   margin-top: 0.75rem;
   font-weight: 500;
+}
+
+.history-section-title {
+  font-size: 1.35rem;
+  font-weight: 600;
+  color: #1e293b;
+  margin: 0 0 1.25rem 0;
+  line-height: 1.6;
+  letter-spacing: -0.01em;
 }
 
 .about-divider {

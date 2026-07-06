@@ -13,10 +13,7 @@ from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# ============================================================================
 # INPUT GUARDRAILS — Injection detection
-# ============================================================================
-
 # HIGH confidence patterns — block the request outright
 _HIGH_PATTERNS = [
     # Instruction override
@@ -79,11 +76,27 @@ _MEDIUM_PATTERNS = [
 
 
 def detect_injection(text: str) -> Tuple[bool, str]:
-    """Detect prompt injection attempts in user input.
+    """
+    Detect prompt injection attempts in user input.
+
+    Scans the input text against two tiers of compiled regex patterns:
+    high-confidence patterns that should trigger an outright block, and
+    medium-confidence patterns that warrant a warning but allow the request
+    to continue.
+
+    Args:
+        text (str): Raw user input to be evaluated.
 
     Returns:
-        (is_injection, severity): severity is "high", "medium", or "none".
-        HIGH = block, MEDIUM = warn but continue.
+        Tuple[bool, str]: A two-element tuple where the first element is
+        ``True`` if any injection pattern was matched and ``False`` otherwise,
+        and the second element is the severity string — one of ``"high"``,
+        ``"medium"``, or ``"none"``.
+
+    Note:
+        ``"high"`` severity indicates the request should be blocked outright.
+        ``"medium"`` severity indicates a suspicious signal; the caller may
+        choose to log and continue.
     """
     if not text:
         return False, "none"
@@ -100,10 +113,6 @@ def detect_injection(text: str) -> Tuple[bool, str]:
 
     return False, "none"
 
-
-# ============================================================================
-# INPUT GUARDRAILS — Query sanitization
-# ============================================================================
 
 # Control characters to strip (keep \n, \t, space)
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
@@ -122,12 +131,27 @@ _MULTI_SPACE_RE = re.compile(r" {3,}")
 
 
 def sanitize_query(question: str) -> str:
-    r"""Neutralize structural attack vectors in user input.
+    r"""
+    Neutralize structural attack vectors in user input.
 
-    - Strips control characters (keeps \n, \t, space)
-    - Replaces prompt template separators (====, ```)
-    - Collapses excessive newlines/spaces
-    - NFC normalizes (idempotent with existing normalization)
+    Applies a sequence of transformations to remove or defuse content that
+    could be used to inject prompt structure or exfiltrate data:
+
+    - Strips C0/C1 control characters (preserves ``\n``, ``\t``, and space).
+    - Removes ASCII and Unicode quotation marks (smart/curly quotes included).
+    - Replaces prompt-template separators (``====``) with ``---``.
+    - Replaces triple-backtick code fences with a single backtick.
+    - Collapses runs of three or more newlines to two newlines.
+    - Collapses runs of three or more spaces to two spaces.
+    - Applies Unicode NFC normalization (idempotent if already normalized).
+
+    Args:
+        question (str): Raw user query string.
+
+    Returns:
+        str: Sanitized query string with leading/trailing whitespace stripped.
+        Returns the input unchanged (after a falsy check) if ``question`` is
+        empty or ``None``.
     """
     if not question:
         return question
@@ -152,23 +176,36 @@ def sanitize_query(question: str) -> str:
     return question.strip()
 
 
-# ============================================================================
 # HISTORY VALIDATION
-# ============================================================================
-
 _VALID_ROLES = {"user", "assistant"}
 _MAX_CONTENT_LENGTH = 5000
 _MAX_TURNS = 20
 
 
 def validate_history(history: Optional[List[Dict]]) -> Optional[List[Dict]]:
-    """Validate and sanitize conversation history.
+    """
+    Validate and sanitize conversation history before it is passed to the LLM.
 
-    - Rejects invalid roles (only "user" and "assistant")
-    - Enforces alternating role pattern
-    - Caps content at _MAX_CONTENT_LENGTH chars/turn, max _MAX_TURNS turns
-    - Sanitizes each turn's content
-    - Drops user turns with HIGH confidence injection
+    Performs the following checks and transformations on each turn in the
+    provided history list:
+
+    - Skips turns that are not ``dict`` instances.
+    - Rejects turns whose ``role`` is not ``"user"`` or ``"assistant"``.
+    - Enforces a strict alternating ``user`` → ``assistant`` → ``user`` role
+      pattern; out-of-order turns are dropped.
+    - Truncates ``content`` to ``_MAX_CONTENT_LENGTH`` characters.
+    - Sanitizes each turn's ``content`` via :func:`sanitize_query`.
+    - Drops ``user`` turns that contain a ``"high"``-severity injection signal
+      as detected by :func:`detect_injection`.
+    - Processes at most ``_MAX_TURNS`` turns from the input list.
+
+    Args:
+        history (Optional[List[Dict]]): Conversation history as a list of
+            ``{"role": str, "content": str}`` dicts, or ``None``.
+
+    Returns:
+        Optional[List[Dict]]: A sanitized list of turn dicts, or ``None`` if
+        the input was falsy or all turns were rejected during validation.
     """
     if not history:
         return None
@@ -218,10 +255,7 @@ def validate_history(history: Optional[List[Dict]]) -> Optional[List[Dict]]:
     return validated if validated else None
 
 
-# ============================================================================
 # PROMPT HARDENING
-# ============================================================================
-
 ANTI_INJECTION_PREAMBLE = """
 
 ========================
@@ -273,11 +307,21 @@ _SAFE_REFUSAL = (
 
 
 def check_output_leakage(response: str) -> Tuple[bool, Optional[str]]:
-    """Check if LLM response contains leaked internal information.
+    """
+    Check whether an LLM response contains leaked internal information.
+
+    Scans the response text against a set of compiled patterns covering
+    environment variable names, API key fragments, internal collection names,
+    embedding model identifiers, source file names, and prompt variable names.
+
+    Args:
+        response (str): Raw text response produced by the LLM.
 
     Returns:
-        (has_leakage, matched_pattern): matched_pattern is the regex pattern
-        string that matched, or None.
+        Tuple[bool, Optional[str]]: A two-element tuple where the first
+        element is ``True`` if a leakage pattern was found and ``False``
+        otherwise, and the second element is the ``.pattern`` string of the
+        first matching regex, or ``None`` if no match was found.
     """
     if not response:
         return False, None
@@ -291,7 +335,24 @@ def check_output_leakage(response: str) -> Tuple[bool, Optional[str]]:
 
 
 def sanitize_output(response: str) -> str:
-    """Sanitize LLM output — replace leaked responses with safe refusal."""
+    """
+    Sanitize LLM output by replacing any response that contains leaked.
+
+    internal information with a safe, user-facing refusal message.
+
+    Delegates leak detection to :func:`check_output_leakage`. If a leak is
+    detected, the entire response is discarded and replaced with
+    ``_SAFE_REFUSAL`` (a Tamil-language refusal string). The substitution is
+    logged at WARNING level along with the matched pattern.
+
+    Args:
+        response (str): Raw text response produced by the LLM.
+
+    Returns:
+        str: The original response if no leakage was detected, or the
+        ``_SAFE_REFUSAL`` constant string if leakage was found. Returns the
+        input unchanged if ``response`` is falsy.
+    """
     if not response:
         return response
 
@@ -303,10 +364,7 @@ def sanitize_output(response: str) -> str:
     return response
 
 
-# ============================================================================
 # ERROR SANITIZATION
-# ============================================================================
-
 SAFE_ERROR_MESSAGE = (
     "மன்னிக்கவும், தற்போது சேவை இடையூறு ஏற்பட்டுள்ளது. மீண்டும் முயற்சிக்கவும்."
 )
@@ -314,7 +372,26 @@ SAFE_ERROR_MESSAGE_EN = "Sorry, a service interruption has occurred. Please try 
 
 
 def safe_error_response(language: str = "ta") -> Dict:
-    """Return a generic error dict with no internal details."""
+    """
+    Return a generic, internals-free error response dictionary.
+
+    Constructs a minimal response payload suitable for returning directly to
+    API consumers when an unhandled exception occurs, ensuring no stack
+    traces, model names, or infrastructure details are exposed.
+
+    Args:
+        language (str): BCP-47 language code controlling the message language.
+            Pass ``"en"`` for English; any other value (including the default
+            ``"ta"``) returns the Tamil error message.
+
+    Returns:
+        Dict: A dictionary with the following keys:
+
+        - ``"answer"`` (str): A human-readable error message in the requested
+          language.
+        - ``"sources"`` (list): An empty list.
+        - ``"error"`` (str): The fixed string ``"internal_error"``.
+    """
     msg = SAFE_ERROR_MESSAGE_EN if language == "en" else SAFE_ERROR_MESSAGE
     return {
         "answer": msg,
@@ -324,10 +401,27 @@ def safe_error_response(language: str = "ta") -> Dict:
 
 
 def safe_error_message(context: str = "") -> str:
-    """Return a generic error string.
+    """
+    Return a generic, internals-free error string.
 
-    If context is 'en', returns English; otherwise Tamil.
-    For non-language context strings, logs them and returns Tamil.
+    Provides a single-string alternative to :func:`safe_error_response` for
+    contexts where only a message (not a full response dict) is needed.
+    Non-language context strings are logged at ERROR level before returning
+    the default Tamil message, so that diagnostic information is preserved in
+    server logs without leaking it to callers.
+
+    Args:
+        context (str): Either a BCP-47 language code or an arbitrary error
+            context string.
+
+            - ``"en"`` → returns the English error constant.
+            - Any other non-empty string → logs the value and returns the
+              Tamil error constant.
+            - Empty string (default) → returns the Tamil error constant
+              without logging.
+
+    Returns:
+        str: A safe, user-facing error message with no internal details.
     """
     if context == "en":
         return SAFE_ERROR_MESSAGE_EN

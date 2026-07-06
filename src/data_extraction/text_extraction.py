@@ -1,4 +1,16 @@
-"""Text extraction from DOCX files stored in S3."""
+"""Text extraction from DOCX files stored in S3.
+
+Reads ``.docx`` (and legacy ``.doc``) files from the configured S3
+input prefix, extracts plain text via ``docx2txt`` (with a
+``textract`` fallback for older ``.doc`` formats), and uploads the
+result as a UTF-8 ``.txt`` file to the extraction output prefix.
+
+Processing is incremental: files whose corresponding ``.txt`` output
+already exists in S3 are skipped, so the script is safe to re-run
+after partial failures. S3 key normalization (lowercase,
+space-to-underscore) ensures consistent skip detection across
+operating systems and upload sources.
+"""
 
 import logging
 import re

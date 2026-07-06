@@ -1,4 +1,18 @@
-"""Thread-safe TTL + LRU response cache for ask_question results."""
+"""Thread-safe TTL + LRU response cache for ask_question results.
+
+Combines a TTL expiry with LRU eviction to keep frequently used answers
+in memory and automatically discard stale or least-recently-used entries.
+Cache is also invalidated when the Qdrant index changes (points_count shift).
+
+Usage::
+
+    from cache import _response_cache
+
+    result = _response_cache.get(question)
+    if result is None:
+        result = ask_question(question)
+        _response_cache.put(question, result)
+"""
 
 import hashlib
 import logging
@@ -13,10 +27,21 @@ logger = logging.getLogger(__name__)
 
 
 class ResponseCache:
-    """Thread-safe TTL + LRU cache for ask_question results."""
+    """Thread-safe TTL + LRU cache for ask_question results.
+
+    Evicts entries when they exceed ``ttl_seconds`` or when the cache
+    reaches ``max_size`` (least-recently-used entry dropped first).
+    Automatically invalidates all entries when the Qdrant points count
+    changes. Safe for concurrent use via an internal ``threading.Lock``.
+    """
 
     def __init__(self, max_size: int = 100, ttl_seconds: int = 3600):
-        """Initialize cache with given max size and TTL."""
+        """Initialize the cache with a maximum entry count and TTL.
+
+        Args:
+            max_size: Maximum number of entries before LRU eviction kicks in.
+            ttl_seconds: Seconds before a cached entry is considered stale.
+        """
         self._cache: OrderedDict = OrderedDict()
         self._timestamps: dict = {}
         self._lock = threading.Lock()
@@ -28,13 +53,33 @@ class ResponseCache:
 
     @staticmethod
     def _make_key(question: str) -> str:
-        """Compute a deterministic cache key from a question string."""
+        """Return a stable SHA-256 cache key for a question string.
+
+        Normalises Unicode (NFC), collapses whitespace, and lowercases
+        before hashing so minor formatting differences hit the same key.
+
+        Args:
+            question: Raw question string from the caller.
+
+        Returns:
+            64-character hex digest string.
+        """
         normalized = unicodedata.normalize("NFC", question)
         normalized = re.sub(r"\s+", " ", normalized.strip().lower())
         return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
     def get(self, question: str) -> Optional[Dict]:
-        """Retrieve a cached result by question, or None if missing/expired."""
+        """Return a cached result, or None if absent or expired.
+
+        Moves a hit entry to the MRU end of the OrderedDict and increments
+        hit/miss counters. Expired entries are deleted on access.
+
+        Args:
+            question: Question string to look up.
+
+        Returns:
+            Cached result dict, or None on miss or TTL expiry.
+        """
         key = self._make_key(question)
         with self._lock:
             if key not in self._cache:
@@ -59,7 +104,16 @@ class ResponseCache:
             return self._cache[key]
 
     def put(self, question: str, result: Dict) -> None:
-        """Store a result in the cache, evicting oldest if full."""
+        """Store a result, evicting the least-recently-used entry if full.
+
+        If the key already exists its value and timestamp are updated in place
+        without changing cache size. New entries trigger LRU eviction when
+        the cache is at capacity.
+
+        Args:
+            question: Question string used to derive the cache key.
+            result: Result dict to store.
+        """
         key = self._make_key(question)
         with self._lock:
             if key in self._cache:
@@ -74,7 +128,7 @@ class ResponseCache:
             self._timestamps[key] = time.time()
 
     def clear(self) -> None:
-        """Clear all cached entries and reset version."""
+        """Evict all entries and reset the index version baseline."""
         with self._lock:
             self._cache.clear()
             self._timestamps.clear()
@@ -114,7 +168,12 @@ class ResponseCache:
                 self._version = points_count
 
     def stats(self) -> Dict:
-        """Return cache statistics including hit rate and version."""
+        """Return a snapshot of cache metrics.
+
+        Returns:
+            Dict with keys: size, max_size, ttl_seconds, hits, misses,
+            hit_rate (formatted as a percentage string), and version.
+        """
         with self._lock:
             total = max(1, self._hits + self._misses)
             return {

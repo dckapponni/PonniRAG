@@ -3,7 +3,7 @@
 **Ponni RAG** is an intelligent Retrieval-Augmented Generation system designed for Tamil literary documents. It uses a hybrid search approach that combines semantic vector search and keyword-based retrieval to deliver accurate, context-aware results from large collections of Tamil PDF and DOCX files. The system extracts and indexes individual literary articles while preserving author and structural metadata. Every query is routed through Google's Gemini 2.5 Flash API with context-specific prompts to generate natural Tamil responses grounded strictly in the Ponni dataset.
 
 **Two query flows:**
-- **Vector search queries** — hybrid retrieval (dense + sparse + RRF fusion) pulls all relevant documents, builds equal-excerpt context from each, and passes it to Gemini with the full document prompt. Evidence cards show full merged content from all relevant sources (dynamically determined by score-gap analysis, up to 10).
+- **Vector search queries** — hybrid retrieval (dense + sparse + RRF fusion) pulls candidates, a cross-encoder reranker (`BAAI/bge-reranker-v2-m3`) selects the most relevant documents, builds equal-excerpt context from each, and passes it to Gemini with the full document prompt. Evidence cards show full merged content from reranked sources (3–5 per query, with optional tag filtering).
 - **CSV queries** (authors, topics, issues) — structured data is retrieved from the article database, passed to Gemini with a lightweight gist prompt that summarizes counts, key names, and trends. The answer displays the LLM summary followed by the raw database data appended below a separator — no separate evidence card.
 
 Additionally, the system provides an option to view the original PDF content of each Ponni article volume directly.
@@ -38,10 +38,10 @@ For detailed architecture documentation, see [system_architecture.md](system_arc
 
 |      | Feature         | Summary       |
 | :--- | :---:           | :---          |
-| ⚙️  | **Architecture**  | <ul><li>Hybrid search (dense + sparse + RRF fusion) with dynamic evidence selection via score-gap analysis (`hybrid_search.py` orchestrator)</li><li>Dual-prompt LLM pipeline (`llm.py`): gist prompt for CSV queries (summary + appended raw data, no evidence card), full document prompt for vector search (equal-excerpt context from all relevant sources)</li><li>Utilizes Qdrant vector database for efficient similarity search and document retrieval (`qdrant_indexer.py`)</li><li>AWS S3 integration for scalable document storage and retrieval (`s3_utils.py`)</li></ul> |
-| 🔩 | **Code Quality**  | <ul><li>Modular design with separate modules for extraction (`text_extraction.py`), article separation (`article_seperation.py`), and search split across focused sub-modules (`hybrid_search.py`, `tamil_text.py`, `csv_queries.py`, `llm.py`, `search.py`)</li><li>Centralized configuration settings in `config/config.py` for consistency and easy modification</li><li>Comprehensive test coverage with unit and integration tests</li></ul> |
+| ⚙️  | **Architecture**  | <ul><li>Hybrid search (dense + sparse + RRF fusion) with cross-encoder reranking (`reranker.py`, `BAAI/bge-reranker-v2-m3`) and optional tag filtering (`hybrid_search.py` orchestrator)</li><li>Dual-prompt LLM pipeline (`llm.py`): gist prompt for CSV queries (summary + appended raw data, no evidence card), full document prompt for vector search (equal-excerpt context from reranked sources)</li><li>Article tagging (15 categories, rule-based + TF-IDF) with Tag Browse page and tag-filtered search</li><li>Utilizes Qdrant vector database for efficient similarity search and document retrieval (`qdrant_indexer.py`)</li><li>BM25 sparse embeddings via fastembed (`sparse.py`) + Qdrant snapshot management (`snapshot_manager.py`)</li><li>AWS S3 integration for scalable document storage and retrieval (`s3_utils.py`)</li></ul> |
+| 🔩 | **Code Quality**  | <ul><li>Modular design with separate modules for extraction (`text_extraction.py`), article separation (`article_seperation.py`), and search split across focused sub-modules (`hybrid_search.py`, `tamil_text.py`, `csv_queries.py`, `llm.py`, `search.py`, `reranker.py`, `sparse.py`)</li><li>Centralized configuration settings in `config/config.py` for consistency and easy modification</li><li>Comprehensive test coverage with unit and integration tests</li></ul> |
 | 🔌 | **Integrations**  | <ul><li>Integrates with `AWS S3` for efficient storage and retrieval of documents and processed data</li><li>Utilizes `Qdrant` vector database for semantic search and similarity matching</li><li>Streamlit-based interactive UI for querying and visualization (`streamlit_app.py`)</li></ul> |
-| 🧩 | **Modularity**    | <ul><li>Search backend split into focused modules: orchestration (`hybrid_search.py`), Tamil NLP (`tamil_text.py`), CSV queries (`csv_queries.py`), LLM layer (`llm.py`), document processing (`search.py`)</li><li>Separate modules for text extraction (`text_extraction.py`), content processing (`content_extraction.py`), and text processing (`text_processing.py`)</li><li>Article separation and pattern matching encapsulated in `article_seperation.py` and `article_patterns.py`</li><li>Configuration settings isolated in `config/config.py`</li><li>Comprehensive test suites for quality assessment in `tests/`</li></ul> |
+| 🧩 | **Modularity**    | <ul><li>Search backend split into focused modules: orchestration (`hybrid_search.py`), Tamil NLP (`tamil_text.py`), CSV queries (`csv_queries.py`), LLM layer (`llm.py`), document processing (`search.py`), reranking (`reranker.py`), sparse embeddings (`sparse.py`)</li><li>Separate modules for text extraction (`text_extraction.py`), content processing (`content_extraction.py`), and text processing (`text_processing.py`)</li><li>Article separation and pattern matching encapsulated in `article_seperation.py` and `article_patterns.py`</li><li>Configuration settings isolated in `config/config.py`</li><li>Comprehensive test suites for quality assessment in `tests/`</li></ul> |
 
 ---
 
@@ -60,7 +60,7 @@ The AI Chat feature provides a conversational interface for querying the Ponni m
 
 | Query Type | Example | How It Works |
 |-----------|---------|--------------|
-| **Vector search** | "திராவிட இயக்கம் பற்றி என்ன கூறுகிறது?" | Hybrid retrieval (dense + sparse + RRF fusion) pulls relevant documents, builds equal-excerpt context, and passes it to Gemini with the full document prompt |
+| **Vector search** | "திராவிட இயக்கம் பற்றி என்ன கூறுகிறது?" | Hybrid retrieval (dense + sparse + RRF fusion) + cross-encoder reranking selects the most relevant documents, builds equal-excerpt context, and passes it to Gemini with the full document prompt |
 | **CSV queries** | "பொன்னி இதழ் ஆசிரியர்கள்", "பாரதிதாசன் எழுதிய கட்டுரைகள்" | Structured data (authors, topics, issues) is retrieved from the article database, summarized by Gemini with a lightweight gist prompt, and displayed with raw data appended below |
 
 ### Features
@@ -170,6 +170,7 @@ python -m evaluation.evaluate --dataset evaluation/ground_truth_data.csv --outpu
 | `evaluation/ground_truth_data.csv` | 50 Tamil Q&A pairs for evaluation |
 | `evaluation/ground_truth_template.csv` | Template for adding new questions |
 | `evaluation/ground_truth_report.xlsx` | Latest evaluation results with per-question breakdown |
+| `evaluation/sample_dataset.json` | Sample evaluation dataset in JSON format |
 
 ---
 
@@ -212,12 +213,20 @@ python -m evaluation.evaluate --dataset evaluation/ground_truth_data.csv --outpu
 │   │   ├── hybrid_search.py     # Orchestrator (search, caching, model loaders)
 │   │   ├── llm.py               # Gemini LLM layer (prompts, generation)
 │   │   ├── qdrant_indexer.py    # Vector indexing with E5 passage/query prefixes
+│   │   ├── reranker.py          # Cross-encoder reranking (BAAI/bge-reranker-v2-m3)
 │   │   ├── retry.py             # Exponential backoff retry for Qdrant/Gemini
 │   │   ├── search.py            # Vector search document processing
+│   │   ├── sparse.py            # BM25 sparse embeddings via fastembed
 │   │   ├── snapshot_manager.py  # Qdrant snapshot backup/restore via S3
 │   │   ├── streamlit_app.py     # Legacy Streamlit UI
 │   │   ├── tamil_text.py        # Tamil NLP utilities, fuzzy matching, pattern bank
 │   │   └── update_csv_tags.py   # Maintenance: update CSV with Qdrant tags
+│   ├── scripts/
+│   │   ├── upload_pdfs_to_s3.py # Bulk upload PDFs to S3
+│   │   ├── debug_topk.py        # Debug retrieval top-k ranking
+│   │   └── Gemini_Image_Enhancement/
+│   │       ├── enhance_images.py  # Gemini-powered cover image enhancement
+│   │       └── requirements.txt
 │   ├── tests/                   # Unit and integration tests
 │   └── evaluation/
 │       ├── evaluate.py          # Evaluation pipeline & CLI
@@ -335,7 +344,7 @@ python -m evaluation.evaluate --dataset evaluation/ground_truth_data.csv --outpu
             </tr>
              <tr>
                 <td><b><a href='db/embeddings.py'>embeddings.py</a></b></td>
-                <td>- Embedding + hybrid search engine using dense (E5) and sparse (BM25-style) vectors<br>- Thread-safe singleton loading for model, Qdrant client, and CSV embeddings<br>- Semantic CSV search with precomputed embeddings and author normalization<br>- Hybrid Qdrant retrieval with tag filtering, RRF fusion, and health monitoring</td>
+                <td>- Embedding + hybrid search engine using dense (E5) and sparse (BM25 via fastembed) vectors<br>- Thread-safe singleton loading for model, Qdrant client, and CSV embeddings<br>- Semantic CSV search with precomputed embeddings and author normalization<br>- Hybrid Qdrant retrieval with tag filtering (MatchAny on metadata.tags), RRF fusion, and health monitoring</td>
             </tr>
              <tr>
                 <td><b><a href='db/guardrails.py'>guardrails.py</a></b></td>
@@ -343,7 +352,7 @@ python -m evaluation.evaluate --dataset evaluation/ground_truth_data.csv --outpu
             </tr>
             <tr>
                 <td><b><a href='db/hybrid_search.py'>hybrid_search.py</a></b></td>
-                <td>- Orchestrator module: coordinates query routing, embedding generation, caching, and model loading<br>- Combines dense (E5 embeddings) + sparse (BM25-style) retrieval with Qdrant RRF fusion<br>- GPU/CPU auto-detection with device-specific optimizations (TF32 on CUDA, thread tuning on CPU)<br>- Re-exports all sub-module names for backward compatibility</td>
+                <td>- Orchestrator module: coordinates query routing, embedding generation, reranking, caching, and model loading<br>- Combines dense (E5) + sparse (BM25 fastembed) retrieval with Qdrant RRF fusion + cross-encoder reranking<br>- Supports optional tag filtering (filter_tags parameter on ask_question/ask_question_async/ask_question_stream)<br>- GPU/CPU auto-detection with device-specific optimizations (TF32 on CUDA, thread tuning on CPU)<br>- Re-exports all sub-module names for backward compatibility</td>
             </tr>
             <tr>
                 <td><b><a href='db/llm.py'>llm.py</a></b></td>
@@ -351,7 +360,11 @@ python -m evaluation.evaluate --dataset evaluation/ground_truth_data.csv --outpu
             </tr>
              <tr>
                 <td><b><a href='db/qdrant_indexer.py'>qdrant_indexer.py</a></b></td>
-                <td>- Qdrant vector database integration for embedding storage and similarity search<br>- Handles collection creation, vector indexing, and batch insertion operations<br>- Implements efficient large-scale indexing with configurable distance metrics<br>- Provides similarity search with metadata filtering and payload storage<br>- Includes connection management, retry logic, and error recovery.</td>
+                <td>- Qdrant vector database integration for embedding storage and similarity search<br>- 2-pass indexing: Pass 1 collects articles for tagger training, Pass 2 tags + chunks + embeds<br>- Stores tags and tags_tamil in Qdrant payload for tag-filtered search<br>- Implements efficient large-scale indexing with configurable distance metrics<br>- Includes connection management, retry logic, and error recovery.</td>
+            </tr>
+            <tr>
+                <td><b><a href='db/reranker.py'>reranker.py</a></b></td>
+                <td>- Cross-encoder reranking using BAAI/bge-reranker-v2-m3 (multilingual)<br>- Heading-phrase pinning: exact title matches skip CE and pin to top (max 3)<br>- Clear-win skip: bypasses CE when heading matches dominate<br>- Adaptive score cutoff: floor 40% of top, gap 50% of prev, min 3, max 5 results<br>- All thresholds env-configurable (ENABLE_RERANKER=0 to disable)</td>
             </tr>
             <tr>
                 <td><b><a href='db/retry.py'>retry.py</a></b></td>
@@ -359,7 +372,11 @@ python -m evaluation.evaluate --dataset evaluation/ground_truth_data.csv --outpu
             </tr>
             <tr>
                 <td><b><a href='db/search.py'>search.py</a></b></td>
-                <td>- Vector search document processing: chunk retrieval, consecutive chunk merging, key fact extraction<br>- Dynamic evidence selection via score-gap analysis (floor 30% of top, consecutive gap 40%, max 10)<br>- Equal-excerpt context building (15K char budget distributed across relevant docs)<br>- Source formatting for evidence cards</td>
+                <td>- Vector search document processing: chunk retrieval, consecutive chunk merging (grouped by title), key fact extraction<br>- Equal-excerpt context building (15K char budget distributed across relevant docs, min 500 chars each)<br>- Source formatting for evidence cards (includes tags)</td>
+            </tr>
+            <tr>
+                <td><b><a href='db/sparse.py'>sparse.py</a></b></td>
+                <td>- BM25 sparse embeddings via fastembed (Qdrant/bm25 model)<br>- Separate doc/query embedding functions with proper IDF weighting<br>- Thread-safe lazy model loading, controlled by ENABLE_RERANKER flag</td>
             </tr>
             <tr>
                 <td><b><a href='db/snapshot_manager.py'>snapshot_manager.py</a></b></td>
@@ -376,6 +393,25 @@ python -m evaluation.evaluate --dataset evaluation/ground_truth_data.csv --outpu
             <tr>
                 <td><b><a href='db/update_csv_tags.py'>update_csv_tags.py</a></b></td>
                 <td>- Updates CSV with article tags by querying Qdrant using doc_id, doc_issue, and article_no<br>- Maps each CSV row to its corresponding indexed article (chunk_id=0)<br>- Handles multi-author CSV parsing and numeric normalization (e.g. "1.0" → "1")<br>- Writes Tamil category labels ('வகை') back into summary.csv</td>
+            </tr>
+            </table>
+        </blockquote>
+    </details>
+    <details>
+        <summary><b>scripts</b></summary>
+        <blockquote>
+            <table>
+            <tr>
+                <td><b><a href='scripts/upload_pdfs_to_s3.py'>upload_pdfs_to_s3.py</a></b></td>
+                <td>- Bulk upload of magazine PDFs to S3 with proper key naming conventions<br>- Reads from local directory and uploads to configured S3 bucket/prefix</td>
+            </tr>
+            <tr>
+                <td><b><a href='scripts/debug_topk.py'>debug_topk.py</a></b></td>
+                <td>- Debug utility to inspect retrieval top-k ranking and reranker scores<br>- Prints dense, sparse, and reranked results side-by-side for a given query</td>
+            </tr>
+            <tr>
+                <td><b><a href='scripts/Gemini_Image_Enhancement/enhance_images.py'>Gemini_Image_Enhancement/enhance_images.py</a></b></td>
+                <td>- Uses Gemini to enhance and upscale magazine cover images<br>- Processes S3-stored covers for improved visual quality</td>
             </tr>
             </table>
         </blockquote>
@@ -531,6 +567,14 @@ python -m evaluation.evaluate --dataset evaluation/ground_truth_data.csv --outpu
                 <td><b><a href='tests/test_update_csv_tags.py'>test_update_csv_tags.py</a></b></td>
                 <td>- Unit tests for CSV tag sync from Qdrant: tag retrieval, fallback logic, CSV update.</td>
             </tr>
+            <tr>
+                <td><b><a href='tests/test_reranker.py'>test_reranker.py</a></b></td>
+                <td>- Unit tests for cross-encoder reranking: score cutoff, heading pinning, clear-win skip, env config overrides.</td>
+            </tr>
+            <tr>
+                <td><b><a href='tests/test_upload_pdfs_to_s3.py'>test_upload_pdfs_to_s3.py</a></b></td>
+                <td>- Unit tests for bulk PDF upload to S3.</td>
+            </tr>
             </table>
         </blockquote>
     </details>
@@ -567,12 +611,12 @@ This module provides utility functions for managing document storage and process
 
 Before getting started with Ponni RAG, ensure your runtime environment meets the following requirements:
 
-- **Programming Language:** Python 3.9+
+- **Programming Language:** Python 3.9+, Node.js 18+ (for React frontend)
 - **Required Services:**
   - AWS S3 (for document storage)
   - Qdrant Vector Database (local or cloud instance)
   - Gemini API key ([get one here](https://ai.google.dev/))
-  - CUDA-compatible GPU (optional, for faster embedding generation)
+  - CUDA-compatible GPU (optional, for faster embedding and reranker inference)
 
 ### Installation
 
@@ -607,13 +651,54 @@ pip install -r requirements.txt
 6. Configure environment variables:
 ```sh
 cp .env.example .env
-# Edit .env with your credentials:
-#   AWS_ACCESS_KEY_ID=<your-access-key>
-#   AWS_SECRET_ACCESS_KEY=<your-secret-key>
-#   GEMINI_API_KEY=<your-gemini-api-key>
+# Edit .env with your credentials
 ```
 
+**Required variables:**
+
+| Variable | Description |
+|----------|-------------|
+| `AWS_ACCESS_KEY_ID` | AWS access key for S3 document storage |
+| `AWS_SECRET_ACCESS_KEY` | AWS secret key |
+| `GEMINI_API_KEY` | Google Gemini API key ([get one here](https://ai.google.dev/)) |
+
+**Optional variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AWS_DEFAULT_REGION` | `ap-south-1` | AWS region for S3 |
+| `QDRANT_HOST` | `localhost` | Qdrant server hostname |
+| `QDRANT_PORT` | `6333` | Qdrant server port |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model for answer generation |
+| `HF_TOKEN` | — | Hugging Face token (if gated model downloads need auth) |
+| `RAG_DEBUG` | `0` | Set `1` to log dense vs sparse top-10 per query (verbose, dev only) |
+
+**Cross-encoder reranker variables:**
+
+The reranker (`BAAI/bge-reranker-v2-m3`) re-scores retrieval candidates for higher relevance. Enabled by default.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_RERANKER` | `1` | Set `0` to disable reranker and fall back to lexical filter |
+| `RERANKER_MODEL` | `BAAI/bge-reranker-v2-m3` | Cross-encoder model (multilingual, incl. Tamil) |
+| `RERANKER_TOP_IN` | `30` | Number of candidates fed into reranker |
+| `RERANKER_TOP_OUT` | `5` | Upper cap on returned sources |
+| `RERANKER_MIN_OUT` | `3` | Minimum sources returned when reranker ran |
+| `RERANKER_SCORE_FLOOR_RATIO` | `0.4` | Drop docs scoring < 40% of top score |
+| `RERANKER_GAP_RATIO` | `0.5` | Drop after a > 50% score drop from previous doc |
+| `RERANKER_MAX_CHARS` | `800` | Max chars per document sent to reranker |
+| `RERANKER_BATCH` | `16` | Batch size for cross-encoder inference |
+| `RERANKER_PIN_HEADING_MATCHES` | `1` | Pin heading-phrase matches into reranker pool even if ranked deep |
+
 ### Usage
+
+**Start Qdrant** (required before running the backend):
+```sh
+# Using Docker (recommended)
+docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant
+
+# Or use a cloud instance and set QDRANT_HOST/QDRANT_PORT in .env
+```
 
 **Run document indexing:**
 ```sh
@@ -668,6 +753,8 @@ The application can be deployed using Docker Compose, which orchestrates three s
 ```sh
 cp .env.docker.example .env.docker
 # Edit .env.docker with your AWS credentials and Gemini API key
+# See the environment variables table above for all available options
+# Note: QDRANT_HOST defaults to 'qdrant' (Docker service name) in .env.docker.example
 ```
 
 2. **Build and start all services:**
@@ -712,9 +799,9 @@ The FastAPI service exposes the following endpoints:
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/health` | Health check (API + Qdrant) |
-| `POST` | `/api/ask` | Ask a question (Gemini LLM) |
+| `POST` | `/api/ask` | Ask a question (Gemini LLM, optional `tags` filter) |
 | `POST` | `/api/ask/stream` | Streaming answer via SSE |
-| `GET` | `/api/search?q=<query>` | Search the archive |
+| `GET` | `/api/search?q=<query>&tags=<tags>` | Search the archive (optional tag filter) |
 | `GET` | `/api/authors` | List all authors |
 | `GET` | `/api/authors/{name}/articles` | Get articles by author |
 | `GET` | `/api/topics/search?topic=<topic>` | Search by topic |
@@ -722,10 +809,15 @@ The FastAPI service exposes the following endpoints:
 | `GET` | `/api/library/volumes` | List all volumes |
 | `GET` | `/api/library/volumes/{id}/issues` | Get issues for a volume |
 | `GET` | `/api/library/volumes/{id}/issues/{issue}/pdf` | Get PDF link |
+| `GET` | `/api/library/volumes/{id}/issues/{issue}/articles` | Get articles for an issue (includes tags) |
+| `GET` | `/api/articles/content` | Get full article content with tags |
 | `GET` | `/api/tags` | List all article categories with counts |
 | `GET` | `/api/tags/{tag_id}/articles` | Get articles for a category |
+| `GET` | `/api/images/volumes/{id}/cover` | S3 proxy for volume cover image |
+| `GET` | `/api/images/volumes/{id}/issues/{issue}/cover` | S3 proxy for issue cover image |
 | `GET` | `/api/cache/stats` | Cache hit/miss stats |
 | `POST` | `/api/cache/clear` | Clear response cache |
+| `GET` | `/api/debug/s3` | Debug S3 connectivity and bucket listing |
 
 ### Building Individual Images
 
@@ -850,3 +942,5 @@ frontend/
 | [LLM Analysis Report](docs/PonniRAG%20—%20LLM-Anaylsis%20Report.docx) | LLM performance analysis and comparison |
 | [OCR Framework Analysis](docs/PonniRAG%20—%20OCR%20Framework%20Analysis.docx) | OCR framework evaluation for Tamil document processing |
 | [Project Status Report](docs/PonniRAG%20—%20Project%20Status%20Report.docx) | Current project status and milestones |
+| [Indexed Data](docs/PonniRAG%20–%20Indexed%20Data.xlsx) | Indexed document inventory and metadata |
+| [UAT Testing](docs/PonniRAG%20—%20UAT%20Testing.xlsx) | User acceptance testing checklist and results |
