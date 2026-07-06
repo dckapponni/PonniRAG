@@ -50,7 +50,7 @@ def main(limit: int = 30, query: str = DEFAULT_QUERY, needle: str = None):
     merged = merge_consecutive_chunks(client, pts)
     for i, d in enumerate(merged[:20], 1):
         h = d.get("heading") or d.get("metadata", {}).get("heading") or ""
-        print(f"{i:3d}. score={d.get('score',0):.4f} heading={h[:80]!r}")
+        print(f"{i:3d}. score={d.get('score', 0):.4f} heading={h[:80]!r}")
 
     print("\n--- after _select_relevant_docs ---")
     rel = _select_relevant_docs(merged)

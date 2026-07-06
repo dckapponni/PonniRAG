@@ -68,7 +68,9 @@ INPUT_DIR = Path(
 
 # OUTPUT ROOT FOLDER
 OUTPUT_DIR = Path(
-    "/home/ubuntu/Ponni_Rag/Tagging_feature/src/scripts/Gemini_Image_Enhancement/enhanced_image"
+    "/home/ubuntu/Ponni_Rag/Tagging_feature/"
+    "src/scripts/Gemini_Image_Enhancement/"
+    "enhanced_image"
 )
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -80,13 +82,17 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 # PROMPTS
 # ============================================================
 
-PROMPT_IMAGE = """You are an image enhancement tool. Your ONLY job is to improve visual quality.
+PROMPT_IMAGE = """
+You are an image enhancement tool. Your ONLY job is to improve visual quality.
 
 STRICT RULES — NEVER VIOLATE:
-- DO NOT add, remove, or alter any text, letters, words, or characters in the image.
-- DO NOT translate, correct, or rewrite any text you see.
+- DO NOT add, remove, or alter any text, letters,
+words, or characters in the image.
+- DO NOT translate, correct,
+or rewrite any text you see.
 - DO NOT add new objects, shapes, or elements.
-- DO NOT change the background colour or scene composition.
+- DO NOT change the background colour
+or scene composition.
 - DO NOT change the colours of existing objects.
 
 ALLOWED enhancements ONLY:
@@ -98,13 +104,18 @@ ALLOWED enhancements ONLY:
 Return ONLY the enhanced image. No text. No explanation."""
 
 
-PROMPT_TEXT = """You are an image cleaning tool. Your ONLY job is to clean and sharpen this text image.
+PROMPT_TEXT = """
+You are an image cleaning tool. Your ONLY job is to clean and sharpen this text image.
 
 STRICT RULES — NEVER VIOLATE:
-- DO NOT change, correct, translate, or rewrite any word, letter, character, or punctuation.
-- DO NOT add any new text or remove any existing text.
-- Every character in the output must be pixel-for-pixel faithful to the input text.
-- If you cannot guarantee the text is unchanged, return the image as-is with only background cleaning.
+- DO NOT change, correct, translate, or rewrite any word,
+letter, character, or punctuation.
+- DO NOT add any new text
+or remove any existing text.
+- Every character in the output must be
+pixel-for-pixel faithful to the input text.
+- If you cannot guarantee the text is unchanged,
+return the image as-is with only background cleaning.
 
 ALLOWED enhancements ONLY:
 - Replace the background with a pure solid white (#FFFFFF).
@@ -116,10 +127,12 @@ ALLOWED enhancements ONLY:
 Return ONLY the enhanced image. No text. No explanation."""
 
 
-PROMPT_IMAGE_TEXT = """You are an image enhancement tool for images that contain both visuals and text.
+PROMPT_IMAGE_TEXT = """
+You are an image enhancement tool for images that contain both visuals and text.
 
 STRICT RULES — NEVER VIOLATE:
-- DO NOT change, correct, translate, or rewrite any word, letter, character, or punctuation visible in the image.
+- DO NOT change, correct, translate, or rewrite any word,
+letter, character, or punctuation visible in the image.
 - DO NOT add any new text or symbols.
 - DO NOT remove any existing text.
 - DO NOT change the colours, shapes, or positions of any objects.
@@ -128,8 +141,10 @@ STRICT RULES — NEVER VIOLATE:
 
 ALLOWED enhancements ONLY:
 - Replace the background with a pure solid white (#FFFFFF).
-- Remove noise, blur, stains, shadows, and compression artifacts.
-- Improve sharpness and contrast of both text and visual elements.
+- Remove noise, blur, stains, shadows,
+and compression artifacts.
+- Improve sharpness and contrast
+of both text and visual elements.
 - Increase overall resolution and clarity.
 
 Return ONLY the enhanced image. No text. No explanation."""
@@ -140,6 +155,7 @@ Return ONLY the enhanced image. No text. No explanation."""
 
 
 def classify_image(pil_img: Image.Image) -> str:
+    """Classify the image as 'text', 'image_text', or 'image'."""
     try:
         small = pil_img.convert("RGB").resize((128, 128))
 
@@ -164,6 +180,7 @@ def classify_image(pil_img: Image.Image) -> str:
 
 
 def to_png_bytes(pil_img: Image.Image) -> bytes:
+    """Convert a PIL Image to PNG bytes."""
     buf = io.BytesIO()
 
     pil_img.convert("RGB").save(buf, format="PNG")
@@ -172,7 +189,7 @@ def to_png_bytes(pil_img: Image.Image) -> bytes:
 
 
 def save_white_bg(img: Image.Image, path: Path) -> None:
-
+    """Save the image with a white background."""
     if img.mode in ("RGBA", "LA"):
 
         bg = Image.new("RGB", img.size, (255, 255, 255))
@@ -188,7 +205,7 @@ def save_white_bg(img: Image.Image, path: Path) -> None:
 
 
 def call_gemini(model: str, img_bytes: bytes, prompt: str):
-
+    """Call the Gemini API with the given image and prompt."""
     response = client.models.generate_content(
         model=model,
         contents=[
@@ -212,7 +229,7 @@ def call_gemini(model: str, img_bytes: bytes, prompt: str):
 
 
 def probe_models(candidates):
-
+    """Probe the list of candidate models to find a working one."""
     log.info("Probing models...")
 
     tiny = io.BytesIO()
@@ -254,7 +271,7 @@ FAIL_LOG = []
 
 
 def enhance_single(model: str, img_path: Path, retries: int = 3):
-
+    """Enhance a single image using the specified model."""
     try:
         pil_img = Image.open(img_path)
 
@@ -353,7 +370,7 @@ def enhance_single(model: str, img_path: Path, retries: int = 3):
 
 
 def main():
-
+    """Enhance images in the input directory."""
     if not INPUT_DIR.exists():
         sys.exit(f"Folder not found: {INPUT_DIR}")
 
