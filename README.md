@@ -135,9 +135,8 @@ For full documentation, see [Evaluation Module README](src/evaluation/README.md)
 
 | Metric | Weight | Method |
 |--------|--------|--------|
-| Semantic Similarity | 50% | Cosine similarity of E5 embeddings (1024-dim) |
-| BERTScore F1 | 25% | Token-level similarity via multilingual-e5-large |
-| ROUGE-L | 15% | Character-level longest common subsequence |
+| Semantic Similarity | 70% | Cosine similarity of E5 embeddings (1024-dim) |
+| ROUGE-L | 20% | Character-level longest common subsequence |
 | BLEU-1 | 10% | Character-level unigram precision |
 
 All lexical metrics (BLEU, ROUGE) operate at the **character level** — each Unicode code-point is a token. This handles Tamil morphology where word-level metrics undercount overlap (e.g., "வந்தான்", "வருகிறான்", "வரவேண்டும்" share the root "வ" but no complete word tokens).
@@ -230,7 +229,7 @@ python -m evaluation.evaluate --dataset evaluation/ground_truth_data.csv --outpu
 │   ├── tests/                   # Unit and integration tests
 │   └── evaluation/
 │       ├── evaluate.py          # Evaluation pipeline & CLI
-│       ├── metrics.py           # Semantic, BLEU, ROUGE, BERTScore
+│       ├── metrics.py           # Semantic, BLEU, ROUGE
 │       ├── dataset.py           # Dataset loading (JSON/CSV)
 │       ├── ground_truth_template.csv  # Template for ground truth data
 │       ├── ground_truth_data.csv      # Ground truth data to evaluate
@@ -426,7 +425,7 @@ python -m evaluation.evaluate --dataset evaluation/ground_truth_data.csv --outpu
             </tr>
             <tr>
                 <td><b><a href='evaluation/evaluate.py'>evaluate.py</a></b></td>
-                <td>-  End-to-end evaluation pipeline for RAG (offline + live modes)<br>- Computes metrics (semantic similarity, BLEU, ROUGE, BERTScore, composite)<br>- Integrates with RAG system to generate answers during live evaluation<br>- Outputs detailed reports (console + Excel/JSON) with per-sample breakdown</td>
+                <td>-  End-to-end evaluation pipeline for RAG (offline + live modes)<br>- Computes metrics (semantic similarity, BLEU, ROUGE-L, composite)<br>- Integrates with RAG system to generate answers during live evaluation<br>- Outputs detailed reports (console + Excel/JSON) with per-sample breakdown</td>
             </tr>
             <tr>
                 <td><b><a href='evaluation/metrics.py'>metrics.py</a></b></td>
@@ -442,7 +441,7 @@ python -m evaluation.evaluate --dataset evaluation/ground_truth_data.csv --outpu
             </tr>
             <tr>
                 <td><b><a href='evaluation/ground_truth_report.xlsx'>ground_truth_data.csv</a></b></td>
-                <td>- Generated evaluation report comparing LLM answers vs human ground truth<br>- Includes metrics: semantic similarity, BLEU, ROUGE-L, BERTScore, composite score<br>- Highlights retrieval issues, verbosity, and answer mismatches in RAG system<br>- Shows per-question performance for detailed error analysis<br>- Used to debug and improve retrieval, prompting, and answer quality</td>
+                <td>- Generated evaluation report comparing LLM answers vs human ground truth<br>- Includes metrics: semantic similarity, BLEU, ROUGE-L, composite score<br>- Highlights retrieval issues, verbosity, and answer mismatches in RAG system<br>- Shows per-question performance for detailed error analysis<br>- Used to debug and improve retrieval, prompting, and answer quality</td>
             </tr>
             </table>
         </blockquote>
@@ -944,3 +943,32 @@ frontend/
 | [Project Status Report](docs/PonniRAG%20—%20Project%20Status%20Report.docx) | Current project status and milestones |
 | [Indexed Data](docs/PonniRAG%20–%20Indexed%20Data.xlsx) | Indexed document inventory and metadata |
 | [UAT Testing](docs/PonniRAG%20—%20UAT%20Testing.xlsx) | User acceptance testing checklist and results |
+
+---
+
+## Contributors
+
+Contributions follow the [CRediT](https://credit.niso.org/) (Contributor Roles Taxonomy) and are consistent with the FIRE 2026 resource/demo paper *"Hybrid Retrieval-Augmented Generation System for the Tamil Ponni Archive."*
+
+### Authors
+
+| Name | Affiliation | CRediT Roles |
+|------|-------------|--------------|
+| Honika Sankar † | Nunnari Labs | Software, Methodology, Validation, Writing – review & editing |
+| Abinaya Suresh † | Nunnari Labs | Software, Data curation, Investigation, Evaluation |
+| S. Karunakaran | Department of Tamil, Madras Christian College | Resources, Data curation, Domain supervision, Writing – review & editing |
+| Karthik Chidambaram | DCKAP | Conceptualization, Project administration, Funding acquisition, Supervision |
+| S. Srija ✉ | DCKAP | Project administration, Data curation, Resources |
+| Abinaya Mahendiran | Nunnari Labs | Conceptualization, Methodology, Software, Writing – original draft |
+
+† Equal contribution (co-first authors). ✉ Corresponding author.
+
+### Acknowledgments
+
+We gratefully acknowledge the many contributors to the *Ponni* archive project:
+
+- **Archive digitisation, OCR, proofreading & e-book production** — *Department of Tamil, Madras Christian College:* S. Sowmiya Shree (team coordination), K. Umadevi, S. Lakshaya Shree, R. Karthikeyan, S. Sabarika, A. Varshini, S. Arul, A. Benisha, P. Nandhan, R. Yogeshwari, R. Akash, N. Harish, A. Melvina
+- **Data cleaning** — B. Shanmugapriya
+- **Original data preservation** — Peri. Azhagappan
+
+*Ponni* magazine materials are reproduced for non-commercial scholarly research purposes.

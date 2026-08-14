@@ -14,10 +14,9 @@ Programmatic:
 
 Metrics provided:
     - Semantic similarity  (intfloat/multilingual-e5-large, cosine)
-    - BERTScore F1         (via bert_score library, uses multilingual model)
     - BLEU-1 / BLEU-2      (sacrebleu, character-level for Tamil)
-    - ROUGE-L              (rouge-score, character n-gram overlap)
-    - Composite score      (weighted combination of the above)
+    - ROUGE-L              (direct char-level LCS; Tamil-safe, no rouge-score)
+    - Composite score      (0.70 semantic + 0.20 ROUGE-L + 0.10 BLEU-1)
 """
 
 from evaluation.dataset import EvalSample, load_dataset  # noqa: F401

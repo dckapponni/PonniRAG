@@ -522,14 +522,14 @@ class TestComposite:
         assert abs(_composite(r) - 1.0) < 1e-9
 
     def test_weights_applied_correctly(self):
-        """Apply 0.50 weight to semantic_similarity."""
-        r = MetricResult(sample_id="x", semantic_similarity=0.8)
-        assert 0.0 <= _composite(r) <= 1.0
+        """Apply 0.70 weight to semantic_similarity."""
+        r = MetricResult(sample_id="x", semantic_similarity=1.0)
+        assert abs(_composite(r) - 0.70) < 1e-9
 
     def test_rouge_l_weight(self):
-        """Apply 0.15 weight to rouge_l."""
+        """Apply 0.20 weight to rouge_l."""
         r = MetricResult(sample_id="x", rouge_l=1.0)
-        assert 0.0 <= _composite(r) <= 1.0
+        assert abs(_composite(r) - 0.20) < 1e-9
 
     def test_bleu1_weight(self):
         """Apply 0.10 weight to bleu_1."""
@@ -573,7 +573,7 @@ class TestMetricsCalculatorInit:
 
     def test_default_model_name(self):
         """Use multilingual-e5-large as default model."""
-        calc = MetricsCalculator(use_bertscore=False)
+        calc = MetricsCalculator()
         assert calc._embedding_model_name == "intfloat/multilingual-e5-large"
 
     def test_custom_model_name(self):
@@ -582,38 +582,32 @@ class TestMetricsCalculatorInit:
             embedding_model_name=(
                 "sentence-transformers/" "paraphrase-multilingual-MiniLM-L12-v2"
             ),
-            use_bertscore=False,
         )
         assert "paraphrase" in calc._embedding_model_name
 
-    def test_use_bertscore_flag_stored(self):
-        """Store the use_bertscore flag."""
-        calc = MetricsCalculator(use_bertscore=False)
-        assert calc._use_bertscore is False
-
     def test_embed_model_is_none_before_first_use(self):
         """Leave embed model as None before first use."""
-        calc = MetricsCalculator(use_bertscore=False)
+        calc = MetricsCalculator()
         assert calc._embed_model is None
 
     def test_device_defaults_to_cpu_when_torch_absent(self):
         """Default to cpu when torch is absent."""
         with patch.dict("sys.modules", {"torch": None}):
-            calc = MetricsCalculator(use_bertscore=False)
+            calc = MetricsCalculator()
         assert calc._device in ("cpu", "cuda")
 
     def test_explicit_device_respected(self):
         """Respect explicit device parameter."""
-        calc = MetricsCalculator(device="cpu", use_bertscore=False)
+        calc = MetricsCalculator(device="cpu")
         assert calc._device == "cpu"
 
 
 class TestMetricsCalculatorCompute:
     """Test MetricsCalculator.compute() with mocked model internals."""
 
-    def _make_calculator(self, use_bertscore: bool = False) -> MetricsCalculator:
+    def _make_calculator(self) -> MetricsCalculator:
         """Create a calculator with mocked embedding model."""
-        calc = MetricsCalculator(device="cpu", use_bertscore=use_bertscore)
+        calc = MetricsCalculator(device="cpu")
         mock_model = MagicMock()
         mock_model.encode.return_value = np.array(
             [[1.0, 0.0, 0.0, 0.0], [0.8, 0.6, 0.0, 0.0]]
@@ -657,7 +651,7 @@ class TestMetricsCalculatorCompute:
 
     def test_compute_composite_matches_formula(self):
         """Match composite score to weighted formula."""
-        calc = self._make_calculator(use_bertscore=False)
+        calc = self._make_calculator()
         with (
             patch.object(
                 calc,
@@ -676,7 +670,7 @@ class TestMetricsCalculatorComputeBatch:
 
     def _make_calculator(self) -> MetricsCalculator:
         """Create a calculator with mocked batch encoding."""
-        calc = MetricsCalculator(device="cpu", use_bertscore=False)
+        calc = MetricsCalculator(device="cpu")
         mock_model = MagicMock()
 
         def mock_encode(prefixed, **kwargs):
@@ -746,16 +740,6 @@ class TestBLEUGracefulDegradation:
         assert result == (0.0, 0.0)
 
 
-class TestROUGEGracefulDegradation:
-    """Test _rouge_l returns 0.0 when rouge-score is absent."""
-
-    def test_rouge_returns_zero_when_rouge_score_missing(self):
-        """Return 0.0 when rouge_score is not installed."""
-        with patch.dict("sys.modules", {"rouge_score": None}):
-            result = MetricsCalculator._rouge_l("ref text", "hyp text")
-        assert result == 0.0
-
-
 class TestBLEUCharacterLevel:
     """Test character-level BLEU when sacrebleu is available."""
 
@@ -803,29 +787,45 @@ class TestBLEUCharacterLevel:
         assert b2 >= 0.0
 
 
-class TestROUGECharacterLevel:
-    """Test character-level ROUGE when rouge-score is available."""
+class TestROUGELCharacterLevel:
+    """Character-level LCS ROUGE-L, computed directly (Tamil-safe, no library)."""
 
-    def test_rouge_l_uses_character_tokens(self):
-        """Call scorer with character-spaced strings."""
-        mock_scorer_instance = MagicMock()
-        mock_scores = {"rougeL": MagicMock(fmeasure=0.75)}
-        mock_scorer_instance.score.return_value = mock_scores
+    def test_identical_strings_score_one(self):
+        """Return 1.0 for identical strings."""
+        assert MetricsCalculator._rouge_l("abcd", "abcd") == 1.0
 
-        mock_rouge_scorer_cls = MagicMock(return_value=mock_scorer_instance)
-        mock_rouge_score_module = MagicMock()
-        mock_rouge_score_module.rouge_scorer.RougeScorer = mock_rouge_scorer_cls
+    def test_disjoint_strings_score_zero(self):
+        """Return 0.0 when no character is shared."""
+        assert MetricsCalculator._rouge_l("aaaa", "bbbb") == 0.0
 
-        with patch.dict(
-            "sys.modules",
-            {"rouge_score": mock_rouge_score_module},
-        ):
-            result = MetricsCalculator._rouge_l("ab", "ab")
+    def test_empty_input_scores_zero(self):
+        """Return 0.0 when either side is empty."""
+        assert MetricsCalculator._rouge_l("", "abc") == 0.0
+        assert MetricsCalculator._rouge_l("abc", "") == 0.0
 
-        call_args = mock_scorer_instance.score.call_args
-        ref_arg, hyp_arg = call_args[0]
-        assert " " in ref_arg
-        assert result == 0.75
+    def test_partial_overlap_between_zero_and_one(self):
+        """Return a value strictly between 0 and 1 for partial overlap."""
+        score = MetricsCalculator._rouge_l("abcxyz", "abcpqr")
+        assert 0.0 < score < 1.0
+
+    def test_whitespace_ignored(self):
+        """Ignore whitespace so spacing differences do not change the score."""
+        assert MetricsCalculator._rouge_l("a b c", "abc") == 1.0
+
+    def test_tamil_paraphrase_scores_nonzero(self):
+        """REGRESSION: the old rouge-score path stripped all Tamil → 0.
+
+        DefaultTokenizer keeps only ``[a-z0-9]``; Tamil text was erased and
+        genuine overlap scored 0. The direct LCS must score real overlap.
+        """
+        ref = "காதல் கவிதை மிக அழகாக உள்ளது"
+        hyp = "காதல் கவிதை மிகவும் அழகாக இருந்தது"
+        assert MetricsCalculator._rouge_l(ref, hyp) > 0.5
+
+    def test_identical_tamil_scores_one(self):
+        """Return 1.0 for identical Tamil strings."""
+        text = "தமிழ் மொழி பழமையானது"
+        assert MetricsCalculator._rouge_l(text, text) == 1.0
 
 
 # ===========================================================================
@@ -1059,7 +1059,7 @@ class TestRunEvaluation:
             "evaluation.evaluate.MetricsCalculator",
             return_value=mock_calc,
         ):
-            report = run_evaluation(p, use_bertscore=False)
+            report = run_evaluation(p)
         assert isinstance(report, EvaluationReport)
 
     def test_run_evaluation_evaluated_count(self, tmp_path):
@@ -1070,7 +1070,7 @@ class TestRunEvaluation:
             "evaluation.evaluate.MetricsCalculator",
             return_value=mock_calc,
         ):
-            report = run_evaluation(p, use_bertscore=False)
+            report = run_evaluation(p)
         assert report.evaluated_samples == 3
         assert report.skipped_samples == 0
 
@@ -1107,7 +1107,7 @@ class TestRunEvaluation:
                 return_value=mock_calc,
             ),
         ):
-            report = run_evaluation(p, live=False, use_bertscore=False)
+            report = run_evaluation(p, live=False)
         assert report.skipped_samples == 1
         assert report.evaluated_samples == 1
 
@@ -1130,7 +1130,6 @@ class TestRunEvaluation:
         ):
             run_evaluation(
                 p,
-                use_bertscore=False,
                 save_answers_path=save_path,
             )
         assert save_path.exists()
@@ -1149,7 +1148,6 @@ class TestRunEvaluation:
         ):
             report = run_evaluation(
                 p,
-                use_bertscore=False,
                 output_path=out_path,
             )
 
@@ -1184,7 +1182,7 @@ class TestRunEvaluation:
                 return_value=mock_calc,
             ),
         ):
-            report = run_evaluation(p, live=True, use_bertscore=False)
+            report = run_evaluation(p, live=True)
 
         mock_ask.assert_called_once()
         assert report.evaluated_samples == 1
@@ -1197,7 +1195,7 @@ class TestRunEvaluation:
             "evaluation.evaluate.MetricsCalculator",
             return_value=mock_calc,
         ):
-            report = run_evaluation(p, use_bertscore=False)
+            report = run_evaluation(p)
         assert abs(report.avg_composite_score - 0.69) < 1e-6
 
     def test_run_evaluation_per_sample_has_expected_keys(self, tmp_path):
@@ -1208,7 +1206,7 @@ class TestRunEvaluation:
             "evaluation.evaluate.MetricsCalculator",
             return_value=mock_calc,
         ):
-            report = run_evaluation(p, use_bertscore=False)
+            report = run_evaluation(p)
         entry = report.per_sample[0]
         assert "id" in entry
         assert "semantic_similarity" in entry
@@ -1254,7 +1252,7 @@ class TestSmokeEndToEnd:
             "evaluation.evaluate.MetricsCalculator",
             return_value=mock_calc,
         ):
-            report = run_evaluation(p, live=False, use_bertscore=False)
+            report = run_evaluation(p, live=False)
 
         assert report.total_samples == 1
         assert report.evaluated_samples == 1

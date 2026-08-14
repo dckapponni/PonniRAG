@@ -12,6 +12,7 @@ bitsandbytes==0.49.1
 numpy==2.2.6
 docx2txt==0.9
 scikit-learn==1.7.2
+sacrebleu==2.4.3
 sentencepiece==0.2.1
 fastapi==0.128.0
 uvicorn[standard]==0.40.0

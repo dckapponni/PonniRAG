@@ -10,34 +10,26 @@ Tamil-specific design decisions
    multilingual STS training means it generalises to paraphrase detection in
    Tamil.
 
-2. BERTScore           — uses intfloat/multilingual-e5-large as the reference
-   model (via the `bert_score` library's `model_type` override).  This avoids
-   downloading a second heavy model.  BERTScore computes token-level cosine
-   similarities between reference and candidate, then reports Precision, Recall,
-   and F1.  For Tamil it handles sub-word tokenisation correctly because XLM-R
-   (underlying E5-large) was trained on Tamil Wikipedia.
-
-3. BLEU                — computed at the CHARACTER level (unigram + bigram) using
+2. BLEU                — computed at the CHARACTER level (unigram + bigram) using
    sacrebleu's `BLEU` scorer with `tokenize="char"`.  This sidesteps the
    absence of reliable whitespace-delimited word boundaries in Tamil (Tamil
    script can agglutinate multiple morphemes without spaces).  Character n-gram
    overlap still captures surface-level lexical similarity.
 
-4. ROUGE-L             — uses rouge-score with character-level tokenisation
-   (each Unicode code-point is treated as a token).  Tamil uses the Unicode
-   range U+0B80–U+0BFF; splitting on characters preserves these code-points and
-   measures longest common subsequence more faithfully than byte-level splits.
+3. ROUGE-L             — character-level LCS F-measure computed DIRECTLY (not
+   via the rouge-score library, whose tokeniser strips all non-ASCII and would
+   erase Tamil).  Each Unicode code-point in the U+0B80–U+0BFF range is a unit;
+   the longest common subsequence over code-points measures overlap faithfully
+   for Tamil.
 
-5. Composite score     — weighted average: 0.50 × semantic + 0.25 × BERTScore-F1
-   + 0.15 × ROUGE-L + 0.10 × BLEU-1.  Semantic similarity dominates because
-   Tamil synonyms and inflections are common; exact-match lexical scores alone
-   would under-estimate answer quality.
+4. Composite score     — weighted average: 0.70 × semantic + 0.20 × ROUGE-L
+   + 0.10 × BLEU-1.  Semantic similarity dominates because Tamil synonyms and
+   inflections are common; exact-match lexical scores alone would under-estimate
+   answer quality.
 
 Dependencies (add to requirements.txt as needed):
     sentence-transformers  (already present)
-    bert-score
-    sacrebleu
-    rouge-score
+    sacrebleu              (character-level BLEU)
 """
 
 from __future__ import annotations
@@ -52,7 +44,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Weights for the composite score
+# Weights for the composite score (see module docstring for rationale)
 # ---------------------------------------------------------------------------
 WEIGHT_SEMANTIC = 0.70
 WEIGHT_ROUGE_L = 0.20
@@ -102,19 +94,15 @@ class MetricsCalculator:
         embedding_model_name: HuggingFace model ID for semantic similarity.
             Defaults to intfloat/multilingual-e5-large (same as RAG system).
         device: "cpu" or "cuda".  Defaults to auto-detect.
-        use_bertscore: Whether to compute BERTScore.  Set False to skip the
-            bert_score library dependency during unit tests.
     """
 
     def __init__(
         self,
         embedding_model_name: str = DEFAULT_EMBEDDING_MODEL,
         device: Optional[str] = None,
-        use_bertscore: bool = False,
     ) -> None:
         """Initialise the calculator with model and device settings."""
         self._embedding_model_name = embedding_model_name
-        self._use_bertscore = use_bertscore
         self._embed_model = None  # lazy
         self._device = device or self._auto_device()
 
@@ -155,13 +143,13 @@ class MetricsCalculator:
         # 1. Semantic similarity
         result.semantic_similarity = self._semantic_similarity(reference, hypothesis)
 
-        # 3. BLEU (character-level)
+        # 2. BLEU (character-level)
         result.bleu_1, result.bleu_2 = self._bleu(reference, hypothesis)
 
-        # 4. ROUGE-L (character-level)
+        # 3. ROUGE-L (character-level)
         result.rouge_l = self._rouge_l(reference, hypothesis)
 
-        # 5. Composite
+        # 4. Composite
         result.composite_score = _composite(result)
 
         return result
@@ -174,8 +162,8 @@ class MetricsCalculator:
     ) -> List[MetricResult]:
         """Compute metrics for multiple pairs.
 
-        Embeddings are batched for efficiency; BERTScore and
-        BLEU/ROUGE are computed per-item.
+        Embeddings are batched for efficiency; BLEU/ROUGE are
+        computed per-item.
 
         Args:
             ids: Sample identifiers.
@@ -319,27 +307,40 @@ class MetricsCalculator:
     @staticmethod
     def _rouge_l(ref: str, hyp: str) -> float:
         """
-        Character-level ROUGE-L F-measure via rouge-score.
+        Character-level ROUGE-L F-measure, computed directly.
 
-        rouge-score's `rouge_scorer` expects whitespace-tokenised strings.
-        We join individual characters with spaces so the scorer treats each
-        Tamil Unicode code-point as a separate token.
+        We do NOT use the ``rouge-score`` library here: its ``DefaultTokenizer``
+        lowercases and regex-strips every character outside ``[a-z0-9]``, which
+        **erases all Tamil code-points** and would score only incidental ASCII
+        (e.g. years like ``1948``) — returning 0 for genuine Tamil overlap. See
+        the module tests for the regression this guards against.
+
+        Instead we compute the longest-common-subsequence (LCS) F-measure over
+        the two texts' non-whitespace Unicode code-points, which is
+        language-agnostic and correct for Tamil. Note code-points, not grapheme
+        clusters: a Tamil syllable such as ``கா`` (க + ா) counts as two units;
+        this is the intended, standard behaviour for a character-level metric.
         """
-        try:
-            from rouge_score import rouge_scorer  # noqa: PLC0415
-        except ImportError:
-            logger.warning(
-                "rouge_score not installed. Skipping ROUGE-L. "
-                "Install with: pip install rouge-score"
-            )
+        ref_chars = [c for c in ref if not c.isspace()]
+        hyp_chars = [c for c in hyp if not c.isspace()]
+        if not ref_chars or not hyp_chars:
             return 0.0
 
-        ref_chars = " ".join(list(ref))
-        hyp_chars = " ".join(list(hyp))
+        # LCS length via a rolling 1-D DP (O(len(ref) * len(hyp)) time,
+        # O(len(hyp)) memory).
+        prev = [0] * (len(hyp_chars) + 1)
+        for ca in ref_chars:
+            cur = [0] * (len(hyp_chars) + 1)
+            for j, cb in enumerate(hyp_chars, start=1):
+                cur[j] = prev[j - 1] + 1 if ca == cb else max(prev[j], cur[j - 1])
+            prev = cur
+        lcs = prev[len(hyp_chars)]
+        if lcs == 0:
+            return 0.0
 
-        scorer = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=False)
-        scores = scorer.score(ref_chars, hyp_chars)
-        return float(scores["rougeL"].fmeasure)
+        precision = lcs / len(hyp_chars)
+        recall = lcs / len(ref_chars)
+        return 2 * precision * recall / (precision + recall)
 
     # ------------------------------------------------------------------
     # Helpers

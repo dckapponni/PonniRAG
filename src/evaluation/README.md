@@ -21,9 +21,8 @@ Evaluation dataset (.json or .csv)
   metrics.py :: MetricsCalculator.compute_batch()
           |
           |-- intfloat/multilingual-e5-large  (semantic similarity)
-          |-- intfloat/multilingual-e5-large  (BERTScore, same model)
           |-- sacrebleu                        (char-level BLEU-1, BLEU-2)
-          |-- rouge-score                      (char-level ROUGE-L)
+          |-- direct char-level LCS            (char-level ROUGE-L, Tamil-safe)
           |
           v
   evaluate.py :: _build_report()  --> EvaluationReport
@@ -36,7 +35,7 @@ Evaluation dataset (.json or .csv)
 
 ## Metrics
 
-### Semantic Similarity (weight: 0.50)
+### Semantic Similarity (weight: 0.70)
 
 Uses `intfloat/multilingual-e5-large` — the same model already deployed
 for indexing and search — to encode both the reference answer and the LLM
@@ -49,16 +48,6 @@ comparison, distinct from the `passage:` prefix used during indexing).
 This metric dominates the composite score because Tamil uses frequent
 synonyms and morphological inflections — two answers can be semantically
 equivalent while sharing few surface tokens.
-
-### BERTScore F1 (weight: 0.25)
-
-Computed via the `bert_score` library using `intfloat/multilingual-e5-large`
-as the reference model (no second model download required). BERTScore
-calculates pairwise token-level cosine similarities between reference and
-candidate, then reports Precision, Recall, and F1.
-
-`rescale_with_baseline=False` is set because the existing English baselines
-are not meaningful for Tamil.
 
 ### BLEU-1 and BLEU-2 (weight: 0.10 for BLEU-1)
 
@@ -76,19 +65,20 @@ complete word tokens.
 BLEU-2 is recorded in per-sample output but not included in the composite
 score (it is informational only).
 
-### ROUGE-L (weight: 0.15)
+### ROUGE-L (weight: 0.20)
 
-Computed via `rouge-score` at the **character level** (each Unicode
-code-point treated as a token, joined with spaces). This preserves the Tamil
-Unicode block (U+0B80–U+0BFF) and measures the longest common subsequence
-of characters between reference and hypothesis.
+Computed as a **character-level LCS F-measure, directly** (no `rouge-score`
+library). The library's `DefaultTokenizer` lowercases and regex-strips every
+character outside `[a-z0-9]`, which **erases all Tamil** and would score only
+incidental ASCII (e.g. the year `1948`) — returning 0 for real Tamil overlap.
+We instead take the longest common subsequence over the non-whitespace Unicode
+code-points (U+0B80–U+0BFF preserved), so the metric is correct for Tamil.
 
 ### Composite Score
 
 ```
-composite = 0.50 * semantic_similarity
-          + 0.25 * bertscore_f1
-          + 0.15 * rouge_l
+composite = 0.70 * semantic_similarity
+          + 0.20 * rouge_l
           + 0.10 * bleu_1
 ```
 
@@ -180,18 +170,6 @@ python -m evaluation.evaluate \
     --live
 ```
 
-### Faster run — skip BERTScore
-
-Useful in CI or when `bert-score` is not installed. Composite score is
-recomputed without the BERTScore term.
-
-```bash
-cd src
-python -m evaluation.evaluate \
-    --dataset evaluation/sample_dataset.json \
-    --no-bertscore
-```
-
 ### Save enriched dataset and JSON report
 
 ```bash
@@ -211,7 +189,6 @@ from evaluation.evaluate import run_evaluation
 report = run_evaluation(
     dataset_path="evaluation/sample_dataset.json",
     live=False,
-    use_bertscore=True,
     save_answers_path=None,
     output_path=None,
 )
@@ -259,14 +236,12 @@ Add to `requirements.txt` if not already present:
 
 ```
 sentence-transformers    # already required by the RAG pipeline
-bert-score               # pip install bert-score
-sacrebleu                # pip install sacrebleu
-rouge-score              # pip install rouge-score
+sacrebleu                # pip install sacrebleu (char-level BLEU)
 ```
 
-All four are optional at import time — if any package is missing, the
-corresponding metric is silently skipped and returns 0. Use `--no-bertscore`
-to explicitly skip BERTScore when `bert-score` is not installed.
+`sacrebleu` is optional at import time — if missing, BLEU is silently skipped
+and returns 0 (deflating the composite); install it for correct scores.
+ROUGE-L needs no extra package (direct char-level LCS). BERTScore is not used.
 
 ---
 
@@ -280,9 +255,8 @@ pytest src/tests/test_evaluation.py -v
 pytest src/tests/test_evaluation.py --cov=evaluation --cov-report=term-missing
 ```
 
-The test suite mocks all heavy model calls (E5 embeddings, BERTScore, BLEU,
-ROUGE) so no model downloads occur. Tests complete in under 5 seconds on a
-standard laptop.
+The test suite mocks all heavy model calls (E5 embeddings, BLEU, ROUGE) so no
+model downloads occur. Tests complete in under 5 seconds on a standard laptop.
 
 ---
 
