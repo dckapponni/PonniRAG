@@ -171,6 +171,30 @@ python -m evaluation.evaluate --dataset evaluation/ground_truth_data.csv --outpu
 | `evaluation/ground_truth_report.xlsx` | Latest evaluation results with per-question breakdown |
 | `evaluation/sample_dataset.json` | Sample evaluation dataset in JSON format |
 
+### Retrieval Ablation (TREC-style)
+
+Beyond answer quality, a TREC-style retrieval ablation compares the **dense (E5)**, **sparse (BM25)**, and **hybrid** retrievers over a round-robin judgment pool with graded (0–3) relevance judgments. Metrics: nDCG, MAP, MRR, and Precision/Recall/Hit@k. The released judgments and pool let alternative retrieval systems be scored offline against the same benchmark.
+
+```sh
+cd src
+# Build TREC qrels from the reviewed judgment pool
+python -m evaluation.build_qrels
+# Run the dense/sparse/hybrid ablation and write the report
+python -m evaluation.run_retrieval_ablation
+```
+
+See [Retrieval Ablation README](src/evaluation/RETRIEVAL_README.md) for details.
+
+| File | Description |
+|------|-------------|
+| `evaluation/run_retrieval_ablation.py` | Ablation driver (dense/sparse/hybrid) |
+| `evaluation/retrieval_search.py` | Retrieval runners for each configuration |
+| `evaluation/retrieval_metrics.py` | Character-level TREC metrics (nDCG, MAP, MRR, P/R/Hit@k) |
+| `evaluation/build_qrels.py` | Builds TREC qrels from the graded pool |
+| `report/qrels.json` | Graded relevance judgments (41 scored queries) |
+| `report/pool_review.csv` | Round-robin judgment pool with 0–3 grades |
+| `report/retrieval_report.md` / `.xlsx` | Ablation results |
+
 ---
 
 ## Project Structure
@@ -228,12 +252,23 @@ python -m evaluation.evaluate --dataset evaluation/ground_truth_data.csv --outpu
 │   │       └── requirements.txt
 │   ├── tests/                   # Unit and integration tests
 │   └── evaluation/
-│       ├── evaluate.py          # Evaluation pipeline & CLI
-│       ├── metrics.py           # Semantic, BLEU, ROUGE
+│       ├── evaluate.py          # Answer-quality evaluation pipeline & CLI
+│       ├── metrics.py           # Answer metrics: semantic, BLEU, ROUGE-L
 │       ├── dataset.py           # Dataset loading (JSON/CSV)
+│       ├── retrieval_search.py         # Retrieval runners (dense/sparse/hybrid)
+│       ├── retrieval_metrics.py        # TREC metrics: nDCG, MAP, MRR, P/R/Hit@k
+│       ├── build_qrels.py              # Build TREC qrels from graded pool
+│       ├── run_retrieval_ablation.py   # Retrieval ablation driver (dense/sparse/hybrid)
+│       ├── RETRIEVAL_README.md         # Retrieval ablation docs
 │       ├── ground_truth_template.csv  # Template for ground truth data
-│       ├── ground_truth_data.csv      # Ground truth data to evaluate
-│       └── ground_truth_report.xlsx   # Evaluated results report
+│       ├── ground_truth_data.csv      # 50 Tamil Q&A pairs (answer-quality)
+│       ├── ground_truth_report.xlsx   # Answer-quality results report
+│       └── sample_dataset.json        # Sample dataset (JSON)
+├── report/                      # Released retrieval benchmark artifacts
+│   ├── qrels.json               # TREC-style graded relevance judgments (41 queries)
+│   ├── pool_review.csv          # Round-robin judgment pool with 0–3 grades
+│   ├── retrieval_report.md      # Retrieval ablation results (Markdown)
+│   └── retrieval_report.xlsx    # Retrieval ablation results (Excel)
 ├── guides/                      # Research & reference guides
 │   ├── reranker_model_guide.md        # Cross-encoder reranker evaluation
 │   ├── tamil_models_reference_guide.md # Tamil embedding/LLM model survey
@@ -430,6 +465,22 @@ python -m evaluation.evaluate --dataset evaluation/ground_truth_data.csv --outpu
             <tr>
                 <td><b><a href='evaluation/metrics.py'>metrics.py</a></b></td>
                 <td>- Implements Tamil-aware evaluation metrics (semantic similarity, BLEU, ROUGE-L)<br>- Uses multilingual-e5-large for embedding-based semantic scoring<br>- Applies character-level BLEU and ROUGE for Tamil morphology handling<br>- Computes weighted composite score prioritizing semantic similarity</td>
+            </tr>
+            <tr>
+                <td><b><a href='evaluation/run_retrieval_ablation.py'>run_retrieval_ablation.py</a></b></td>
+                <td>- TREC-style retrieval ablation driver comparing dense (E5), sparse (BM25), and hybrid retrievers<br>- Scores each configuration over the graded judgment pool and writes Markdown/Excel reports<br>- Runs offline against released qrels; no hosted service or API keys required</td>
+            </tr>
+            <tr>
+                <td><b><a href='evaluation/retrieval_search.py'>retrieval_search.py</a></b></td>
+                <td>- Retrieval runners for the ablation: dense-only, sparse-only, and hybrid fusion<br>- Produces ranked candidate lists per query for scoring</td>
+            </tr>
+            <tr>
+                <td><b><a href='evaluation/retrieval_metrics.py'>retrieval_metrics.py</a></b></td>
+                <td>- Character-level TREC metrics: nDCG@k, MAP, MRR, Precision/Recall/Hit@k<br>- Two-sided paired permutation significance testing on nDCG@10</td>
+            </tr>
+            <tr>
+                <td><b><a href='evaluation/build_qrels.py'>build_qrels.py</a></b></td>
+                <td>- Builds TREC-style qrels (0–3 graded relevance) from the round-robin judgment pool<br>- Produces the released qrels.json consumed by the ablation driver</td>
             </tr>
             <tr>
                 <td><b><a href='evaluation/ground_truth_data.csv'>ground_truth_data.csv</a></b></td>
