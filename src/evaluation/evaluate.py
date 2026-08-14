@@ -2,8 +2,7 @@ r"""Main evaluation pipeline for PonniRAG.
 
 This module orchestrates end-to-end evaluation of a RAG (Retrieval-Augmented
 Generation) system by comparing LLM-generated answers against human reference
-answers using a suite of NLP metrics (semantic similarity, BERTScore, BLEU,
-ROUGE-L).
+answers using a suite of NLP metrics (semantic similarity, BLEU, ROUGE-L).
 
 Evaluation Modes:
     **Offline mode** — the dataset already contains pre-filled ``llm_answer``
@@ -21,10 +20,6 @@ CLI Usage:
 
         # Force live evaluation (ignore pre-stored llm_answers):
         python -m evaluation.evaluate --dataset evaluation/sample_dataset.json --live
-
-        # Skip BERTScore (faster, fewer dependencies):
-        python -m evaluation.evaluate \\
-          --dataset evaluation/sample_dataset.json --no-bertscore
 
         # Save enriched dataset (with llm_answers filled in):
         python -m evaluation.evaluate \\
@@ -111,8 +106,8 @@ class EvaluationReport:
         avg_rouge_l (float): Macro-average character-level ROUGE-L score.
             Defaults to ``0.0``.
         avg_composite_score (float): Macro-average of the weighted composite
-            score (semantic=0.50, BERTScore-F1=0.25, ROUGE-L=0.15,
-            BLEU-1=0.10). Defaults to ``0.0``.
+            score (semantic=0.70, ROUGE-L=0.20, BLEU-1=0.10). Defaults to
+            ``0.0``.
         per_sample (List[Dict]): Ordered list of per-sample result
             dictionaries. Each entry is produced by
             :meth:`~evaluation.metrics.MetricResult.to_dict` and augmented
@@ -191,7 +186,6 @@ class EvaluationReport:
 def run_evaluation(
     dataset_path: str | Path,
     live: bool = False,
-    use_bertscore: bool = False,
     save_answers_path: Optional[str | Path] = None,
     output_path: Optional[str | Path] = None,
 ) -> EvaluationReport:
@@ -220,10 +214,6 @@ def run_evaluation(
             sample, overwriting any pre-stored ``llm_answer`` values. When
             ``False`` (default), only samples without an ``llm_answer`` are
             queried. Requires a running Qdrant + Ollama stack.
-        use_bertscore (bool): When ``True``, include BERTScore-F1 in the
-            metric computation. When ``False`` (default), BERTScore is
-            skipped, making the run faster and removing the ``bert-score``
-            package dependency.
         save_answers_path (Optional[str | Path]): If provided, all samples
             (including skipped ones) are serialised with their current
             ``llm_answer`` values to this JSON path after live evaluation.
@@ -242,7 +232,6 @@ def run_evaluation(
         report = run_evaluation(
             dataset_path="data/eval.json",
             live=True,
-            use_bertscore=True,
             save_answers_path="results/eval_answered.json",
             output_path="results/report",
         )
@@ -288,12 +277,8 @@ def run_evaluation(
     # ------------------------------------------------------------------
     # Step 4: Compute metrics
     # ------------------------------------------------------------------
-    logger.info(
-        "Computing metrics for %d samples (bertscore=%s) ...",
-        len(ready),
-        use_bertscore,
-    )
-    calculator = MetricsCalculator(use_bertscore=use_bertscore)
+    logger.info("Computing metrics for %d samples ...", len(ready))
+    calculator = MetricsCalculator()
 
     ids = [s.id for s in ready]
     refs = [s.human_answer for s in ready]
@@ -483,7 +468,6 @@ def _build_report(
 _COL_WIDTHS = {
     "id": 12,
     "semantic": 10,
-    "bertscore": 10,
     "bleu1": 8,
     "rouge_l": 8,
     "composite": 10,
@@ -577,7 +561,7 @@ def _print_report(report: EvaluationReport, samples: List[EvalSample]) -> None:
     print("    0.35–0.55  Fair     — partial answer, key details may be missing")
     print("    <  0.35  Poor       — answer diverges significantly from reference")
     print()
-    print("  Weights: semantic=0.50, BERTScore-F1=0.25, ROUGE-L=0.15, BLEU-1=0.10")
+    print("  Weights: semantic=0.70, ROUGE-L=0.20, BLEU-1=0.10")
     print("=" * 80)
     print()
 
@@ -596,8 +580,8 @@ def _save_report_csv(
     The output sheet contains the following columns (in order):
 
     ``S.no``, ``Question``, ``Human answer``, ``LLM answer``,
-    ``Semantic similarity``, ``BERTScore F1``, ``BLEU-1``, ``BLEU-2``,
-    ``ROUGE-L``, ``Composite score``.
+    ``Semantic similarity``, ``BLEU-1``, ``BLEU-2``, ``ROUGE-L``,
+    ``Composite score``.
 
     Args:
         report (EvaluationReport): The aggregated report whose
@@ -633,7 +617,6 @@ def _save_report_csv(
                 "Human answer": s.human_answer if s else "",
                 "LLM answer": s.llm_answer if s else "",
                 "Semantic similarity": entry.get("semantic_similarity", 0),
-                "BERTScore F1": entry.get("bertscore_f1", 0),
                 "BLEU-1": entry.get("bleu_1", 0),
                 "BLEU-2": entry.get("bleu_2", 0),
                 "ROUGE-L": entry.get("rouge_l", 0),
@@ -652,8 +635,8 @@ def _build_argparser() -> argparse.ArgumentParser:
     """Create and configure the CLI argument parser for the evaluation script.
 
     Defines all command-line arguments accepted by :func:`main`, including
-    path arguments for the dataset and output files, boolean flags for live
-    evaluation and BERTScore, and a descriptive epilog with usage examples.
+    path arguments for the dataset and output files, a boolean flag for live
+    evaluation, and a descriptive epilog with usage examples.
 
     Returns:
         argparse.ArgumentParser: A fully configured parser ready to call
@@ -667,8 +650,6 @@ def _build_argparser() -> argparse.ArgumentParser:
 
         ``--live``: Re-query the RAG system for every sample, ignoring
         pre-stored ``llm_answer`` values.
-
-        ``--no-bertscore``: Disable BERTScore computation for a faster run.
 
         ``--save-answers PATH``: Write the enriched dataset (with
         ``llm_answer`` fields) to this JSON file.
@@ -697,10 +678,6 @@ Examples:
       --dataset evaluation/sample_dataset.json --live \\
       --save-answers evaluation/results.json \\
       --output evaluation/report.json
-
-  # Skip BERTScore for a faster run:
-  python -m evaluation.evaluate \\
-      --dataset evaluation/sample_dataset.json --no-bertscore
 """,
     )
     parser.add_argument(
@@ -717,13 +694,6 @@ Examples:
             "Call ask_question() for each sample even if llm_answer is "
             "already present. Requires a running Qdrant + Ollama stack."
         ),
-    )
-    parser.add_argument(
-        "--no-bertscore",
-        dest="use_bertscore",
-        action="store_false",
-        default=True,
-        help="Skip BERTScore computation (faster, no bert-score dependency needed).",
     )
     parser.add_argument(
         "--save-answers",
@@ -766,7 +736,6 @@ def main() -> None:
     run_evaluation(
         dataset_path=args.dataset,
         live=args.live,
-        use_bertscore=args.use_bertscore,
         save_answers_path=args.save_answers,
         output_path=args.output,
     )
