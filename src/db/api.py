@@ -1876,6 +1876,29 @@ async def stream_issue_pdf(volume_id: int, issue_id: str, request: Request):
     )
 
 
+def _client_ip(request: Request) -> Optional[str]:
+    """Return the originating client address for rate limiting.
+
+    In deployment the API sits behind nginx, so ``request.client.host`` is the
+    proxy's address and would make the per-IP limit apply to all visitors at
+    once. The first hop of ``X-Forwarded-For`` is used when present. That header
+    is client-supplied and therefore spoofable; it is used only for rate
+    limiting, where the per-email limit remains the real control.
+
+    Args:
+        request: Incoming HTTP request.
+
+    Returns:
+        Client IP string, or ``None`` if it cannot be determined.
+    """
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        first_hop = forwarded.split(",")[0].strip()
+        if first_hop:
+            return first_hop
+    return request.client.host if request.client else None
+
+
 @app.get("/api/dataset/info", response_model=DatasetInfoResponse, tags=["Dataset"])
 async def get_dataset_info():
     """Describe the corpus release: what is open, what is gated, and licences.
@@ -1976,7 +1999,7 @@ async def request_dataset_access(body: DatasetRequestBody, request: Request):
         HTTPException 429: Rate limit exceeded.
         HTTPException 500: Unexpected server error.
     """
-    client_ip = request.client.host if request.client else None
+    client_ip = _client_ip(request)
 
     try:
         validate_request(

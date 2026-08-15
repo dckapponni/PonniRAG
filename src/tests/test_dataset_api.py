@@ -164,6 +164,31 @@ class TestRequestEndpoint:
             resp = client.post("/api/dataset/request", json=VALID_BODY)
         assert resp.status_code == 429
 
+    def test_rate_limit_uses_forwarded_ip_not_proxy_address(self, client):
+        """Rate limit uses forwarded ip not proxy address."""
+        with patch("db.api.store_request", return_value="key.json"), patch(
+            "db.api.notify_and_deliver", return_value=(True, True)
+        ):
+            # Ten distinct requesters behind the same nginx hop, each with a
+            # different real client IP, must all get through.
+            for i in range(10):
+                body = dict(VALID_BODY, email=f"reader{i}@example.org")
+                resp = client.post(
+                    "/api/dataset/request",
+                    json=body,
+                    headers={"X-Forwarded-For": f"203.0.113.{i}, 10.0.0.1"},
+                )
+                assert resp.status_code == 200, resp.text
+
+            # An eleventh reusing an already-seen client IP is still fine…
+            body = dict(VALID_BODY, email="reader-extra@example.org")
+            resp = client.post(
+                "/api/dataset/request",
+                json=body,
+                headers={"X-Forwarded-For": "203.0.113.99"},
+            )
+            assert resp.status_code == 200
+
     def test_undelivered_email_still_succeeds_with_fallback_message(self, client):
         """Undelivered email still succeeds with fallback message."""
         with patch("db.api.store_request", return_value="key.json"), patch(
