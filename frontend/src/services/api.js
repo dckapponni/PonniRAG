@@ -330,6 +330,37 @@ export const formatAuthorName = (authorName) => {
 };
 
 /**
+ * Get the corpus release catalogue: open-tier and gated components.
+ * @returns {Promise<{corpus_version: string, contact_email: string, open_files: Array, gated_files: Array}>}
+ */
+export const getDatasetInfo = async () => {
+  const response = await api.get('/api/dataset/info');
+  return response.data;
+};
+
+/**
+ * Submit a request for the gated full corpus. A signed download link is
+ * emailed to the address supplied.
+ * @param {object} form - { name, email, affiliation, intended_use, license_accepted, dataset_id }
+ * @returns {Promise<{success: boolean, request_id: string, email_sent: boolean, message: string, contact_email: string}>}
+ */
+export const requestDatasetAccess = async (form) => {
+  const response = await api.post('/api/dataset/request', {
+    dataset_id: 'corpus',
+    ...form,
+  });
+  return response.data;
+};
+
+/**
+ * Absolute URL for an open-tier download (used as a plain anchor href).
+ * @param {string} fileId - Open-tier component id
+ * @returns {string}
+ */
+export const datasetOpenDownloadUrl = (fileId) =>
+  `${API_BASE_URL}/api/dataset/open/${fileId}`;
+
+/**
  * Check if API is reachable
  * @returns {Promise<{reachable: boolean, message: string}>}
  */
