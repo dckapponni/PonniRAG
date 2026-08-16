@@ -1007,8 +1007,8 @@ Contributions follow the [CRediT](https://credit.niso.org/) (Contributor Roles T
 |------|-------------|--------------|
 | Honika Sankar † | Nunnari Labs | Software, Methodology, Validation, Writing – review & editing |
 | Abinaya Suresh † | Nunnari Labs | Software, Data curation, Investigation, Evaluation |
-| S. Karunakaran | Department of Tamil, Madras Christian College | Resources, Data curation, Domain supervision, Writing – review & editing |
 | Karthik Chidambaram | DCKAP | Conceptualization, Project administration, Funding acquisition, Supervision |
+| S. Karunakaran | Department of Tamil, Madras Christian College | Resources, Data curation, Domain supervision, Writing – review & editing |
 | S. Srija ✉ | DCKAP | Project administration, Data curation, Resources |
 | Abinaya Mahendiran | Nunnari Labs | Conceptualization, Methodology, Software, Writing – original draft |
 
@@ -1023,3 +1023,24 @@ We gratefully acknowledge the many contributors to the *Ponni* archive project:
 - **Original data preservation** — Peri. Azhagappan
 
 *Ponni* magazine materials are reproduced for non-commercial scholarly research purposes.
+
+---
+
+## Licence
+
+**Software** — Apache License 2.0 (see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE)).
+
+**Data** — released in two tiers, see [`DATA_LICENSE.md`](DATA_LICENSE.md):
+
+| Tier | Content | Terms |
+|---|---|---|
+| Open | Article metadata, category annotations, evaluation resources | CC BY 4.0, direct download |
+| Gated | Full proofread OCR corpus | Ponni Archive Data Use Agreement — request at [ponniarchive.com/dataset](https://ponniarchive.com/dataset) |
+
+The full corpus is not under a Creative Commons licence because *Ponni* was published
+1947–1955 and the copyright status of individual contributions varies; a data use
+agreement grants permission without asserting ownership the project does not hold.
+Corpus provenance, coverage, and known error modes are documented in
+[`DATASHEET.md`](DATASHEET.md).
+
+Rights enquiries and takedown requests: contact@ponniarchive.com

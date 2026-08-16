@@ -34,6 +34,24 @@ services:
       - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-ap-south-1}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      # Corpus dataset access (request form + signed download links).
+      # DATASET_TOKEN_SECRET must be set in prod, otherwise links are signed
+      # with an ephemeral secret and break on every container restart.
+      - DATASET_TOKEN_SECRET=${DATASET_TOKEN_SECRET}
+      - DATASET_LINK_TTL_HOURS=${DATASET_LINK_TTL_HOURS:-168}
+      - DATASET_CONTACT_EMAIL=${DATASET_CONTACT_EMAIL:-contact@ponniarchive.com}
+      - DATASET_PUBLIC_BASE_URL=${DATASET_PUBLIC_BASE_URL:-https://ponniarchive.com}
+      - DATASET_BUNDLE_KEY=${DATASET_BUNDLE_KEY:-Proof_Read_Bundles/ponni-corpus-v1.zip}
+      - DATASET_REQUESTS_PREFIX=${DATASET_REQUESTS_PREFIX:-dataset_requests/}
+      - DATASET_EMAIL_BACKEND=${DATASET_EMAIL_BACKEND:-log}
+      - SES_REGION=${SES_REGION:-ap-south-1}
+      - SES_FROM=${SES_FROM:-contact@ponniarchive.com}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_STARTTLS=${SMTP_STARTTLS:-true}
+      - SMTP_FROM=${SMTP_FROM:-contact@ponniarchive.com}
       # Retrieval debug logging — leave off in prod, set to 1 to diagnose RRF
       - RAG_DEBUG=${RAG_DEBUG:-0}
       # Cross-encoder reranker

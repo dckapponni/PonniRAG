@@ -41,11 +41,27 @@ from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 from cache import _response_cache  # noqa: E402
 from csv_queries import EnhancedAuthorQuerySystem  # noqa: E402
 from csv_queries import _author_system_cache, _author_system_lock, get_issue_count
+from dataset_access import BUNDLE_KEY as DATASET_BUNDLE_KEY
+from dataset_access import DatasetAccessError  # noqa: E402
+from dataset_access import (
+    CONTACT_EMAIL,
+    CORPUS_VERSION,
+    GATED_DATASETS,
+    OPEN_DATASETS,
+    build_download_url,
+    check_rate_limit,
+    issue_token,
+    new_request_record,
+    notify_and_deliver,
+    store_request,
+    validate_request,
+    verify_token,
+)
 from embeddings import CSV_PATH  # noqa: E402
 from embeddings import COLLECTION_NAME, check_qdrant_health, get_qdrant_client
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from hybrid_search import ask_question_async, ask_question_stream  # noqa: E402
 from llm import check_gemini_health  # noqa: E402
 from pydantic import BaseModel, Field
@@ -534,6 +550,88 @@ class PDFLinkResponse(BaseModel):
     embed_url: Optional[str] = None
     proxy_url: Optional[str] = None
     found: bool
+
+
+class DatasetFileInfo(BaseModel):
+    """A single downloadable component of the corpus release.
+
+    Attributes:
+        id: Dataset identifier used in download URLs.
+        title_en: English display title.
+        title_ta: Tamil display title.
+        description_en: English one-line description.
+        description_ta: Tamil one-line description.
+        license: Licence or agreement governing this component.
+        gated: ``True`` if a request form must be completed first.
+        download_url: Direct download URL for open-tier components, ``None``
+            for gated ones.
+        version: Corpus version string, where applicable.
+    """
+
+    id: str
+    title_en: str
+    title_ta: str
+    description_en: str
+    description_ta: str
+    license: str
+    gated: bool
+    download_url: Optional[str] = None
+    version: Optional[str] = None
+
+
+class DatasetInfoResponse(BaseModel):
+    """Response body for ``GET /api/dataset/info``.
+
+    Attributes:
+        corpus_version: Current corpus version identifier.
+        contact_email: Address handling access and rights enquiries.
+        open_files: Components downloadable without a request.
+        gated_files: Components requiring an accepted request.
+    """
+
+    corpus_version: str
+    contact_email: str
+    open_files: List[DatasetFileInfo]
+    gated_files: List[DatasetFileInfo]
+
+
+class DatasetRequestBody(BaseModel):
+    """Request body for ``POST /api/dataset/request``.
+
+    Attributes:
+        name: Requester's name.
+        email: Address the download link is sent to.
+        affiliation: Institution, organisation, or "independent".
+        intended_use: Free-text description of intended use (min 20 chars).
+        license_accepted: Must be ``True``; records acceptance of the
+            Ponni Archive Data Use Agreement.
+        dataset_id: Which gated dataset is being requested.
+    """
+
+    name: str = Field(..., max_length=200)
+    email: str = Field(..., max_length=254)
+    affiliation: str = Field(..., max_length=300)
+    intended_use: str = Field(..., max_length=2000)
+    license_accepted: bool = False
+    dataset_id: str = "corpus"
+
+
+class DatasetRequestResponse(BaseModel):
+    """Response body for ``POST /api/dataset/request``.
+
+    Attributes:
+        success: ``True`` when the request was accepted and recorded.
+        request_id: Identifier the requester can quote in correspondence.
+        email_sent: ``True`` if the download link was emailed successfully.
+        message: Human-readable status for display in the UI.
+        contact_email: Fallback address if the link does not arrive.
+    """
+
+    success: bool
+    request_id: str
+    email_sent: bool
+    message: str
+    contact_email: str
 
 
 class TagInfo(BaseModel):
@@ -1775,6 +1873,262 @@ async def stream_issue_pdf(volume_id: int, issue_id: str, request: Request):
         status_code=status_code,
         headers=headers,
         media_type="application/pdf",
+    )
+
+
+def _client_ip(request: Request) -> Optional[str]:
+    """Return the originating client address for rate limiting.
+
+    In deployment the API sits behind nginx, so ``request.client.host`` is the
+    proxy's address and would make the per-IP limit apply to all visitors at
+    once. The first hop of ``X-Forwarded-For`` is used when present. That header
+    is client-supplied and therefore spoofable; it is used only for rate
+    limiting, where the per-email limit remains the real control.
+
+    Args:
+        request: Incoming HTTP request.
+
+    Returns:
+        Client IP string, or ``None`` if it cannot be determined.
+    """
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        first_hop = forwarded.split(",")[0].strip()
+        if first_hop:
+            return first_hop
+    return request.client.host if request.client else None
+
+
+@app.get("/api/dataset/info", response_model=DatasetInfoResponse, tags=["Dataset"])
+async def get_dataset_info():
+    """Describe the corpus release: what is open, what is gated, and licences.
+
+    Backs the public dataset page. Open-tier components carry a direct
+    ``download_url``; gated components carry none and must be requested via
+    ``POST /api/dataset/request``.
+
+    Returns:
+        Corpus version, contact address, and the two lists of components.
+    """
+    open_files = [
+        DatasetFileInfo(
+            id=meta["id"],
+            title_en=meta["title_en"],
+            title_ta=meta["title_ta"],
+            description_en=meta["description_en"],
+            description_ta=meta["description_ta"],
+            license=meta["license"],
+            gated=False,
+            download_url=f"/api/dataset/open/{meta['id']}",
+        )
+        for meta in OPEN_DATASETS.values()
+    ]
+    gated_files = [
+        DatasetFileInfo(
+            id=meta["id"],
+            title_en=meta["title_en"],
+            title_ta=meta["title_ta"],
+            description_en=meta["description_en"],
+            description_ta=meta["description_ta"],
+            license=meta["license"],
+            gated=True,
+            download_url=None,
+            version=meta["version"],
+        )
+        for meta in GATED_DATASETS.values()
+    ]
+    return DatasetInfoResponse(
+        corpus_version=CORPUS_VERSION,
+        contact_email=CONTACT_EMAIL,
+        open_files=open_files,
+        gated_files=gated_files,
+    )
+
+
+@app.get("/api/dataset/open/{file_id}", tags=["Dataset"])
+async def download_open_dataset(file_id: str):
+    """Serve an open-tier component (CC BY 4.0) as a file download.
+
+    Args:
+        file_id: Key into the open-tier catalogue (e.g. ``"metadata"``).
+
+    Returns:
+        The file as an attachment, cached by the browser for one hour.
+
+    Raises:
+        HTTPException 404: Unknown ``file_id``, or the file is missing on disk.
+    """
+    meta = OPEN_DATASETS.get(file_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Unknown dataset file")
+
+    path = meta["path"]
+    if not path.exists():
+        logger.error(f"Open dataset file missing on disk: {path}")
+        raise HTTPException(status_code=404, detail="File not available")
+
+    return FileResponse(
+        path=str(path),
+        media_type=meta["media_type"],
+        filename=meta["filename"],
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@app.post(
+    "/api/dataset/request", response_model=DatasetRequestResponse, tags=["Dataset"]
+)
+async def request_dataset_access(body: DatasetRequestBody, request: Request):
+    """Record a corpus request and email a signed download link.
+
+    Validates the submission, enforces per-email and per-IP rate limits, stores
+    an audit record in S3, notifies ``contact@ponniarchive.com``, and emails the
+    requester a time-limited download link. Approval is automatic: the step
+    exists to attach the use agreement and keep a record of use.
+
+    Args:
+        body: Submitted form fields, including licence acceptance.
+        request: Incoming request, used for the client IP.
+
+    Returns:
+        Request identifier and whether the link email was delivered.
+
+    Raises:
+        HTTPException 400: Validation failure (including licence not accepted).
+        HTTPException 404: Unknown dataset id.
+        HTTPException 429: Rate limit exceeded.
+        HTTPException 500: Unexpected server error.
+    """
+    client_ip = _client_ip(request)
+
+    try:
+        validate_request(
+            name=body.name,
+            email=body.email,
+            affiliation=body.affiliation,
+            intended_use=body.intended_use,
+            license_accepted=body.license_accepted,
+            dataset_id=body.dataset_id,
+        )
+        check_rate_limit(body.email, client_ip)
+    except DatasetAccessError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+
+    try:
+        record = new_request_record(
+            name=body.name,
+            email=body.email,
+            affiliation=body.affiliation,
+            intended_use=body.intended_use,
+            dataset_id=body.dataset_id,
+            client_ip=client_ip,
+        )
+        await asyncio.to_thread(store_request, record, _s3_client, _s3_conf["bucket"])
+
+        token = issue_token(
+            email=record["email"],
+            dataset_id=record["dataset_id"],
+            request_id=record["request_id"],
+        )
+        _, delivered = await asyncio.to_thread(
+            notify_and_deliver, record, build_download_url(token)
+        )
+    except Exception as e:
+        logger.error(f"Dataset request failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=("Could not process the request. Please email " + CONTACT_EMAIL),
+        )
+
+    message = (
+        "Request received. A download link has been sent to your email address."
+        if delivered
+        else (
+            "Request received. Our team will send your download link to the "
+            "address you provided."
+        )
+    )
+    return DatasetRequestResponse(
+        success=True,
+        request_id=record["request_id"],
+        email_sent=delivered,
+        message=message,
+        contact_email=CONTACT_EMAIL,
+    )
+
+
+@app.get("/api/dataset/download", tags=["Dataset"])
+async def download_gated_dataset(
+    token: str = Query(..., description="Signed link issued by the request form")
+):
+    """Stream the gated corpus bundle to a holder of a valid signed link.
+
+    The token carries the dataset id, the address it was issued to, and an
+    expiry; it is verified with a constant-time HMAC comparison. The bundle is
+    served as an attachment and is never browser-cached.
+
+    Args:
+        token: Signed token from the emailed download link.
+
+    Returns:
+        The corpus bundle as a streaming attachment.
+
+    Raises:
+        HTTPException 403: Malformed or unsigned token.
+        HTTPException 410: Expired link.
+        HTTPException 404: Bundle not yet published to S3.
+        HTTPException 502: Upstream S3 error.
+    """
+    try:
+        payload = verify_token(token)
+    except DatasetAccessError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+
+    dataset = GATED_DATASETS[payload["d"]]
+    logger.info(
+        "Dataset download: request_id=%s dataset=%s",
+        payload.get("r"),
+        payload["d"],
+    )
+
+    try:
+        resp = await asyncio.to_thread(
+            _s3_client.get_object,
+            Bucket=_s3_conf["bucket"],
+            Key=DATASET_BUNDLE_KEY,
+        )
+    except ClientError as e:
+        if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "The corpus bundle is not yet available. Please email "
+                    + CONTACT_EMAIL
+                ),
+            )
+        logger.warning(f"S3 corpus fetch failed for {DATASET_BUNDLE_KEY}: {e}")
+        raise HTTPException(status_code=502, detail="Upstream S3 error")
+    except (NoCredentialsError, BotoCoreError) as e:
+        logger.warning(f"S3 corpus fetch failed for {DATASET_BUNDLE_KEY}: {e}")
+        raise HTTPException(status_code=502, detail="Upstream S3 error")
+
+    body = resp["Body"]
+
+    def iter_chunks():
+        try:
+            for chunk in body.iter_chunks(chunk_size=262144):
+                yield chunk
+        finally:
+            body.close()
+
+    return StreamingResponse(
+        iter_chunks(),
+        media_type=dataset["media_type"],
+        headers={
+            "Content-Length": str(resp["ContentLength"]),
+            "Content-Disposition": f'attachment; filename="{dataset["filename"]}"',
+            "Cache-Control": "no-store",
+        },
     )
 
 

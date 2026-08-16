@@ -2042,3 +2042,277 @@ html, body {
     max-width: 100%;
   }
 }
+
+/* ── Dataset page ─────────────────────────────────────────────────────── */
+
+.dataset-container {
+  padding: 6rem 2rem 4rem;
+  max-width: 780px;
+  margin: 0 auto;
+  animation: pageEnter 0.5s ease;
+}
+
+.dataset-header {
+  text-align: center;
+  margin-bottom: 3rem;
+  padding-bottom: 2rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.dataset-heading {
+  font-family: 'Lora', 'Noto Serif Tamil', Georgia, serif;
+  color: #1e3a8a;
+  font-size: 2.25rem;
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+  letter-spacing: -0.01em;
+}
+
+.dataset-subtitle {
+  font-size: 0.95rem;
+  color: #64748b;
+  max-width: 560px;
+  margin: 0 auto;
+  line-height: 1.7;
+}
+
+.dataset-version {
+  margin-top: 0.9rem;
+  font-size: 0.8rem;
+  color: #64748b;
+}
+
+.dataset-version code,
+.dataset-request-id code {
+  background: #f1f5f9;
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
+  font-size: 0.78rem;
+  color: #1e3a8a;
+}
+
+.dataset-section {
+  margin-bottom: 3rem;
+}
+
+.dataset-section-heading {
+  font-family: 'Lora', 'Noto Serif Tamil', Georgia, serif;
+  color: #1e3a8a;
+  font-size: 1.3rem;
+  font-weight: 700;
+  margin-bottom: 0.6rem;
+}
+
+.dataset-form-heading {
+  font-family: 'Lora', 'Noto Serif Tamil', Georgia, serif;
+  color: #1e3a8a;
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin: 2rem 0 0.5rem;
+}
+
+.dataset-note {
+  font-size: 0.88rem;
+  color: #475569;
+  line-height: 1.8;
+  margin-bottom: 1.25rem;
+}
+
+.dataset-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.dataset-file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.dataset-file:hover {
+  border-color: #bfdbfe;
+  box-shadow: 0 2px 10px rgba(30, 58, 138, 0.06);
+}
+
+.dataset-file-title {
+  font-weight: 600;
+  color: #0f172a;
+  font-size: 0.95rem;
+  margin-bottom: 0.2rem;
+}
+
+.dataset-file-desc {
+  font-size: 0.85rem;
+  color: #64748b;
+  line-height: 1.6;
+}
+
+.dataset-file-license {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  margin-top: 0.35rem;
+  letter-spacing: 0.01em;
+}
+
+.dataset-download-btn {
+  flex-shrink: 0;
+  background: #1e3a8a;
+  color: #fff;
+  border-radius: 8px;
+  padding: 0.55rem 1.1rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.2s ease;
+}
+
+.dataset-download-btn:hover {
+  background: #1d4ed8;
+}
+
+.dataset-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.5rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.dataset-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.dataset-field span {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #334155;
+}
+
+.dataset-field input,
+.dataset-field textarea {
+  font-family: inherit;
+  font-size: 0.9rem;
+  color: #0f172a;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  resize: vertical;
+}
+
+.dataset-field input:focus,
+.dataset-field textarea:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+.dataset-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+  color: #334155;
+  line-height: 1.6;
+}
+
+.dataset-checkbox input {
+  margin-top: 0.2rem;
+  flex-shrink: 0;
+}
+
+.dataset-checkbox a,
+.dataset-success a,
+.dataset-note a {
+  color: #1d4ed8;
+}
+
+.dataset-submit-btn {
+  align-self: flex-start;
+  background: #1e3a8a;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 0.7rem 1.4rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease, opacity 0.2s ease;
+}
+
+.dataset-submit-btn:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.dataset-submit-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.dataset-error {
+  font-size: 0.85rem;
+  color: #b91c1c;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  padding: 0.7rem 0.9rem;
+}
+
+.dataset-success {
+  font-size: 0.9rem;
+  color: #14532d;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 10px;
+  padding: 1.1rem 1.25rem;
+  line-height: 1.8;
+}
+
+.dataset-request-id {
+  font-size: 0.82rem;
+  color: #334155;
+}
+
+.dataset-citation {
+  font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.6;
+  color: #0f172a;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 1rem 1.1rem;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+@media (max-width: 768px) {
+  .dataset-container {
+    padding: 5.5rem 1.25rem 3rem;
+  }
+
+  .dataset-heading {
+    font-size: 1.75rem;
+  }
+
+  .dataset-file {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .dataset-download-btn {
+    align-self: stretch;
+    text-align: center;
+  }
+}

@@ -43,7 +43,7 @@ const Navigation = ({ language, onToggleLanguage }) => {
       <div className={`nav-links ${menuOpen ? 'open' : ''}`}>
         <Link
           to="/"
-          className={`nav-link ${isActive('/') && !location.pathname.startsWith('/library') && !location.pathname.startsWith('/tags') && !location.pathname.startsWith('/history') && !location.pathname.startsWith('/about') ? 'active' : ''}`}
+          className={`nav-link ${isActive('/') && !location.pathname.startsWith('/library') && !location.pathname.startsWith('/tags') && !location.pathname.startsWith('/history') && !location.pathname.startsWith('/dataset') && !location.pathname.startsWith('/about') ? 'active' : ''}`}
           onClick={handleNavClick}
         >
           {t('nav_ask_ai')}
@@ -68,6 +68,13 @@ const Navigation = ({ language, onToggleLanguage }) => {
           onClick={handleNavClick}
         >
           {t('nav_history')}
+        </Link>
+        <Link
+          to="/dataset"
+          className={`nav-link ${isActive('/dataset') ? 'active' : ''}`}
+          onClick={handleNavClick}
+        >
+          {t('nav_dataset')}
         </Link>
         <Link
           to="/about"
