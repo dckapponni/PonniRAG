@@ -85,8 +85,45 @@ jobs:
   # ──────────────────────────────────────────────
   # Stage 3: Docker build verification
   # ──────────────────────────────────────────────
-  docker-build:
-    name: Docker Build
+  # The API image (CUDA base + torch + a pre-cached 2.2GB embedding model) fills
+  # most of the runner's disk on its own, so it gets a runner to itself and the
+  # frontend build gets another. Building both on one runner exhausts the disk.
+  docker-build-api:
+    name: Docker Build (API)
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          df -h /
+          # Preinstalled toolchains the build never uses (~25GB).
+          sudo rm -rf /usr/local/lib/android \
+                      /usr/share/dotnet \
+                      /usr/share/swift \
+                      /opt/ghc \
+                      /usr/local/.ghcup \
+                      /usr/local/share/boost \
+                      /usr/local/share/powershell \
+                      /opt/hostedtoolcache/CodeQL || true
+          docker system prune -af --volumes || true
+          docker builder prune -af || true
+          df -h /
+
+      - name: Build API image
+        run: docker build -t ponni-api -f Dockerfile.api .
+
+      - name: Report disk usage
+        if: always()
+        run: df -h /
+
+      - name: Clean up images
+        if: always()
+        run: docker system prune -af --volumes || true
+
+  docker-build-frontend:
+    name: Docker Build (Frontend)
     needs: lint
     runs-on: ubuntu-latest
     steps:
@@ -98,14 +135,8 @@ jobs:
           docker builder prune -af || true
           df -h /
 
-      - name: Build API image
-        run: docker build -t ponni-api -f Dockerfile.api .
-
       - name: Build Frontend image
         run: docker build -t ponni-frontend -f frontend/Dockerfile ./frontend
-
-      - name: Verify docker-compose config
-        run: docker compose config --quiet
 
       - name: Report disk usage
         if: always()
@@ -114,3 +145,13 @@ jobs:
       - name: Clean up images
         if: always()
         run: docker system prune -af --volumes || true
+
+  compose-config:
+    name: Compose Config
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify docker-compose config
+        run: docker compose config --quiet

@@ -7,3 +7,8 @@ Dockerfile
 npm-debug.log*
 .env*
 coverage
+
+# 90MB of cover images that nothing in src/ references — covers are served
+# through the backend S3 proxy (cover_image_url). Copying them into build/
+# is what pushed the frontend build over the runner's disk limit.
+public/Front cover of volumes
