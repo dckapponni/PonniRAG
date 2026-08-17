@@ -132,15 +132,19 @@ per-version changes are recorded in `DATASHEET.md`.
 If you use any layer of this release, cite the resource paper:
 
 ```bibtex
-@inproceedings{ponnirag2026,
-  title     = {Ponni RAG: A Hybrid Retrieval-Augmented Question Answering
-               System and Corpus for a Tamil Literary Archive},
-  author    = {Mahendiran, Abinaya and Suresh, Abinaya and Karunakaran, S. and
-               Srija, S. and Chidambaram, Karthik},
-  booktitle = {Forum for Information Retrieval Evaluation (FIRE)},
-  year      = {2026}
+@misc{ponnirag2026,
+  title  = {Hybrid Retrieval-Augmented Generation System for the Tamil
+            {Ponni} Archive},
+  author = {Sankar, Honika and Suresh, Abinaya and Chidambaram, Karthik and
+            Karunakaran, S. and Srija, S. and Mahendiran, Abinaya},
+  year   = {2026},
+  note   = {Under review at the Forum for Information Retrieval Evaluation
+            (FIRE) 2026}
 }
 ```
+
+Once the paper is accepted this is replaced with the published
+`@inproceedings` record.
 
 Please also state the corpus version, for example: "Ponni corpus v1, obtained
 under the Ponni Archive Data Use Agreement."

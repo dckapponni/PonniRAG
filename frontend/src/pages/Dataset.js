@@ -6,13 +6,15 @@ import {
 } from '../services/api';
 import { getTranslation } from '../services/translations';
 
-const CITATION = `@inproceedings{ponnirag2026,
-  title     = {Ponni RAG: A Hybrid Retrieval-Augmented Question Answering
-               System and Corpus for a Tamil Literary Archive},
-  author    = {Mahendiran, Abinaya and Suresh, Abinaya and Karunakaran, S. and
-               Srija, S. and Chidambaram, Karthik},
-  booktitle = {Forum for Information Retrieval Evaluation (FIRE)},
-  year      = {2026}
+// Keep in sync with the bibtex entry in DATA_LICENSE.md §6.
+const CITATION = `@misc{ponnirag2026,
+  title  = {Hybrid Retrieval-Augmented Generation System for the Tamil
+            {Ponni} Archive},
+  author = {Sankar, Honika and Suresh, Abinaya and Chidambaram, Karthik and
+            Karunakaran, S. and Srija, S. and Mahendiran, Abinaya},
+  year   = {2026},
+  note   = {Under review at the Forum for Information Retrieval Evaluation
+            (FIRE) 2026}
 }`;
 
 const EMPTY_FORM = {
